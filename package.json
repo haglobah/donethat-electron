@@ -1,0 +1,26 @@
+{
+  "name": "joey",
+  "version": "1.0.0",
+  "description": "Remembering your work for you",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chrhartm/joey-electron.git"
+  },
+  "author": "Christoph Hartmann",
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/chrhartm/joey-electron/issues"
+  },
+  "homepage": "https://github.com/chrhartm/joey-electron#readme",
+  "devDependencies": {
+    "electron": "^34.2.0"
+  },
+  "dependencies": {
+    "firebase": "^11.3.1"
+  }
+}
