@@ -137,3 +137,6 @@ dist
 
 # Firebase config
 firebase-config.js
+
+# Build output
+build/*

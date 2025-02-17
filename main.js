@@ -3,39 +3,72 @@ const path = require('path')
 
 // Importing Firebase modules using the new modular API.
 const { initializeApp } = require('firebase/app')
-const { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged } = require('firebase/auth')
+const { 
+  getAuth, 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  sendPasswordResetEmail 
+} = require('firebase/auth')
 
 const firebaseConfig = require('./firebase-config')
 const firebaseApp = initializeApp(firebaseConfig)
 const auth = getAuth(firebaseApp)
 
-function signInWithGoogle() {
-  const provider = new GoogleAuthProvider()
-  signInWithPopup(auth, provider)
-    .then((result) => {
-      console.log("Signed in as:", result.user)
+function signUp(email, password) {
+  createUserWithEmailAndPassword(auth, email, password)
+    .then((userCredential) => {
+      console.log("User signed up:", userCredential.user)
+      // You can now transition your UI to the signed-in state.
     })
     .catch((error) => {
-      console.error("Error during Google sign in:", error)
+      console.error("Error during signup:", error.message)
+      // Handle the error (e.g., notify the user).
     })
 }
+
+function signIn(email, password) {
+  signInWithEmailAndPassword(auth, email, password)
+    .then((userCredential) => {
+      console.log("User signed in:", userCredential.user)
+      // Transition your interface into the signed-in state.
+    })
+    .catch((error) => {
+      console.error("Error during sign in:", error.message)
+      // Handle the error (e.g., notify the user).
+    })
+}
+
+function passwordReset(email) {
+  sendPasswordResetEmail(auth, email)
+    .then(() => {
+      console.log("Password reset email sent to:", email)
+      // Inform the user to check their email.
+    })
+    .catch((error) => {
+      console.error("Error sending password reset email:", error.message)
+      // Handle the error accordingly.
+    })
+}
+
+// Monitor the authentication state.
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    console.log("User is already signed in:", user)
+    // Proceed with your app's main logic.
+  } else {
+    console.log("No user is signed in. Please sign in or sign up with your email and password.")
+    // TODO: Trigger your login/signup UI here.
+    // For example, you might open a dedicated login window which collects the
+    // user's email & password and then calls signUp(), signIn(), or passwordReset().
+  }
+})
 
 let tray = null
 let mainWindow = null
 
 app.whenReady().then(() => {
-  // Listen for authentication state changes
-  onAuthStateChanged(auth, (user) => {
-    if (user) {
-      console.log("User is already signed in:", user)
-      // Proceed with your app's logic
-    } else {
-      // No user is signed in, trigger Google sign-in
-      signInWithGoogle()
-    }
-  })
-
-  // Setup tray icons as before
+  // Setup tray icons as before.
   const iconGreenPath = path.join(__dirname, 'assets', 'iconGreenTemplate.png')
   const iconBasePath  = path.join(__dirname, 'assets', 'iconTemplate.png')
 
@@ -49,7 +82,7 @@ app.whenReady().then(() => {
   tray = new Tray(greenIcon)
   tray.setToolTip('Hi from Joey 👋')
 
-  // Build context menu
+  // Build the context menu.
   const contextMenu = Menu.buildFromTemplate([
     { 
       label: 'Open', 
@@ -64,7 +97,7 @@ app.whenReady().then(() => {
     tray.popUpContextMenu(contextMenu)
   })
 
-  // Toggle tray icon on left-click (if needed)
+  // Toggle tray icon on left-click (if needed).
   let isRecording = true
   tray.on('click', () => {
     if (isRecording) {
@@ -77,7 +110,7 @@ app.whenReady().then(() => {
   })
 })
 
-// Function to create or toggle the window
+// Function to create or toggle the window.
 function toggleWindow() {
   if (mainWindow) {
     // Toggle window visibility.
@@ -89,8 +122,8 @@ function toggleWindow() {
   } else {
     // Create the window if it doesn't exist.
     mainWindow = new BrowserWindow({
-      width: 300,  // Adjust size as needed
-      height: 400,
+      width: 500,  // Adjust size as needed.
+      height: 600,
       frame: false,         // No title bar or window frame.
       resizable: false,
       movable: false,       // Optional: disable dragging if you want a popover.
@@ -101,6 +134,8 @@ function toggleWindow() {
       }
     })
 
+    // This file could be your login page that first shows the email/password
+    // form. After successful sign in the UI might transition to your main app.
     mainWindow.loadFile('index.html')
 
     // Position the window once it's ready.
