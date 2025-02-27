@@ -73,14 +73,14 @@ app.whenReady().then(() => {
       tray.setImage(greenIcon)
       isRecording = true
       
-      // Start screenshot interval (every 1 second)
-      screenshotInterval = setInterval(captureAndSendScreenshot, 1000)
+      // Start screenshot interval (every 60 seconds)
+      screenshotInterval = setInterval(captureAndSendScreenshot, 60000)
       console.log('Screenshot recording started')
     }
   })
   
   // Initialize screenshot recording since isRecording starts as true
-  screenshotInterval = setInterval(captureAndSendScreenshot, 1000)
+  screenshotInterval = setInterval(captureAndSendScreenshot, 60000)
   console.log('Screenshot recording started')
 })
 
@@ -104,7 +104,8 @@ function toggleWindow() {
       show: false,          // Start hidden and show after positioning.
       webPreferences: {
         nodeIntegration: true,
-        contextIsolation: false
+        contextIsolation: false,
+        webSecurity: false  // This disables CORS restrictions for Electron - use with caution
       }
     })
 
