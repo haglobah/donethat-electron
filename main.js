@@ -82,6 +82,12 @@ app.whenReady().then(() => {
   // Initialize screenshot recording since isRecording starts as true
   screenshotInterval = setInterval(captureAndSendScreenshot, 60000)
   console.log('Screenshot recording started')
+  
+  // Check if user is logged in, if not open the window automatically
+  if (!idToken) {
+    toggleWindow()
+    console.log('Window opened automatically - user not logged in')
+  }
 })
 
 // Function to create or toggle the window.

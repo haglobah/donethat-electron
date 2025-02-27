@@ -9,7 +9,7 @@ const {
   browserLocalPersistence,
   setPersistence,
 } = require("firebase/auth");
-const { getFunctions, httpsCallable, connectFunctionsEmulator } = require("firebase/functions");
+const { getFunctions, httpsCallable } = require("firebase/functions");
 const firebaseConfig = require("../firebase-config.js");
 
 // Initialize Firebase
