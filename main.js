@@ -11,84 +11,198 @@ const firebaseApp = initializeApp(firebaseConfig)
 // Add your Firebase function URL here
 const FIREBASE_CAPTURE_URL = 'https://capturescreenshot-t374dqodfq-ew.a.run.app'
 
-ipcMain.on('login', (event, token) => {
-  console.log("ID Token:", token);
-  idToken = token
-})
-
-ipcMain.on('logout', (event,) => {
-  console.log("User logged out");
-  idToken = ""
-})
-
 let tray = null
 let mainWindow = null
 let idToken = null
 let screenshotInterval = null
+let pauseTimeout = null
+let isPaused = false
 
 app.whenReady().then(() => {
-  // Setup tray icons as before.
-  const iconGreenPath = path.join(__dirname, 'assets', 'iconGreenTemplate.png')
-  const iconBasePath  = path.join(__dirname, 'assets', 'iconTemplate.png')
+  // Create the tray
+  tray = new Tray(nativeImage.createEmpty())
+  tray.setToolTip('Done List')
+  
+  // Initial state - if not logged in, show crossed out checkmark and don't record
+  const isLoggedIn = Boolean(idToken)
+  updateTrayIcon(isLoggedIn && !isPaused)
+  
+  // Only start recording if logged in
+  if (isLoggedIn) {
+    startRecording()
+  } else {
+    console.log('Not starting recording - user not logged in')
+  }
 
-  // Create nativeImages and disable template rendering if needed.
-  const greenIcon = nativeImage.createFromPath(iconGreenPath)
-  greenIcon.setTemplateImage(false)
-  const baseIcon = nativeImage.createFromPath(iconBasePath)
-  baseIcon.setTemplateImage(true)
+  // Left-click opens the window
+  tray.on('click', () => {
+    toggleWindow()
+  })
 
-  // Initialize tray with the green icon.
-  tray = new Tray(greenIcon)
-  tray.setToolTip('Hi from Joey 👋')
+  // Show context menu with pause options on right-click
+  tray.on('right-click', () => {
+    const contextMenu = buildContextMenu()
+    tray.popUpContextMenu(contextMenu)
+  })
+  
+  // Open window automatically if user not logged in
+  if (!isLoggedIn) {
+    toggleWindow()
+    console.log('Window opened automatically - user not logged in')
+  }
+})
 
-  // Build the context menu.
-  const contextMenu = Menu.buildFromTemplate([
+// Updated listener for login event to start recording when user logs in
+ipcMain.on('login', (event, token) => {
+  console.log("ID Token:", token);
+  idToken = token
+  
+  // Start recording if we weren't already and not paused
+  if (!screenshotInterval && !isPaused) {
+    startRecording()
+  }
+  
+  // Update icon to show active state
+  updateTrayIcon(!isPaused)
+})
+
+ipcMain.on('logout', (event) => {
+  console.log("User logged out");
+  idToken = null
+  
+  // Stop recording if we were recording
+  if (screenshotInterval) {
+    clearInterval(screenshotInterval)
+    screenshotInterval = null
+  }
+  
+  // Update icon to show inactive state
+  updateTrayIcon(false)
+})
+
+// Function to update the tray icon based on recording state
+function updateTrayIcon(isRecording) {
+  if (isRecording) {
+    // Use checkmark symbol when recording
+    tray.setTitle('✓')
+    tray.setToolTip('Done List - Recording')
+  } else {
+    // Use crossed out checkmark when paused or not logged in
+    tray.setTitle('⏸')
+    tray.setToolTip('Done List - Not Recording')
+  }
+}
+
+// Function to start the recording
+function startRecording() {
+  if (!screenshotInterval) {
+    screenshotInterval = setInterval(captureAndSendScreenshot, 60000)
+    console.log('Screenshot recording started')
+  }
+}
+
+// Function to build the context menu with pause options
+function buildContextMenu() {
+  const isLoggedIn = Boolean(idToken)
+  
+  return Menu.buildFromTemplate([
     { 
-      label: 'Open', 
-      click: () => toggleWindow()
+      label: 'Pause for 5 minutes', 
+      click: () => pauseRecording(5 * 60 * 1000),
+      enabled: isLoggedIn && !isPaused && screenshotInterval
     },
+    { 
+      label: 'Pause for 15 minutes', 
+      click: () => pauseRecording(15 * 60 * 1000),
+      enabled: isLoggedIn && !isPaused && screenshotInterval
+    },
+    { 
+      label: 'Pause for 30 minutes', 
+      click: () => pauseRecording(30 * 60 * 1000),
+      enabled: isLoggedIn && !isPaused && screenshotInterval
+    },
+    { 
+      label: 'Pause for 1 hour', 
+      click: () => pauseRecording(60 * 60 * 1000),
+      enabled: isLoggedIn && !isPaused && screenshotInterval
+    },
+    { 
+      label: 'Pause for today', 
+      click: () => pauseUntilTomorrow(),
+      enabled: isLoggedIn && !isPaused && screenshotInterval
+    },
+    { type: 'separator' },
+    { 
+      label: 'Resume', 
+      click: () => resumeRecording(),
+      enabled: isLoggedIn && isPaused
+    },
+    { type: 'separator' },
     { 
       label: 'Quit', 
       click: () => app.quit()
     }
   ])
-  tray.on('right-click', () => {
-    tray.popUpContextMenu(contextMenu)
-  })
+}
 
-  // Toggle tray icon on left-click (if needed).
-  let isRecording = true
-  tray.on('click', () => {
-    if (isRecording) {
-      tray.setImage(baseIcon)
-      isRecording = false
-      
-      // Stop screenshot interval
-      if (screenshotInterval) {
-        clearInterval(screenshotInterval)
-        screenshotInterval = null
-        console.log('Screenshot recording stopped')
-      }
-    } else {
-      tray.setImage(greenIcon)
-      isRecording = true
-      
-      // Start screenshot interval (every 60 seconds)
-      screenshotInterval = setInterval(captureAndSendScreenshot, 60000)
-      console.log('Screenshot recording started')
-    }
-  })
-  
-  // Initialize screenshot recording since isRecording starts as true
-  screenshotInterval = setInterval(captureAndSendScreenshot, 60000)
-  console.log('Screenshot recording started')
-  
-  // Check if user is logged in, if not open the window automatically
-  if (!idToken) {
-    toggleWindow()
-    console.log('Window opened automatically - user not logged in')
+// Function to pause recording for a specified duration
+function pauseRecording(duration) {
+  // Clear existing interval and timeout
+  if (screenshotInterval) {
+    clearInterval(screenshotInterval)
+    screenshotInterval = null
   }
-})
+  
+  if (pauseTimeout) {
+    clearTimeout(pauseTimeout)
+  }
+  
+  // Set pause state
+  isPaused = true
+  updateTrayIcon(false)
+  console.log(`Screenshot recording paused for ${duration/60000} minutes`)
+  
+  // Set timeout to resume recording after duration
+  pauseTimeout = setTimeout(() => {
+    resumeRecording()
+  }, duration)
+}
+
+// Function to pause until tomorrow (next day at midnight)
+function pauseUntilTomorrow() {
+  const now = new Date()
+  const tomorrow = new Date(now)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  tomorrow.setHours(0, 0, 0, 0)
+  
+  const duration = tomorrow - now
+  pauseRecording(duration)
+  console.log(`Screenshot recording paused until tomorrow`)
+}
+
+// Function to resume recording
+function resumeRecording() {
+  if (pauseTimeout) {
+    clearTimeout(pauseTimeout)
+    pauseTimeout = null
+  }
+  
+  isPaused = false
+  
+  // Only restart recording if logged in
+  if (idToken) {
+    updateTrayIcon(true)
+    
+    // Restart screenshot interval
+    if (!screenshotInterval) {
+      screenshotInterval = setInterval(captureAndSendScreenshot, 60000)
+      console.log('Screenshot recording resumed')
+    }
+  } else {
+    updateTrayIcon(false)
+    console.log('Cannot resume recording - user not logged in')
+  }
+}
 
 // Function to create or toggle the window.
 function toggleWindow() {
