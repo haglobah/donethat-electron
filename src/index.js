@@ -15,12 +15,7 @@ const firebaseConfig = require("../firebase-config.js");
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const functions = getFunctions(app, "europe-west1"); // Specify region to match your functions
-
-// Optional: Connect to emulator in development
-// if (process.env.NODE_ENV === 'development') {
-//   connectFunctionsEmulator(functions, "localhost", 5001);
-// }
+const functions = getFunctions(app, "europe-west1");
 
 // Create callable function references
 const generateRawSummaryFunction = httpsCallable(functions, "generateRawSummary");
@@ -87,10 +82,14 @@ let recipientEmails = [];
 // Update variable reference to the new summary spinner
 const summaryLoadingSpinner = document.getElementById("summaryLoadingSpinner");
 
+console.log("Element check:");
+console.log("generateSummaryBtn exists:", !!generateSummaryBtn);
+console.log("settingsBtn exists:", !!settingsBtn);
+console.log("backToDashboardBtn exists:", !!backToDashboardBtn);
+
 // Get the auth state listener to store the ID token when state changes
 onAuthStateChanged(auth, (user) => {
   if (user) {
-    // User is signed in — show dashboard view and hide other views
     signInView.classList.add("hidden");
     signUpView.classList.add("hidden");
     resetView.classList.add("hidden");
@@ -98,14 +97,11 @@ onAuthStateChanged(auth, (user) => {
     dashboardView.classList.remove("hidden");
     console.log("User logged in:", user.email);
     
-    // Get and store the ID token
     user.getIdToken().then(idToken => {
       userIdToken = idToken;
-      // Load user settings when signed in
       loadUserSettings();
     });
   } else {
-    // No user is signed in — show sign in view by default
     dashboardView.classList.add("hidden");
     signUpView.classList.add("hidden");
     resetView.classList.add("hidden");
@@ -129,11 +125,10 @@ signInForm.addEventListener("submit", (e) => {
     })
     .then((idToken) => {
       console.log("ID Token:", idToken);
-      userIdToken = idToken; // Store the ID token for API calls
+      userIdToken = idToken;
       const {ipcRenderer} = require("electron");
       ipcRenderer.send("login", idToken);
       
-      // Load user settings when signed in
       loadUserSettings();
     })
     .catch((error) => {
@@ -166,7 +161,6 @@ resetForm.addEventListener("submit", (e) => {
   sendPasswordResetEmail(auth, email)
     .then(() => {
       alert("Password reset email sent. Check your inbox.");
-      // Return to the sign in view after sending the reset email.
       resetView.classList.add("hidden");
       signInView.classList.remove("hidden");
     })
@@ -221,278 +215,17 @@ logoutLink.addEventListener("click", (e) => {
 
 // Update visibility when summary is generated
 function showSummaryGeneratedState() {
-  // Hide generate button, show save button
   document.getElementById('generateSummaryBtn').classList.add('hidden');
   document.getElementById('submitSummaryBtn').classList.remove('hidden');
 }
 
 // Reset to initial state
 function resetSummaryState() {
-  // Show generate button, hide save button
   document.getElementById('generateSummaryBtn').classList.remove('hidden');
   document.getElementById('submitSummaryBtn').classList.add('hidden');
   
-  // Reset container text
   document.getElementById('summaryContainer').innerHTML = 
     '<p class="empty-state-text">Generate a summary to see your activities.</p>';
-}
-
-// Generate summary button handler
-document.getElementById('generateSummaryBtn').addEventListener('click', () => {
-  // Show loading spinner overlay
-  summaryLoadingSpinner.classList.remove('hidden');
-  
-  // Simulate API call (replace with your actual API call)
-  setTimeout(() => {
-    // Hide loading spinner
-    summaryLoadingSpinner.classList.add('hidden');
-    
-    // Sample bullet points (replace with your actual data)
-    const bulletPoints = [
-      'Completed project presentation for client',
-      'Attended team meeting about new feature release',
-      'Reviewed 3 pull requests from junior developers',
-      'Spent 2 hours on bug fixes for mobile app',
-      'Researched new technologies for upcoming project'
-    ];
-    
-    // Update summary container with generated content that includes checkboxes and hearts
-    const bulletHTML = bulletPoints.map(point => `
-      <div class="bullet-item">
-        <input type="checkbox" class="bullet-checkbox" checked>
-        <span class="bullet-content bullet-text">${point}</span>
-        <span class="heart-icon">♥</span>
-      </div>
-    `).join('');
-    
-    // Add the comment field at the end of the bullet items
-    const commentHTML = `
-      <textarea id="commentInput" class="comment-input" placeholder="Add a comment here"></textarea>
-    `;
-    
-    document.getElementById('summaryContainer').innerHTML = bulletHTML + commentHTML;
-    
-    // Add event listeners to checkboxes to toggle text appearance
-    document.querySelectorAll('.bullet-checkbox').forEach(checkbox => {
-      checkbox.addEventListener('change', function() {
-        const textElement = this.nextElementSibling;
-        const heartIcon = textElement.nextElementSibling;
-        
-        if (this.checked) {
-          // Item is checked (normal state)
-          textElement.classList.remove('bullet-text-crossed');
-          heartIcon.classList.remove('opacity-50', 'pointer-events-none');
-        } else {
-          // Item is unchecked (crossed out)
-          textElement.classList.add('bullet-text-crossed');
-          
-          // Disable and visually dim the heart icon
-          heartIcon.classList.add('opacity-50', 'pointer-events-none');
-          
-          // Also remove active state if it was previously hearted
-          heartIcon.classList.remove('active');
-        }
-      });
-    });
-    
-    // Add event listeners to heart icons to toggle active state
-    document.querySelectorAll('.heart-icon').forEach(heart => {
-      heart.addEventListener('click', function() {
-        this.classList.toggle('active');
-      });
-    });
-    
-    // Show save option
-    showSummaryGeneratedState();
-    
-    // Re-bind the settings button to ensure it works after generating the list
-    document.getElementById('settingsBtn').addEventListener('click', () => {
-      dashboardView.classList.add('hidden');
-      settingsView.classList.remove('hidden');
-    });
-  }, 1500);
-});
-
-// Submit summary button handler
-document.getElementById('submitSummaryBtn').addEventListener('click', () => {
-  // Show loading spinner overlay
-  summaryLoadingSpinner.classList.remove('hidden');
-  
-  // Collect only the checked bullet points
-  const selectedBullets = [];
-  document.querySelectorAll('.bullet-item').forEach(item => {
-    const checkbox = item.querySelector('.bullet-checkbox');
-    const heartIcon = item.querySelector('.heart-icon');
-    const textElement = item.querySelector('.bullet-text');
-    
-    if (checkbox.checked) {
-      let bulletText = textElement.textContent.trim();
-      
-      // If heart is active, add purple heart emoji to the beginning of the text
-      if (heartIcon.classList.contains('active')) {
-        bulletText = '💜 ' + bulletText;
-      }
-      
-      selectedBullets.push(bulletText);
-    }
-  });
-  
-  // Get the comment text
-  const commentText = document.getElementById('commentInput').value.trim();
-  
-  console.log('Selected bullets to submit:', selectedBullets);
-  console.log('Comment to submit:', commentText);
-  
-  // Simulate API call (replace with your actual API call)
-  setTimeout(() => {
-    // Hide loading spinner
-    summaryLoadingSpinner.classList.add('hidden');
-    
-    // Reset to initial state
-    resetSummaryState();
-    
-    // Show success message
-    alert('Summary submitted successfully!');
-  }, 1000);
-});
-
-// Discard summary button handler
-document.getElementById('discardSummaryBtn').addEventListener('click', (e) => {
-  e.preventDefault();
-  // Simply reset to initial state
-  resetSummaryState();
-});
-
-// Settings button click handler
-if (settingsBtn) {
-  settingsBtn.addEventListener("click", () => {
-    dashboardView.classList.add("hidden");
-    settingsView.classList.remove("hidden");
-  });
-}
-
-// Back to dashboard button click handler
-if (backToDashboardBtn) {
-  backToDashboardBtn.addEventListener("click", () => {
-    settingsView.classList.add("hidden");
-    dashboardView.classList.remove("hidden");
-  });
-}
-
-// Add email to UI as tag
-async function addEmailTag(email) {
-  if (!email || recipientEmails.includes(email)) return;
-  
-  // Basic email validation
-  if (!email.includes("@") || !email.includes(".")) {
-    alert(`Invalid email format: ${email}`);
-    return;
-  }
-  
-  // Show loading spinner overlay
-  loadingSpinner.classList.remove("hidden");
-  
-  // Add to array
-  recipientEmails.push(email);
-  
-  // Clear any empty state message
-  if (recipientEmails.length === 1) {
-    emailTagsContainer.innerHTML = "";
-  }
-  
-  // Create tag element using classes from our CSS
-  const tag = document.createElement("div");
-  tag.className = "email-tag";
-  tag.innerHTML = `
-    <span class="email-text">${email}</span>
-    <button data-email="${email}" class="remove-email remove-email-btn">
-      &times;
-    </button>
-  `;
-  
-  // Add to container
-  emailTagsContainer.appendChild(tag);
-  
-  // Clear input
-  emailInput.value = "";
-  emailInput.focus();
-  
-  // Auto-save settings
-  try {
-    await updateUserSettingsFunction({
-      emailRecipients: recipientEmails
-    });
-  } catch (error) {
-    console.error("Error saving settings:", error);
-    alert(`Error saving: ${error.message}`);
-  } finally {
-    // Hide loading spinner regardless of success/failure
-    loadingSpinner.classList.add("hidden");
-  }
-}
-
-// Remove email tag
-async function removeEmailTag(email) {
-  // Show loading spinner overlay
-  loadingSpinner.classList.remove("hidden");
-  
-  recipientEmails = recipientEmails.filter(e => e !== email);
-  
-  // Remove from UI
-  const tags = emailTagsContainer.querySelectorAll(".email-tag");
-  tags.forEach(tag => {
-    const removeBtn = tag.querySelector(".remove-email");
-    if (removeBtn && removeBtn.dataset.email === email) {
-      tag.remove();
-    }
-  });
-  
-  // Show empty state message if no emails
-  if (recipientEmails.length === 0) {
-    emailTagsContainer.innerHTML = '<p class="empty-state-text">No recipients added. Add emails to receive your summaries.</p>';
-  }
-  
-  // Auto-save settings
-  try {
-    await updateUserSettingsFunction({
-      emailRecipients: recipientEmails
-    });
-  } catch (error) {
-    console.error("Error saving settings:", error);
-    alert(`Error saving: ${error.message}`);
-  } finally {
-    // Hide loading spinner regardless of success/failure
-    loadingSpinner.classList.add("hidden");
-  }
-}
-
-// Event listener for adding emails
-if (addEmailBtn) {
-  addEmailBtn.addEventListener("click", () => {
-    const email = emailInput.value.trim();
-    addEmailTag(email);
-  });
-}
-
-// Allow adding emails by pressing Enter
-if (emailInput) {
-  emailInput.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      const email = emailInput.value.trim();
-      addEmailTag(email);
-    }
-  });
-}
-
-// Event delegation for removing emails
-if (emailTagsContainer) {
-  emailTagsContainer.addEventListener("click", (e) => {
-    if (e.target.classList.contains("remove-email")) {
-      const email = e.target.dataset.email;
-      removeEmailTag(email);
-    }
-  });
 }
 
 // Update the loadUserSettings function to ensure proper display of multiple emails
@@ -500,35 +233,297 @@ async function loadUserSettings() {
   if (!auth.currentUser) return;
   
   try {
-    // Clear existing emails
     recipientEmails = [];
     emailTagsContainer.innerHTML = "";
     
-    // Call the function using Firebase SDK
     const result = await getUserSettingsFunction();
     const settings = result.data;
     
-    // Add each email as a separate tag row
     if (settings.emailRecipients && Array.isArray(settings.emailRecipients) && settings.emailRecipients.length > 0) {
       settings.emailRecipients.forEach(email => {
-        addEmailTag(email);
+        recipientEmails.push(email);
+        
+        const tag = document.createElement("div");
+        tag.className = "email-tag";
+        tag.innerHTML = `
+          <span class="email-text">${email}</span>
+          <button data-email="${email}" class="remove-email remove-email-btn">
+            &times;
+          </button>
+        `;
+        
+        emailTagsContainer.appendChild(tag);
       });
     } else {
-      // Show empty state message
       emailTagsContainer.innerHTML = '<p class="empty-state-text">No recipients added. Add emails to receive your summaries.</p>';
     }
   } catch (error) {
     console.error("Error loading settings:", error);
-    // Show empty state message in case of error
     emailTagsContainer.innerHTML = '<p class="empty-state-text">No recipients added. Add emails to receive your summaries.</p>';
   }
 }
 
-// Remove the save settings button event listener or comment it out
-/* 
-if (saveSettingsBtn) {
-  saveSettingsBtn.addEventListener("click", async () => {
-    // ... existing implementation ...
+// Only add event listeners if elements exist
+if (submitSummaryBtn) {
+  submitSummaryBtn.addEventListener('click', () => {
+    console.log("Submit summary button clicked");
+    summaryLoadingSpinner.classList.remove('hidden');
+    
+    const selectedBullets = [];
+    document.querySelectorAll('.bullet-item').forEach(item => {
+      const checkbox = item.querySelector('.bullet-checkbox');
+      const heartIcon = item.querySelector('.heart-icon');
+      const textElement = item.querySelector('.bullet-text');
+      
+      if (checkbox.checked) {
+        let bulletText = textElement.textContent.trim();
+        
+        if (heartIcon.classList.contains('active')) {
+          bulletText = '💜 ' + bulletText;
+        }
+        
+        selectedBullets.push(bulletText);
+      }
+    });
+    
+    const commentText = document.getElementById('commentInput').value.trim();
+    
+    console.log('Selected bullets to submit:', selectedBullets);
+    console.log('Comment to submit:', commentText);
+    
+    setTimeout(() => {
+      summaryLoadingSpinner.classList.add('hidden');
+      resetSummaryState();
+      alert('Summary submitted successfully!');
+    }, 1000);
   });
 }
-*/ 
+
+// Add null check for discardSummaryBtn, which is likely the source of the error
+// Removing this event listener completely as it seems the element doesn't exist
+// If you need it later, just re-add it with a null check
+// if (discardSummaryBtn) {
+//   discardSummaryBtn.addEventListener('click', (e) => {
+//     e.preventDefault();
+//     console.log("Discard summary button clicked");
+//     resetSummaryState();
+//   });
+// }
+
+// Add event listeners for critical UI elements with console logs to debug
+if (generateSummaryBtn) {
+  generateSummaryBtn.addEventListener('click', () => {
+    console.log('Generate summary button clicked');
+    summaryLoadingSpinner.classList.remove('hidden');
+    
+    setTimeout(() => {
+      summaryLoadingSpinner.classList.add('hidden');
+      
+      const bulletPoints = [
+        'Completed project presentation for client',
+        'Attended team meeting about new feature release',
+        'Reviewed 3 pull requests from junior developers',
+        'Spent 2 hours on bug fixes for mobile app',
+        'Researched new technologies for upcoming project'
+      ];
+      
+      const bulletHTML = bulletPoints.map(point => `
+        <div class="bullet-item">
+          <input type="checkbox" class="bullet-checkbox" checked>
+          <span class="bullet-content bullet-text">${point}</span>
+          <span class="heart-icon">♥</span>
+        </div>
+      `).join('');
+      
+      const commentHTML = `
+        <textarea id="commentInput" class="comment-input" placeholder="Add a comment here"></textarea>
+      `;
+      
+      document.getElementById('summaryContainer').innerHTML = bulletHTML + commentHTML;
+      
+      document.querySelectorAll('.bullet-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+          const textElement = this.nextElementSibling;
+          const heartIcon = textElement.nextElementSibling;
+          
+          if (this.checked) {
+            textElement.classList.remove('bullet-text-crossed');
+            heartIcon.classList.remove('opacity-50', 'pointer-events-none');
+          } else {
+            textElement.classList.add('bullet-text-crossed');
+            heartIcon.classList.add('opacity-50', 'pointer-events-none');
+            heartIcon.classList.remove('active');
+          }
+        });
+      });
+      
+      document.querySelectorAll('.heart-icon').forEach(heart => {
+        heart.addEventListener('click', function() {
+          this.classList.toggle('active');
+        });
+      });
+      
+      showSummaryGeneratedState();
+    }, 1500);
+  });
+} else {
+  console.error("Generate summary button not found");
+}
+
+// Settings button
+if (settingsBtn) {
+  settingsBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    console.log('Settings button clicked');
+    dashboardView.classList.add('hidden');
+    settingsView.classList.remove('hidden');
+  });
+} else {
+  console.error("Settings button not found");
+}
+
+// Back to dashboard button
+if (backToDashboardBtn) {
+  backToDashboardBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    console.log('Back to dashboard button clicked');
+    settingsView.classList.add('hidden');
+    dashboardView.classList.remove('hidden');
+  });
+} else {
+  console.error("Back to dashboard button not found");
+}
+
+// Email management
+if (addEmailBtn) {
+  addEmailBtn.addEventListener('click', () => {
+    console.log('Add email button clicked');
+    const email = emailInput.value.trim();
+    if (email) {
+      addEmailTag(email);
+    }
+  });
+} else {
+  console.error("Add email button not found");
+}
+
+// Allow adding emails by pressing Enter
+if (emailInput) {
+  emailInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      console.log('Enter pressed in email input');
+      const email = emailInput.value.trim();
+      if (email) {
+        addEmailTag(email);
+      }
+    }
+  });
+} else {
+  console.error("Email input not found");
+}
+
+// Event delegation for removing emails
+if (emailTagsContainer) {
+  emailTagsContainer.addEventListener('click', (e) => {
+    if (e.target.classList.contains('remove-email')) {
+      console.log('Remove email button clicked');
+      const email = e.target.dataset.email;
+      removeEmailTag(email);
+    }
+  });
+} else {
+  console.error("Email tags container not found");
+}
+
+// Add email tag function
+async function addEmailTag(email) {
+  if (!email) return;
+  
+  console.log("Adding email tag:", email);
+  
+  if (recipientEmails.includes(email)) {
+    alert(`Email ${email} is already in the list.`);
+    return;
+  }
+  
+  if (!email.includes("@") || !email.includes(".")) {
+    alert(`Invalid email format: ${email}`);
+    return;
+  }
+  
+  loadingSpinner.classList.remove("hidden");
+  
+  try {
+    recipientEmails.push(email);
+    
+    if (emailTagsContainer.querySelector('.empty-state-text')) {
+      emailTagsContainer.innerHTML = "";
+    }
+    
+    const tag = document.createElement("div");
+    tag.className = "email-tag";
+    tag.innerHTML = `
+      <span class="email-text">${email}</span>
+      <button data-email="${email}" class="remove-email remove-email-btn">
+        &times;
+      </button>
+    `;
+    
+    emailTagsContainer.appendChild(tag);
+    
+    emailInput.value = "";
+    emailInput.focus();
+    
+    await updateUserSettingsFunction({
+      emailRecipients: recipientEmails
+    });
+    
+    console.log("Email added and settings saved:", email);
+  } catch (error) {
+    recipientEmails = recipientEmails.filter(e => e !== email);
+    console.error("Error saving settings:", error);
+    alert(`Error saving: ${error.message}`);
+  } finally {
+    loadingSpinner.classList.add("hidden");
+  }
+}
+
+// Remove email tag function
+async function removeEmailTag(email) {
+  if (!email || !recipientEmails.includes(email)) return;
+  
+  console.log("Removing email tag:", email);
+  
+  loadingSpinner.classList.remove("hidden");
+  
+  try {
+    recipientEmails = recipientEmails.filter(e => e !== email);
+    
+    const tags = emailTagsContainer.querySelectorAll(".email-tag");
+    tags.forEach(tag => {
+      const removeBtn = tag.querySelector(".remove-email");
+      if (removeBtn && removeBtn.dataset.email === email) {
+        tag.remove();
+      }
+    });
+    
+    if (recipientEmails.length === 0) {
+      emailTagsContainer.innerHTML = '<p class="empty-state-text">No recipients added. Add emails to receive your summaries.</p>';
+    }
+    
+    await updateUserSettingsFunction({
+      emailRecipients: recipientEmails
+    });
+    
+    console.log("Email removed and settings saved:", email);
+  } catch (error) {
+    if (!recipientEmails.includes(email)) {
+      recipientEmails.push(email);
+    }
+    console.error("Error saving settings:", error);
+    alert(`Error saving: ${error.message}`);
+  } finally {
+    loadingSpinner.classList.add("hidden");
+  }
+} 
