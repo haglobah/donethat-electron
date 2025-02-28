@@ -265,7 +265,12 @@ document.getElementById('generateSummaryBtn').addEventListener('click', () => {
       </div>
     `).join('');
     
-    document.getElementById('summaryContainer').innerHTML = bulletHTML;
+    // Add the comment field at the end of the bullet items
+    const commentHTML = `
+      <textarea id="commentInput" class="comment-input" placeholder="Add a comment here"></textarea>
+    `;
+    
+    document.getElementById('summaryContainer').innerHTML = bulletHTML + commentHTML;
     
     // Add event listeners to checkboxes to toggle text appearance
     document.querySelectorAll('.bullet-checkbox').forEach(checkbox => {
@@ -332,7 +337,11 @@ document.getElementById('submitSummaryBtn').addEventListener('click', () => {
     }
   });
   
+  // Get the comment text
+  const commentText = document.getElementById('commentInput').value.trim();
+  
   console.log('Selected bullets to submit:', selectedBullets);
+  console.log('Comment to submit:', commentText);
   
   // Simulate API call (replace with your actual API call)
   setTimeout(() => {

@@ -168,3 +168,14 @@
 .bullet-text-crossed {
   @apply text-gray-400 line-through;
 }
+
+/* Comment input field styling */
+.comment-input {
+  @apply w-full border border-gray-300 p-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-purple-500 transition duration-200 mt-3;
+  min-height: 60px;
+  resize: none;
+}
+
+.comment-input::placeholder {
+  @apply text-gray-400;
+}
