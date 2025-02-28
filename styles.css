@@ -99,3 +99,63 @@
 .form-input, .email-tags-container, .summary-container {
   @apply border border-gray-300 rounded-lg;
 }
+
+/* Custom checkbox styles */
+.bullet-checkbox {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #d1d5db; /* Grey border */
+  border-radius: 4px;
+  background-color: white;
+  display: inline-block;
+  position: relative;
+  margin-top: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.bullet-checkbox:checked {
+  background-color: white; /* Keep white background when checked */
+}
+
+.bullet-checkbox:checked::after {
+  content: "✓";
+  font-size: 14px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #8b5cf6; /* Purple checkmark */
+  font-weight: bold;
+}
+
+.bullet-checkbox:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.3); /* Purple focus ring */
+}
+
+/* Maintain the other styles */
+.bullet-item {
+  @apply flex items-start mb-2 w-full;
+}
+
+.bullet-content {
+  @apply flex-1 mx-2;
+}
+
+/* Heart icon styles */
+.heart-icon {
+  @apply ml-auto text-gray-400 cursor-pointer hover:text-gray-600 transition-colors duration-200 text-base;
+}
+
+.heart-icon.active {
+  @apply text-purple-500 hover:text-purple-600;
+}
+
+/* Disabled heart icon when item is crossed out */
+.heart-icon.opacity-50.pointer-events-none {
+  @apply cursor-default;
+}

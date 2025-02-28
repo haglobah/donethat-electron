@@ -224,9 +224,6 @@ function showSummaryGeneratedState() {
   // Hide generate button, show save button
   document.getElementById('generateSummaryBtn').classList.add('hidden');
   document.getElementById('submitSummaryBtn').classList.remove('hidden');
-  
-  // Show discard option
-  document.getElementById('discardSummaryOption').classList.remove('hidden');
 }
 
 // Reset to initial state
@@ -234,9 +231,6 @@ function resetSummaryState() {
   // Show generate button, hide save button
   document.getElementById('generateSummaryBtn').classList.remove('hidden');
   document.getElementById('submitSummaryBtn').classList.add('hidden');
-  
-  // Hide discard option
-  document.getElementById('discardSummaryOption').classList.add('hidden');
   
   // Reset container text
   document.getElementById('summaryContainer').innerHTML = 
@@ -262,11 +256,12 @@ document.getElementById('generateSummaryBtn').addEventListener('click', () => {
       'Researched new technologies for upcoming project'
     ];
     
-    // Update summary container with generated content that includes checkboxes
+    // Update summary container with generated content that includes checkboxes and hearts
     const bulletHTML = bulletPoints.map(point => `
-      <div class="flex items-start mb-2">
-        <input type="checkbox" class="bullet-checkbox mt-1 mr-2 h-4 w-4 rounded-full text-purple-600 focus:ring-purple-500" checked>
-        <span class="bullet-text">${point}</span>
+      <div class="bullet-item">
+        <input type="checkbox" class="bullet-checkbox" checked>
+        <span class="bullet-content bullet-text">${point}</span>
+        <span class="heart-icon">♥</span>
       </div>
     `).join('');
     
@@ -276,16 +271,40 @@ document.getElementById('generateSummaryBtn').addEventListener('click', () => {
     document.querySelectorAll('.bullet-checkbox').forEach(checkbox => {
       checkbox.addEventListener('change', function() {
         const textElement = this.nextElementSibling;
+        const heartIcon = textElement.nextElementSibling;
+        
         if (this.checked) {
+          // Item is checked (normal state)
           textElement.classList.remove('text-gray-400', 'line-through');
+          heartIcon.classList.remove('opacity-50', 'pointer-events-none');
         } else {
+          // Item is unchecked (crossed out)
           textElement.classList.add('text-gray-400', 'line-through');
+          
+          // Disable and visually dim the heart icon
+          heartIcon.classList.add('opacity-50', 'pointer-events-none');
+          
+          // Also remove active state if it was previously hearted
+          heartIcon.classList.remove('active');
         }
       });
     });
     
-    // Show save/discard options
+    // Add event listeners to heart icons to toggle active state
+    document.querySelectorAll('.heart-icon').forEach(heart => {
+      heart.addEventListener('click', function() {
+        this.classList.toggle('active');
+      });
+    });
+    
+    // Show save option
     showSummaryGeneratedState();
+    
+    // Re-bind the settings button to ensure it works after generating the list
+    document.getElementById('settingsBtn').addEventListener('click', () => {
+      dashboardView.classList.add('hidden');
+      settingsView.classList.remove('hidden');
+    });
   }, 1500);
 });
 
@@ -296,9 +315,20 @@ document.getElementById('submitSummaryBtn').addEventListener('click', () => {
   
   // Collect only the checked bullet points
   const selectedBullets = [];
-  document.querySelectorAll('.bullet-checkbox').forEach(checkbox => {
+  document.querySelectorAll('.bullet-item').forEach(item => {
+    const checkbox = item.querySelector('.bullet-checkbox');
+    const heartIcon = item.querySelector('.heart-icon');
+    const textElement = item.querySelector('.bullet-text');
+    
     if (checkbox.checked) {
-      selectedBullets.push(checkbox.nextElementSibling.textContent.trim());
+      let bulletText = textElement.textContent.trim();
+      
+      // If heart is active, add purple heart emoji to the beginning of the text
+      if (heartIcon.classList.contains('active')) {
+        bulletText = '💜 ' + bulletText;
+      }
+      
+      selectedBullets.push(bulletText);
     }
   });
   
