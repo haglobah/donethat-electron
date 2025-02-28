@@ -255,15 +255,36 @@ document.getElementById('generateSummaryBtn').addEventListener('click', () => {
     // Hide loading spinner
     summaryLoadingSpinner.classList.add('hidden');
     
-    // Update summary container with generated content
-    document.getElementById('summaryContainer').innerHTML = 
-      '<ul class="list-disc pl-5 space-y-2">' +
-      '<li>Completed project presentation for client</li>' +
-      '<li>Attended team meeting about new feature release</li>' +
-      '<li>Reviewed 3 pull requests from junior developers</li>' +
-      '<li>Spent 2 hours on bug fixes for mobile app</li>' +
-      '<li>Researched new technologies for upcoming project</li>' +
-      '</ul>';
+    // Sample bullet points (replace with your actual data)
+    const bulletPoints = [
+      'Completed project presentation for client',
+      'Attended team meeting about new feature release',
+      'Reviewed 3 pull requests from junior developers',
+      'Spent 2 hours on bug fixes for mobile app',
+      'Researched new technologies for upcoming project'
+    ];
+    
+    // Update summary container with generated content that includes checkboxes
+    const bulletHTML = bulletPoints.map(point => `
+      <div class="flex items-start mb-2">
+        <input type="checkbox" class="bullet-checkbox mt-1 mr-2 h-4 w-4 rounded-full text-purple-600 focus:ring-purple-500" checked>
+        <span class="bullet-text">${point}</span>
+      </div>
+    `).join('');
+    
+    document.getElementById('summaryContainer').innerHTML = bulletHTML;
+    
+    // Add event listeners to checkboxes to toggle text appearance
+    document.querySelectorAll('.bullet-checkbox').forEach(checkbox => {
+      checkbox.addEventListener('change', function() {
+        const textElement = this.nextElementSibling;
+        if (this.checked) {
+          textElement.classList.remove('text-gray-400', 'line-through');
+        } else {
+          textElement.classList.add('text-gray-400', 'line-through');
+        }
+      });
+    });
     
     // Show save/discard options
     showSummaryGeneratedState();
@@ -275,6 +296,16 @@ document.getElementById('submitSummaryBtn').addEventListener('click', () => {
   // Show loading spinner overlay
   summaryLoadingSpinner.classList.remove('hidden');
   
+  // Collect only the checked bullet points
+  const selectedBullets = [];
+  document.querySelectorAll('.bullet-checkbox').forEach(checkbox => {
+    if (checkbox.checked) {
+      selectedBullets.push(checkbox.nextElementSibling.textContent.trim());
+    }
+  });
+  
+  console.log('Selected bullets to submit:', selectedBullets);
+  
   // Simulate API call (replace with your actual API call)
   setTimeout(() => {
     // Hide loading spinner
@@ -284,7 +315,7 @@ document.getElementById('submitSummaryBtn').addEventListener('click', () => {
     resetSummaryState();
     
     // Show success message
-    alert('Summary saved successfully!');
+    alert('Summary submitted successfully!');
   }, 1000);
 });
 
