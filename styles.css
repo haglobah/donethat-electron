@@ -1,1 +1,86 @@
 @import "tailwindcss";
+
+/* Ensure hidden class works on all elements with !important to override other styles */
+.hidden {
+  display: none !important;
+}
+
+/* Common view container */
+.view-container {
+  @apply h-full w-full items-center justify-center;
+}
+
+/* Hidden views - no longer needed since we have the general hidden class */
+/* .view-container.hidden {
+  @apply hidden;
+} */
+
+/* Form container */
+.form-container {
+  @apply w-full max-w-xs p-4 bg-white rounded-lg;
+}
+
+/* Form input */
+.form-input {
+  @apply w-full border border-black p-1.5 rounded text-sm focus:outline-none focus:ring-1 focus:ring-purple-500 transition duration-200;
+}
+
+/* Form label */
+.form-label {
+  @apply block text-black font-semibold text-sm;
+}
+
+/* Primary button */
+.btn-primary {
+  @apply w-full bg-purple-500 text-white p-1.5 rounded text-sm cursor-pointer hover:bg-purple-600 transition duration-200 shadow-md;
+}
+
+/* Link style */
+.link {
+  @apply text-purple-500 hover:underline text-sm;
+}
+
+/* Section header */
+.section-header {
+  @apply text-xl font-bold text-center text-black mb-3;
+}
+
+/* Form spacing */
+.form-group {
+  @apply space-y-2.5;
+}
+
+/* Loading spinner */
+.spinner {
+  @apply animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-purple-500;
+}
+
+/* Spinner overlay */
+.spinner-overlay {
+  @apply absolute inset-0 bg-white/70 flex items-center justify-center;
+}
+
+/* Email tag */
+.email-tag {
+  @apply flex items-center justify-between bg-white border border-gray-300 rounded-lg p-1.5 w-full text-sm;
+}
+
+/* Email tag container */
+.email-tags-container {
+  @apply flex flex-col gap-1 mb-2 border border-gray-300 rounded-lg p-2 max-h-[100px] overflow-y-auto bg-gray-50 w-full;
+}
+
+/* Modal */
+.modal {
+  @apply fixed inset-0 bg-black/50 flex items-center justify-center z-50;
+}
+
+/* Modal content */
+.modal-content {
+  @apply max-w-xs w-full bg-white p-4 border border-black rounded-lg shadow-xl;
+}
+
+/* Summary container */
+.summary-container {
+  @apply h-24 mb-3 border border-gray-200 rounded p-2 overflow-y-auto text-sm;
+}
