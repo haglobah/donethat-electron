@@ -1,4 +1,4 @@
-const { app, Tray, Menu, BrowserWindow, nativeImage, screen, desktopCapturer } = require('electron')
+const { app, Tray, Menu, BrowserWindow, nativeImage, screen, desktopCapturer, Notification } = require('electron')
 const path = require('path')
 const {ipcMain} = require('electron')
 
@@ -17,6 +17,9 @@ let idToken = null
 let screenshotInterval = null
 let pauseTimeout = null
 let isPaused = false
+let summaryNotificationTime = null
+let summaryNotificationTimeout = null
+let summarySubmittedTimestamp = null
 
 app.whenReady().then(() => {
   // Create the tray
@@ -442,6 +445,123 @@ function compressImage(dataUrl, maxWidth = 1280, maxHeight = 800, quality = 0.6)
       reject(error)
     }
   })
+}
+
+// Add new listener for receiving summary notification settings
+ipcMain.on('updateSummaryNotificationTime', (event, time) => {
+  console.log("Updating summary notification time:", time);
+  summaryNotificationTime = time;
+  
+  // Clear any existing notification timeout
+  if (summaryNotificationTimeout) {
+    clearTimeout(summaryNotificationTimeout);
+    summaryNotificationTimeout = null;
+  }
+  
+  // Schedule the next notification if we have a valid time
+  if (summaryNotificationTime) {
+    scheduleNextSummaryNotification();
+  }
+})
+
+// Add listener for when summary is submitted
+ipcMain.on('summarySubmitted', (event) => {
+  console.log("Summary submitted notification received");
+  summarySubmittedTimestamp = Date.now();
+})
+
+// Function to schedule the next summary notification
+function scheduleNextSummaryNotification() {
+  if (!summaryNotificationTime || !idToken) return;
+  
+  // Clear any existing timeout
+  if (summaryNotificationTimeout) {
+    clearTimeout(summaryNotificationTimeout);
+  }
+  
+  const now = new Date();
+  const [hours, minutes] = summaryNotificationTime.split(':').map(Number);
+  
+  // Set target time for today
+  const targetTime = new Date(now);
+  targetTime.setHours(hours, minutes, 0, 0);
+  
+  // If the target time has already passed today, schedule for tomorrow
+  if (now > targetTime) {
+    targetTime.setDate(targetTime.getDate() + 1);
+  }
+  
+  // Calculate ms until the notification should be shown
+  const msUntilNotification = targetTime - now;
+  
+  console.log(`Scheduling summary notification for ${targetTime.toLocaleString()} (in ${msUntilNotification / 60000} minutes)`);
+  
+  // Set the timeout
+  summaryNotificationTimeout = setTimeout(() => {
+    showSummaryNotification();
+  }, msUntilNotification);
+}
+
+// Function to show the summary notification
+function showSummaryNotification() {
+  // Check if summary was submitted recently (within the last 2 hours or any time after the notification time today)
+  if (shouldSkipNotification()) {
+    console.log("Skipping notification - summary already submitted today");
+    scheduleNextSummaryNotification(); // Schedule for next time
+    return;
+  }
+  
+  const notification = new Notification({
+    title: 'Done List Summary',
+    body: 'Time to submit your daily summary!',
+    silent: false
+  });
+  
+  notification.on('click', () => {
+    // Open the app when notification is clicked
+    if (mainWindow) {
+      showWindowBelowTray();
+    } else {
+      toggleWindow();
+    }
+  });
+  
+  notification.on('close', () => {
+    // If notification was dismissed, reschedule for tomorrow
+    scheduleNextSummaryNotification();
+  });
+  
+  notification.show();
+  
+  // Schedule the next notification
+  scheduleNextSummaryNotification();
+}
+
+// Function to check if we should skip showing notification
+function shouldSkipNotification() {
+  if (!summarySubmittedTimestamp) return false;
+  
+  const now = new Date();
+  const submittedDate = new Date(summarySubmittedTimestamp);
+  
+  // If submission was on a different day, don't skip
+  if (submittedDate.getDate() !== now.getDate() || 
+      submittedDate.getMonth() !== now.getMonth() || 
+      submittedDate.getFullYear() !== now.getFullYear()) {
+    return false;
+  }
+  
+  // Get notification time for today
+  const [hours, minutes] = summaryNotificationTime.split(':').map(Number);
+  const notificationTimeToday = new Date(now);
+  notificationTimeToday.setHours(hours, minutes, 0, 0);
+  
+  // Two hour window before notification time
+  const twoHoursBeforeNotification = new Date(notificationTimeToday);
+  twoHoursBeforeNotification.setHours(notificationTimeToday.getHours() - 2);
+  
+  // If submitted within 2 hours before notification time or any time after
+  return submittedDate >= twoHoursBeforeNotification;
 }
 
 // Prevent app from quitting when all windows are closed.

@@ -213,7 +213,7 @@
                 <!-- Email tags will be added here dynamically -->
               </div>
               
-              <!-- Loading spinner overlay -->
+              <!-- Loading spinner overlay for emails -->
               <div id="loadingSpinner" class="spinner-overlay hidden">
                 <div class="spinner"></div>
               </div>
@@ -237,6 +237,27 @@
                   <line x1="5" y1="12" x2="19" y2="12"></line>
                 </svg>
               </button>
+            </div>
+          </div>
+          
+          <!-- New notification time setting with its own spinner -->
+          <div class="mt-4 relative">
+            <label for="notificationTimeInput" class="form-label mb-1">
+              Daily Reminder
+            </label>
+            <div class="relative cursor-pointer time-input-container">
+              <input
+                type="time"
+                id="notificationTimeInput"
+                class="form-input cursor-pointer"
+                value="17:00"
+                readonly
+              />
+              
+              <!-- Loading spinner overlay for time setting -->
+              <div id="timeLoadingSpinner" class="spinner-overlay hidden">
+                <div class="spinner"></div>
+              </div>
             </div>
           </div>
         </div>

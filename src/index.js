@@ -70,6 +70,8 @@ const emailTagsContainer = document.getElementById("emailTagsContainer");
 let currentSummaryId = null;
 let userIdToken = null;
 let selectedBulletPoints = [];
+let summaryNotificationTime = "17:00"; // Default time (5:00 PM)
+const {ipcRenderer} = require("electron");
 
 // Global array to store emails
 let recipientEmails = [];
@@ -255,6 +257,16 @@ async function loadUserSettings() {
       // No emails, show empty state
       emailTagsContainer.innerHTML = '<p class="empty-state-text">No recipients added. Add emails to receive your summaries.</p>';
     }
+    
+    // Load notification time if available
+    if (result.data && result.data.summaryNotificationTime) {
+      summaryNotificationTime = result.data.summaryNotificationTime;
+      document.getElementById("notificationTimeInput").value = summaryNotificationTime;
+    }
+    
+    // Send the notification time to the main process
+    ipcRenderer.send("updateSummaryNotificationTime", summaryNotificationTime);
+    
   } catch (error) {
     console.error("Error loading settings:", error);
     emailTagsContainer.innerHTML = '<p class="empty-state-text">Error loading recipients. Please try again.</p>';
@@ -288,6 +300,52 @@ function renderEmailTags() {
   });
 }
 
+// Updated saveUserSettings to include notification time and use separate spinners
+async function saveUserSettings(type, value) {
+  if (!auth.currentUser) return;
+  
+  // Use the appropriate spinner based on the setting type
+  if (type === 'emails') {
+    loadingSpinner.classList.remove("hidden");
+  } else if (type === 'notificationTime') {
+    const timeLoadingSpinner = document.getElementById("timeLoadingSpinner");
+    if (timeLoadingSpinner) {
+      timeLoadingSpinner.classList.remove("hidden");
+    }
+  }
+  
+  try {
+    let settingsData = {};
+    
+    if (type === 'emails') {
+      settingsData.emailRecipients = value;
+    } else if (type === 'notificationTime') {
+      settingsData.summaryNotificationTime = value;
+      summaryNotificationTime = value;
+      
+      // Send the updated time to the main process
+      ipcRenderer.send("updateSummaryNotificationTime", value);
+    }
+    
+    await updateUserSettingsFunction(settingsData);
+    
+  } catch (error) {
+    console.error("Error saving settings:", error);
+    alert(`Error saving settings: ${error.message}`);
+    throw error;
+  } finally {
+    // Hide the appropriate spinner
+    if (type === 'emails') {
+      loadingSpinner.classList.add("hidden");
+    } else if (type === 'notificationTime') {
+      const timeLoadingSpinner = document.getElementById("timeLoadingSpinner");
+      if (timeLoadingSpinner) {
+        timeLoadingSpinner.classList.add("hidden");
+      }
+    }
+  }
+}
+
 // Simplified addEmailTag function
 async function addEmailTag(email) {
   if (!email) return;
@@ -317,9 +375,7 @@ async function addEmailTag(email) {
     renderEmailTags();
     
     // Save to server
-    await updateUserSettingsFunction({
-      emailRecipients: recipientEmails
-    });
+    await saveUserSettings('emails', recipientEmails);
   } catch (error) {
     // If error, remove the email we just added
     recipientEmails = recipientEmails.filter(e => e !== email);
@@ -349,9 +405,7 @@ async function removeEmailTag(email) {
     renderEmailTags();
     
     // Save to server
-    await updateUserSettingsFunction({
-      emailRecipients: recipientEmails
-    });
+    await saveUserSettings('emails', recipientEmails);
   } catch (error) {
     // If error, restore original list
     recipientEmails = originalList;
@@ -397,6 +451,9 @@ if (submitSummaryBtn) {
       .then((result) => {
         summaryLoadingSpinner.classList.add('hidden');
         resetSummaryState();
+        
+        // Notify main process that summary was submitted
+        ipcRenderer.send("summarySubmitted");
       })
       .catch((error) => {
         summaryLoadingSpinner.classList.add('hidden');
@@ -482,6 +539,11 @@ if (settingsBtn) {
     console.log('Settings button clicked');
     dashboardView.classList.add('hidden');
     settingsView.classList.remove('hidden');
+    
+    // Update the time input to the current value
+    if (notificationTimeInput) {
+      notificationTimeInput.value = summaryNotificationTime;
+    }
   });
 } else {
   console.error("Settings button not found");
@@ -539,4 +601,62 @@ if (emailTagsContainer) {
   });
 } else {
   console.error("Email tags container not found");
-} 
+}
+
+// Add event listener for notification time changes
+const notificationTimeInput = document.getElementById("notificationTimeInput");
+if (notificationTimeInput) {
+  // Make the input readonly to prevent typing and force using the picker
+  notificationTimeInput.setAttribute("readonly", "readonly");
+  
+  // When clicked, force the time picker to open
+  notificationTimeInput.addEventListener('click', (e) => {
+    e.preventDefault();
+    
+    // Remove readonly temporarily to allow the picker to work
+    e.target.removeAttribute("readonly");
+    
+    // Focus the input
+    e.target.focus();
+    
+    // Try to show the time picker using various methods
+    // Modern browsers support showPicker()
+    if (typeof e.target.showPicker === 'function') {
+      try {
+        e.target.showPicker();
+      } catch (err) {
+        console.log('showPicker failed, falling back', err);
+      }
+    }
+    
+    // Add readonly back after a short delay
+    setTimeout(() => {
+      e.target.setAttribute("readonly", "readonly");
+    }, 100);
+  });
+  
+  // Also add a click handler to the parent container to catch clicks
+  // on the time picker icon that some browsers show
+  const timeInputContainer = notificationTimeInput.parentElement;
+  if (timeInputContainer) {
+    timeInputContainer.addEventListener('click', (e) => {
+      // Don't trigger if we clicked directly on the input (it has its own handler)
+      if (e.target !== notificationTimeInput) {
+        // Simulate a click on the input
+        notificationTimeInput.click();
+      }
+    });
+  }
+  
+  notificationTimeInput.addEventListener('change', async (e) => {
+    const newTime = e.target.value;
+    console.log('Notification time changed to:', newTime);
+    
+    try {
+      await saveUserSettings('notificationTime', newTime);
+    } catch (error) {
+      // If error occurs, revert to previous value
+      e.target.value = summaryNotificationTime;
+    }
+  });
+}
