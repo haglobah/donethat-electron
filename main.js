@@ -1,6 +1,7 @@
 const { app, Tray, Menu, BrowserWindow, nativeImage, screen, desktopCapturer, Notification } = require('electron')
 const path = require('path')
 const {ipcMain} = require('electron')
+const { autoUpdater } = require('electron-updater')
 
 // Importing Firebase modules using the new modular API.
 const { initializeApp, getAuth } = require('firebase/app')
@@ -73,6 +74,48 @@ app.whenReady().then(async () => {
     toggleWindow()
     console.log('Window opened automatically - user not logged in')
   }
+  
+  // Check for updates
+  autoUpdater.checkForUpdatesAndNotify()
+})
+
+// Configure autoUpdater
+function setupAutoUpdater() {
+  // Log update events
+  autoUpdater.logger = require('electron-log')
+  autoUpdater.logger.transports.file.level = 'info'
+  
+  // Handle update events
+  autoUpdater.on('update-available', (info) => {
+    console.log('Update available:', info)
+  })
+  
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('Update downloaded:', info)
+    
+    // Send event to renderer to show update view
+    if (mainWindow) {
+      mainWindow.webContents.send('update-downloaded')
+    }
+  })
+  
+  autoUpdater.on('error', (err) => {
+    console.error('Update error:', err)
+  })
+}
+
+// Call setup function
+setupAutoUpdater()
+
+// Add IPC handler to manually check for updates
+ipcMain.on('check-for-updates', () => {
+  autoUpdater.checkForUpdatesAndNotify()
+})
+
+// Add IPC handler to install update and restart
+ipcMain.on('install-update', () => {
+  console.log('Installing update and restarting...')
+  autoUpdater.quitAndInstall(true, true)
 })
 
 // Updated listener for login event to start recording when user logs in

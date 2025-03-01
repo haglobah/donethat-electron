@@ -38,6 +38,7 @@ const resetView = document.getElementById("resetView");
 const dashboardView = document.getElementById("dashboardView");
 const settingsView = document.getElementById("settingsView");
 const permissionView = document.getElementById("permissionView");
+const updateView = document.getElementById("updateView");
 
 const signInForm = document.getElementById("signInForm");
 const signUpForm = document.getElementById("signUpForm");
@@ -752,3 +753,25 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 });
+
+// Listen for update events from main process
+ipcRenderer.on('update-downloaded', () => {
+  // Hide all other views
+  signInView.classList.add("hidden");
+  signUpView.classList.add("hidden");
+  resetView.classList.add("hidden");
+  dashboardView.classList.add("hidden");
+  settingsView.classList.add("hidden");
+  permissionView.classList.add("hidden");
+  
+  // Show update view
+  updateView.classList.remove("hidden");
+});
+
+// Add restart button handler
+const restartForUpdateBtn = document.getElementById("restartForUpdateBtn");
+if (restartForUpdateBtn) {
+  restartForUpdateBtn.addEventListener("click", () => {
+    ipcRenderer.send("install-update");
+  });
+}
