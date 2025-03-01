@@ -57,7 +57,7 @@
 
 /* Email tag */
 .email-tag {
-  @apply flex items-center justify-between bg-white border border-gray-300 rounded-lg p-3 w-full mb-1;
+  @apply flex items-center justify-between bg-white border border-gray-300 rounded-lg p-1.5 w-full mb-1;
 }
 
 /* Email text */
@@ -67,12 +67,12 @@
 
 /* Remove email button */
 .remove-email-btn {
-  @apply shrink-0 text-gray-500 bg-gray-200 hover:bg-gray-300 focus:outline-none h-5 w-5 rounded-full flex items-center justify-center transition-colors text-xs;
+  @apply shrink-0 text-gray-500 bg-gray-200 hover:bg-gray-300 focus:outline-none h-4 w-4 rounded-full flex items-center justify-center transition-colors text-xs;
 }
 
 /* Empty state text */
 .empty-state-text {
-  @apply text-gray-500 text-center text-sm;
+  @apply text-gray-500 text-center text-xs;
 }
 
 /* Email tag container */
@@ -178,4 +178,9 @@
 
 .comment-input::placeholder {
   @apply text-gray-400;
+}
+
+/* Email list container - for flat display without background */
+.email-list-container {
+  @apply flex flex-col gap-1 mb-2 w-full max-h-30 overflow-y-auto;
 }
