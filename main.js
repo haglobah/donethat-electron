@@ -244,7 +244,7 @@ function toggleWindow() {
   } else {
     // Create the window if it doesn't exist.
     mainWindow = new BrowserWindow({
-      width: 600, // 250, 
+      width: 250, 
       height: 400,
       frame: false,
       resizable: false,
@@ -262,7 +262,7 @@ function toggleWindow() {
     mainWindow.loadFile('./src/index.html')
 
     // Debug inspector
-    mainWindow.webContents.openDevTools();
+    // mainWindow.webContents.openDevTools();
 
     // Position the window once it's ready.
     mainWindow.once('ready-to-show', () => {
@@ -321,9 +321,7 @@ async function captureAndSendScreenshot() {
       // Single screen - standard compression
       screenshot = await compressImage(sources[0].thumbnail.toDataURL(), 1280, 800)
     } else {
-      // Multiple screens - need to merge them with higher resolution limits
-      console.log(`Merging ${sources.length} screens into one screenshot`)
-      
+      // Multiple screens - need to merge them with higher resolution limits      
       const { createCanvas, Image } = require('canvas')
       
       // Calculate total dimensions needed
@@ -354,10 +352,7 @@ async function captureAndSendScreenshot() {
       
       const scaleFactor = Math.min(1, dynamicWidth / totalWidth)
       const scaledWidth = Math.floor(totalWidth * scaleFactor)
-      const scaledHeight = Math.floor(totalHeight * scaleFactor)
-      
-      console.log(`Using dynamic resolution: ${scaledWidth}x${scaledHeight} for ${screenCount} screens`)
-      
+      const scaledHeight = Math.floor(totalHeight * scaleFactor)      
       // Create canvas with scaled dimensions
       const canvas = createCanvas(scaledWidth, scaledHeight)
       const ctx = canvas.getContext('2d')
@@ -458,7 +453,6 @@ function compressImage(dataUrl, maxWidth = 1280, maxHeight = 800, quality = 0.6)
         
         const originalSize = Math.round(dataUrl.length / 1024)
         const compressedSize = Math.round(compressedDataUrl.length / 1024)
-        console.log(`Image compressed: ${originalSize}KB → ${compressedSize}KB (${Math.round((1 - compressedSize/originalSize) * 100)}% reduction)`)
         
         resolve(compressedDataUrl)
       }
@@ -628,8 +622,8 @@ ipcMain.on('requestScreenCapturePermission', async () => {
   })
 })
 
-// Add IPC handler for notification permission status
+// Simplify this handler to just check if notifications are supported at all
 ipcMain.handle('checkNotificationPermission', async () => {
-  // This will be used by the renderer to get the current notification permission
-  return Notification.isSupported()
+  // Just check if notifications are supported by the system
+  return Notification.isSupported();
 })

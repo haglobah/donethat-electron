@@ -13,9 +13,9 @@ const { getFunctions, httpsCallable } = require("firebase/functions");
 const firebaseConfig = require("../firebase-config.js");
 
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const functions = getFunctions(app, "europe-west1");
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const functions = getFunctions(firebaseApp, "europe-west1");
 
 // Create callable function references
 const generateRawSummaryFunction = httpsCallable(functions, "generateRawSummary");
@@ -26,7 +26,6 @@ const updateUserSettingsFunction = httpsCallable(functions, "updateUserSettings"
 // Explicitly set auth persistence to local storage
 setPersistence(auth, browserLocalPersistence)
   .then(() => {
-    console.log("Auth persistence set to local.");
   })
   .catch((error) => {
     console.error("Error setting persistence:", error);
@@ -88,14 +87,8 @@ let recipientEmails = [];
 // Update variable reference to the new summary spinner
 const summaryLoadingSpinner = document.getElementById("summaryLoadingSpinner");
 
-console.log("Element check:");
-console.log("generateSummaryBtn exists:", !!generateSummaryBtn);
-console.log("settingsBtn exists:", !!settingsBtn);
-console.log("backToDashboardBtn exists:", !!backToDashboardBtn);
-
 // Listen for screen capture permission updates
 ipcRenderer.on("screenCapturePermission", (event, hasPermission) => {
-  console.log("Screen capture permission:", hasPermission);
   hasScreenCapturePermission = hasPermission;
   
   // Update UI based on permission status
@@ -110,46 +103,33 @@ ipcRenderer.on("screenCapturePermission", (event, hasPermission) => {
   }
 });
 
-// Function to check notification permission
+// Simplify the check notification permission function completely
 async function checkNotificationPermission() {
-  // First check if notifications are supported by the system
-  const areNotificationsSupported = await ipcRenderer.invoke("checkNotificationPermission");
-  
-  if (!areNotificationsSupported) {
-    console.log("Notifications not supported by the system");
-    return false;
-  }
-  
-  // Then check browser permission
-  console.log("Notification permission status:", Notification.permission);
-  if (Notification.permission === "granted") {
-    return true;
-  } else {
+  try {
+    return await ipcRenderer.invoke("checkNotificationPermission");
+  } catch (error) {
     return false;
   }
 }
 
-// Function to update notification UI based on permission
+// Update the notification UI function
 async function updateNotificationUI() {
-  const hasPermission = await checkNotificationPermission();
-  console.log("Has notification permission:", hasPermission);
+  const notificationsSupported = await checkNotificationPermission();
   
   // Get references to containers
   const notificationTimeContainer = document.getElementById("notificationTimeContainer");
   const notificationPermissionContainer = document.getElementById("notificationPermissionContainer");
   
   if (!notificationTimeContainer || !notificationPermissionContainer) {
-    console.error("Notification containers not found:", 
-      { timeContainer: !!notificationTimeContainer, permissionContainer: !!notificationPermissionContainer });
     return;
   }
   
-  if (hasPermission) {
-    console.log("Showing time input, hiding permission button");
+  if (notificationsSupported) {
+    // If notifications are supported, show the time input
     notificationPermissionContainer.classList.add("hidden");
     notificationTimeContainer.classList.remove("hidden");
   } else {
-    console.log("Hiding time input, showing permission button");
+    // If notifications aren't supported, show the permission button
     notificationTimeContainer.classList.add("hidden");
     notificationPermissionContainer.classList.remove("hidden");
   }
@@ -198,11 +178,9 @@ signInForm.addEventListener("submit", (e) => {
 
   signInWithEmailAndPassword(auth, email, password)
     .then((userCredential) => {
-      console.log("Signed in successfully:", userCredential.user.email);
       return userCredential.user.getIdToken();
     })
     .then((idToken) => {
-      console.log("ID Token:", idToken);
       userIdToken = idToken;
       const {ipcRenderer} = require("electron");
       ipcRenderer.send("login", idToken);
@@ -223,7 +201,6 @@ signUpForm.addEventListener("submit", (e) => {
 
   createUserWithEmailAndPassword(auth, email, password)
     .then((userCredential) => {
-      console.log("Signed up successfully:", userCredential.user.email);
     })
     .catch((error) => {
       alert("Sign up error: " + error.message);
@@ -282,7 +259,6 @@ logoutLink.addEventListener("click", (e) => {
   
   signOut(auth)
     .then(() => {
-      console.log("User signed out.");
       const {ipcRenderer} = require("electron");
       ipcRenderer.send("logout");
     })
@@ -619,7 +595,6 @@ if (generateSummaryBtn) {
 if (settingsBtn) {
   settingsBtn.addEventListener('click', async (e) => {
     e.preventDefault();
-    console.log('Settings button clicked');
     dashboardView.classList.add('hidden');
     settingsView.classList.remove('hidden');
     
@@ -633,9 +608,6 @@ if (settingsBtn) {
     const notificationTimeContainer = document.getElementById("notificationTimeContainer");
     const notificationPermissionContainer = document.getElementById("notificationPermissionContainer");
     
-    console.log("Container elements:", 
-      { timeContainer: !!notificationTimeContainer, permissionContainer: !!notificationPermissionContainer });
-    
     // Check notification permissions when settings view is shown
     await updateNotificationUI();
   });
@@ -647,7 +619,6 @@ if (settingsBtn) {
 if (backToDashboardBtn) {
   backToDashboardBtn.addEventListener('click', (e) => {
     e.preventDefault();
-    console.log('Back to dashboard button clicked');
     settingsView.classList.add('hidden');
     dashboardView.classList.remove('hidden');
   });
@@ -658,7 +629,6 @@ if (backToDashboardBtn) {
 // Email management
 if (addEmailBtn) {
   addEmailBtn.addEventListener('click', () => {
-    console.log('Add email button clicked');
     const email = emailInput.value.trim();
     if (email) {
       addEmailTag(email);
@@ -673,7 +643,6 @@ if (emailInput) {
   emailInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      console.log('Enter pressed in email input');
       const email = emailInput.value.trim();
       if (email) {
         addEmailTag(email);
@@ -688,7 +657,6 @@ if (emailInput) {
 if (emailTagsContainer) {
   emailTagsContainer.addEventListener('click', (e) => {
     if (e.target.classList.contains('remove-email')) {
-      console.log('Remove email button clicked');
       const email = e.target.dataset.email;
       removeEmailTag(email);
     }
@@ -719,7 +687,6 @@ if (notificationTimeInput) {
       try {
         e.target.showPicker();
       } catch (err) {
-        console.log('showPicker failed, falling back', err);
       }
     }
     
@@ -744,7 +711,6 @@ if (notificationTimeInput) {
   
   notificationTimeInput.addEventListener('change', async (e) => {
     const newTime = e.target.value;
-    console.log('Notification time changed to:', newTime);
     
     try {
       await saveUserSettings('notificationTime', newTime);
@@ -768,7 +734,6 @@ if (logoutFromPermission) {
     
     signOut(auth)
       .then(() => {
-        console.log("User signed out.");
         ipcRenderer.send("logout");
       })
       .catch((error) => {
@@ -778,35 +743,12 @@ if (logoutFromPermission) {
   });
 }
 
-// Make the enable notifications button more robust
+// Simplify the enable notifications button handler
 document.addEventListener("DOMContentLoaded", () => {
   const enableNotificationsBtn = document.getElementById("enableNotificationsBtn");
   if (enableNotificationsBtn) {
-    enableNotificationsBtn.addEventListener("click", async () => {
-      console.log("Enable notifications button clicked");
-      
-      if (!("Notification" in window)) {
-        alert("This browser does not support notifications");
-        return;
-      }
-      
-      try {
-        console.log("Requesting notification permission...");
-        const permission = await Notification.requestPermission();
-        console.log("Permission result:", permission);
-        
-        if (permission === "granted") {
-          // Update the UI immediately
-          await updateNotificationUI();
-        } else {
-          alert("Notification permission denied. Please enable notifications in your browser settings.");
-        }
-      } catch (error) {
-        console.error("Error requesting notification permission:", error);
-        alert("Could not request notification permission: " + error.message);
-      }
+    enableNotificationsBtn.addEventListener("click", () => {
+      alert("Notifications are not supported on this system.");
     });
-  } else {
-    console.error("Enable notifications button not found on DOMContentLoaded");
   }
 });
