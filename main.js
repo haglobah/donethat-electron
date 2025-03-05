@@ -42,7 +42,7 @@ async function checkScreenCapturePermission() {
 app.whenReady().then(async () => {
   // Create the tray
   tray = new Tray(nativeImage.createEmpty())
-  tray.setToolTip('Done List')
+  tray.setToolTip('donethat')
   
   // Check screen capture permission
   await checkScreenCapturePermission()
@@ -156,11 +156,11 @@ function updateTrayIcon(isRecording) {
   if (isRecording) {
     // Use checkmark symbol when recording
     tray.setTitle('✓')
-    tray.setToolTip('Done List - Recording')
+    tray.setToolTip('donethat - Recording')
   } else {
     // Use crossed out checkmark when paused or not logged in or no permission
     tray.setTitle('⏸')
-    tray.setToolTip('Done List - Not Recording')
+    tray.setToolTip('donethat - Not Recording')
   }
 }
 
@@ -576,7 +576,7 @@ function showSummaryNotification() {
   }
   
   const notification = new Notification({
-    title: 'Done List Summary',
+    title: 'donethat',
     body: 'Time to submit your daily summary!',
     silent: false
   });

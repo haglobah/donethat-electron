@@ -140,3 +140,6 @@ firebase-config.js
 
 # Build output
 build/*
+
+# MAC
+.DS_Store
