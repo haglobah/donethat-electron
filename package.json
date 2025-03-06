@@ -5,9 +5,10 @@
   "main": "main.js",
   "scripts": {
     "build:css": "postcss styles.css -o ./build/output.css --verbose",
-    "start": "electron .",
-    "build": "npm run build:css && electron-builder",
-    "pack": "electron-builder --dir"
+    "start": "npm run build:css && electron .",
+    "build": "npm run build:css && electron-builder -mwl",
+    "pack": "electron-builder --dir",
+    "release": "dotenv -- npm run build && dotenv -- electron-builder -mwl --publish always"
   },
   "repository": {
     "type": "git",
@@ -16,12 +17,14 @@
   "author": "Christoph Hartmann",
   "license": "UNLICENSED",
   "bugs": {
-    "url": "https://github.com/donethatai/donethat-electron/issues"
+    "url": "https://github.com/donethatai/donethat-releases/issues"
   },
-  "homepage": "https://github.com/donethatai/donethat-electron#readme",
+  "homepage": "https://donethat.ai",
   "devDependencies": {
+    "dotenv-cli": "^8.0.0",
     "electron": "^34.2.0",
     "electron-builder": "^25.1.8",
+    "electron-notarize": "^1.2.2",
     "postcss-cli": "^11.0.0"
   },
   "dependencies": {
@@ -43,17 +46,22 @@
     "directories": {
       "buildResources": "resources"
     },
+    "afterSign": "scripts/notarize.js",
     "publish": [
       {
         "provider": "github",
         "owner": "donethatai",
-        "repo": "donethat-electron"
+        "repo": "donethat-releases"
       }
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ]
     },
     "win": {

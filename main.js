@@ -1,6 +1,6 @@
 const { app, Tray, Menu, BrowserWindow, nativeImage, screen, desktopCapturer, Notification } = require('electron')
 const path = require('path')
-const {ipcMain} = require('electron')
+const { ipcMain } = require('electron')
 const { autoUpdater } = require('electron-updater')
 
 // Importing Firebase modules using the new modular API.
@@ -23,11 +23,76 @@ let summaryNotificationTimeout = null
 let summarySubmittedTimestamp = null
 let hasScreenCapturePermission = false
 
+// Configure autoUpdater
+function setupAutoUpdater() {
+  // Log update events
+  autoUpdater.logger = require('electron-log')
+  autoUpdater.logger.transports.file.level = 'info'
+  
+  // Add configuration for GitHub provider
+  autoUpdater.allowPrerelease = false
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+  
+  
+  // Print diagnostic information
+  console.log(`Current app version: ${app.getVersion()}`);
+  console.log(`App is packaged: ${app.isPackaged}`);
+  console.log(`Application name: ${app.getName()}`);
+  console.log(`Update feed URL: ${autoUpdater.getFeedURL ? autoUpdater.getFeedURL() : 'Method not available'}`);
+
+  // Handle update events
+  autoUpdater.on('checking-for-update', () => {
+    console.log('Checking for updates...')
+  })
+
+  autoUpdater.on('update-available', (info) => {
+    console.log('Update available:', info)
+    console.log(`Available version: ${info.version}, current version: ${app.getVersion()}`)
+  })
+
+  autoUpdater.on('update-not-available', (info) => {
+    console.log('No updates available:', info)
+    console.log(`Latest version: ${info.version}, current version: ${app.getVersion()}`)
+    console.log('If this seems incorrect, check package.json version and GitHub releases')
+  })
+
+  autoUpdater.on('download-progress', (progress) => {
+    console.log(`Download progress: ${progress.percent.toFixed(2)}%`)
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('Update downloaded:', info)
+
+    // Send event to renderer to show update view
+    if (mainWindow) {
+      mainWindow.webContents.send('update-downloaded')
+    }
+  })
+
+  autoUpdater.on('error', (error) => {
+    console.error('Update error:', error);
+    console.error('Update error details:', error.stack || 'No stack trace available');
+    
+    if (error.message && error.message.includes('Could not locate update bundle')) {
+      console.error('Bundle ID mismatch issue detected.');
+      // Try another approach - create a temporary build for testing
+      console.log('Suggestion: For testing updates in development, consider:');
+      console.log('1. Build a test version with a lower version number');
+      console.log('2. Install that version');
+      console.log('3. Then run the development build to test update detection');
+    }
+  })
+}
+
+// Call setup function
+setupAutoUpdater()
+
 // Check if we have screen recording permission
 async function checkScreenCapturePermission() {
   try {
-    const sources = await desktopCapturer.getSources({ 
-      types: ['screen'], 
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
       thumbnailSize: { width: 1, height: 1 }
     })
     hasScreenCapturePermission = sources.length > 0
@@ -43,14 +108,14 @@ app.whenReady().then(async () => {
   // Create the tray
   tray = new Tray(nativeImage.createEmpty())
   tray.setToolTip('donethat')
-  
+
   // Check screen capture permission
   await checkScreenCapturePermission()
-  
+
   // Initial state - if not logged in, show crossed out checkmark and don't record
   const isLoggedIn = Boolean(idToken)
   updateTrayIcon(isLoggedIn && !isPaused && hasScreenCapturePermission)
-  
+
   // Only start recording if logged in and has permission
   if (isLoggedIn && hasScreenCapturePermission) {
     startRecording()
@@ -68,48 +133,49 @@ app.whenReady().then(async () => {
     const contextMenu = buildContextMenu()
     tray.popUpContextMenu(contextMenu)
   })
-  
+
   // Open window automatically if user not logged in
   if (!isLoggedIn) {
     toggleWindow()
     console.log('Window opened automatically - user not logged in')
   }
-  
-  // Check for updates
-  autoUpdater.checkForUpdatesAndNotify()
+
+  // Check for updates with proper error handling
+  try {
+    // Force update check with more detailed logs
+    console.log('Starting update check...')
+    console.log(`Looking for updates as version: ${app.getVersion()}`)
+
+    // For development testing, you can optionally specify the update server directly
+    if (!app.isPackaged) {
+      console.log('Setting custom update URL for development testing')
+      // This will check for updates directly from GitHub
+      const options = {
+        provider: 'github',
+        owner: 'donethatai',
+        repo: 'donethat-releases'
+      }
+      await autoUpdater.setFeedURL(options)
+    }
+
+    await autoUpdater.checkForUpdates()
+    console.log('Update check completed')
+  } catch (error) {
+    console.error('Error checking for updates:', error)
+  }
 })
 
-// Configure autoUpdater
-function setupAutoUpdater() {
-  // Log update events
-  autoUpdater.logger = require('electron-log')
-  autoUpdater.logger.transports.file.level = 'info'
-  
-  // Handle update events
-  autoUpdater.on('update-available', (info) => {
-    console.log('Update available:', info)
-  })
-  
-  autoUpdater.on('update-downloaded', (info) => {
-    console.log('Update downloaded:', info)
-    
-    // Send event to renderer to show update view
+// Add IPC handler to manually check for updates with proper error handling
+ipcMain.on('check-for-updates', async () => {
+  try {
+    await autoUpdater.checkForUpdates()
+    console.log('Manual update check completed')
+  } catch (error) {
+    console.error('Error during manual update check:', error)
     if (mainWindow) {
-      mainWindow.webContents.send('update-downloaded')
+      mainWindow.webContents.send('update-error', error.message)
     }
-  })
-  
-  autoUpdater.on('error', (err) => {
-    console.error('Update error:', err)
-  })
-}
-
-// Call setup function
-setupAutoUpdater()
-
-// Add IPC handler to manually check for updates
-ipcMain.on('check-for-updates', () => {
-  autoUpdater.checkForUpdatesAndNotify()
+  }
 })
 
 // Add IPC handler to install update and restart
@@ -122,12 +188,12 @@ ipcMain.on('install-update', () => {
 ipcMain.on('login', (event, token) => {
   console.log("ID Token:", token);
   idToken = token
-  
+
   // Start recording if we weren't already and not paused and have permissions
   if (!screenshotInterval && !isPaused && hasScreenCapturePermission) {
     startRecording()
   }
-  
+
   // Update icon to show active state (only if we have permission)
   updateTrayIcon(!isPaused && hasScreenCapturePermission)
 
@@ -140,13 +206,13 @@ ipcMain.on('login', (event, token) => {
 ipcMain.on('logout', (event) => {
   console.log("User logged out");
   idToken = null
-  
+
   // Stop recording if we were recording
   if (screenshotInterval) {
     clearInterval(screenshotInterval)
     screenshotInterval = null
   }
-  
+
   // Update icon to show inactive state
   updateTrayIcon(false)
 })
@@ -175,42 +241,42 @@ function startRecording() {
 // Function to build the context menu with pause options
 function buildContextMenu() {
   const isLoggedIn = Boolean(idToken)
-  
+
   return Menu.buildFromTemplate([
-    { 
-      label: 'Pause for 5 minutes', 
+    {
+      label: 'Pause for 5 minutes',
       click: () => pauseRecording(5 * 60 * 1000),
       enabled: isLoggedIn && !isPaused && screenshotInterval
     },
-    { 
-      label: 'Pause for 15 minutes', 
+    {
+      label: 'Pause for 15 minutes',
       click: () => pauseRecording(15 * 60 * 1000),
       enabled: isLoggedIn && !isPaused && screenshotInterval
     },
-    { 
-      label: 'Pause for 30 minutes', 
+    {
+      label: 'Pause for 30 minutes',
       click: () => pauseRecording(30 * 60 * 1000),
       enabled: isLoggedIn && !isPaused && screenshotInterval
     },
-    { 
-      label: 'Pause for 1 hour', 
+    {
+      label: 'Pause for 1 hour',
       click: () => pauseRecording(60 * 60 * 1000),
       enabled: isLoggedIn && !isPaused && screenshotInterval
     },
-    { 
-      label: 'Pause for today', 
+    {
+      label: 'Pause for today',
       click: () => pauseUntilTomorrow(),
       enabled: isLoggedIn && !isPaused && screenshotInterval
     },
     { type: 'separator' },
-    { 
-      label: 'Resume', 
+    {
+      label: 'Resume',
       click: () => resumeRecording(),
       enabled: isLoggedIn && isPaused
     },
     { type: 'separator' },
-    { 
-      label: 'Quit', 
+    {
+      label: 'Quit',
       click: () => app.quit()
     }
   ])
@@ -223,16 +289,16 @@ function pauseRecording(duration) {
     clearInterval(screenshotInterval)
     screenshotInterval = null
   }
-  
+
   if (pauseTimeout) {
     clearTimeout(pauseTimeout)
   }
-  
+
   // Set pause state
   isPaused = true
   updateTrayIcon(false)
-  console.log(`Screenshot recording paused for ${duration/60000} minutes`)
-  
+  console.log(`Screenshot recording paused for ${duration / 60000} minutes`)
+
   // Set timeout to resume recording after duration
   pauseTimeout = setTimeout(() => {
     resumeRecording()
@@ -245,7 +311,7 @@ function pauseUntilTomorrow() {
   const tomorrow = new Date(now)
   tomorrow.setDate(tomorrow.getDate() + 1)
   tomorrow.setHours(0, 0, 0, 0)
-  
+
   const duration = tomorrow - now
   pauseRecording(duration)
   console.log(`Screenshot recording paused until tomorrow`)
@@ -257,13 +323,13 @@ function resumeRecording() {
     clearTimeout(pauseTimeout)
     pauseTimeout = null
   }
-  
+
   isPaused = false
-  
+
   // Only restart recording if logged in
   if (idToken) {
     updateTrayIcon(true)
-    
+
     // Restart screenshot interval
     if (!screenshotInterval) {
       screenshotInterval = setInterval(captureAndSendScreenshot, 60000)
@@ -287,7 +353,7 @@ function toggleWindow() {
   } else {
     // Create the window if it doesn't exist.
     mainWindow = new BrowserWindow({
-      width: 250, 
+      width: 250,
       height: 400,
       frame: false,
       resizable: false,
@@ -348,98 +414,98 @@ async function captureAndSendScreenshot() {
 
   try {
     // Reduced thumbnail size for initial capture
-    const sources = await desktopCapturer.getSources({ 
-      types: ['screen'], 
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
       thumbnailSize: { width: 1280, height: 720 }
     })
-    
+
     if (sources.length === 0) {
       console.log('No screens detected')
       return
     }
-    
+
     let screenshot
-    
+
     if (sources.length === 1) {
       // Single screen - standard compression
       screenshot = await compressImage(sources[0].thumbnail.toDataURL(), 1280, 800)
     } else {
       // Multiple screens - need to merge them with higher resolution limits      
       const { createCanvas, Image } = require('canvas')
-      
+
       // Calculate total dimensions needed
       const displays = screen.getAllDisplays()
       let totalWidth = 0
       let totalHeight = 0
-      
+
       for (const display of displays) {
         const bounds = display.bounds
         totalWidth = Math.max(totalWidth, bounds.x + bounds.width)
         totalHeight = Math.max(totalHeight, bounds.y + bounds.height)
       }
-      
+
       // Calculate dynamic scaling factor based on number of screens
       // Using a logarithmic scale to handle many screens better
       const screenCount = sources.length
-      
+
       // Base settings for a single screen
       const BASE_WIDTH = 1280
       const MAX_WIDTH = 3840 // Cap at 4K width
-      
+
       // Dynamic scaling that increases with number of screens but at a decreasing rate
       // For 1 screen: ~1280px, 2 screens: ~1800px, 3 screens: ~2200px, 4 screens: ~2500px, etc.
       const dynamicWidth = Math.min(
         MAX_WIDTH,
         BASE_WIDTH * (1 + Math.log(screenCount) / Math.log(2))
       )
-      
+
       const scaleFactor = Math.min(1, dynamicWidth / totalWidth)
       const scaledWidth = Math.floor(totalWidth * scaleFactor)
-      const scaledHeight = Math.floor(totalHeight * scaleFactor)      
+      const scaledHeight = Math.floor(totalHeight * scaleFactor)
       // Create canvas with scaled dimensions
       const canvas = createCanvas(scaledWidth, scaledHeight)
       const ctx = canvas.getContext('2d')
-      
+
       ctx.fillStyle = '#000'
       ctx.fillRect(0, 0, scaledWidth, scaledHeight)
-      
+
       // Draw each screen at its correct position, scaled down
       for (let i = 0; i < Math.min(sources.length, displays.length); i++) {
         const display = displays[i]
         const bounds = display.bounds
-        
+
         const img = new Image()
         const dataURL = sources[i].thumbnail.toDataURL()
-        
+
         await new Promise((resolve) => {
           img.onload = resolve
           img.src = dataURL
         })
-        
+
         // Draw scaled to maintain relative positions
         ctx.drawImage(
-          img, 
-          bounds.x * scaleFactor, 
-          bounds.y * scaleFactor, 
-          bounds.width * scaleFactor, 
+          img,
+          bounds.x * scaleFactor,
+          bounds.y * scaleFactor,
+          bounds.width * scaleFactor,
           bounds.height * scaleFactor
         )
       }
-      
+
       // Dynamic JPEG quality based on number of screens
       // More screens = slightly lower quality to keep file size manageable
       const jpegQuality = Math.max(0.4, 0.7 - (screenCount * 0.05))
-      
+
       screenshot = await compressImage(
-        canvas.toDataURL('image/jpeg'), 
+        canvas.toDataURL('image/jpeg'),
         scaledWidth, // Don't resize width
         scaledHeight, // Don't resize height
         jpegQuality  // Dynamic quality
       )
     }
-    
+
     const fetch = await import('node-fetch').then(module => module.default)
-    
+
     const response = await fetch(FIREBASE_CAPTURE_URL, {
       method: 'POST',
       headers: {
@@ -451,11 +517,11 @@ async function captureAndSendScreenshot() {
         screenshot: screenshot
       })
     })
-    
+
     if (!response.ok) {
       throw new Error(`Failed to send screenshot: ${response.statusText}`)
     }
-    
+
     console.log('Screenshot sent successfully')
   } catch (error) {
     console.error('Error capturing or sending screenshot:', error)
@@ -468,42 +534,42 @@ function compressImage(dataUrl, maxWidth = 1280, maxHeight = 800, quality = 0.6)
     try {
       const { createCanvas, Image } = require('canvas')
       const img = new Image()
-      
+
       img.onload = () => {
         let width = img.width
         let height = img.height
-        
+
         // Only resize if image exceeds the max dimensions
         if (width > maxWidth) {
           height = Math.floor(height * (maxWidth / width))
           width = maxWidth
         }
-        
+
         if (height > maxHeight) {
           width = Math.floor(width * (maxHeight / height))
           height = maxHeight
         }
-        
+
         // Create canvas for resized image
         const canvas = createCanvas(width, height)
         const ctx = canvas.getContext('2d')
-        
+
         // Draw resized image
         ctx.drawImage(img, 0, 0, width, height)
-        
+
         // Convert to JPEG with specified quality
         const compressedDataUrl = canvas.toDataURL('image/jpeg', quality)
-        
+
         const originalSize = Math.round(dataUrl.length / 1024)
         const compressedSize = Math.round(compressedDataUrl.length / 1024)
-        
+
         resolve(compressedDataUrl)
       }
-      
+
       img.onerror = (err) => {
         reject(err)
       }
-      
+
       img.src = dataUrl
     } catch (error) {
       reject(error)
@@ -515,13 +581,13 @@ function compressImage(dataUrl, maxWidth = 1280, maxHeight = 800, quality = 0.6)
 ipcMain.on('updateSummaryNotificationTime', (event, time) => {
   console.log("Updating summary notification time:", time);
   summaryNotificationTime = time;
-  
+
   // Clear any existing notification timeout
   if (summaryNotificationTimeout) {
     clearTimeout(summaryNotificationTimeout);
     summaryNotificationTimeout = null;
   }
-  
+
   // Schedule the next notification if we have a valid time
   if (summaryNotificationTime) {
     scheduleNextSummaryNotification();
@@ -537,29 +603,29 @@ ipcMain.on('summarySubmitted', (event) => {
 // Function to schedule the next summary notification
 function scheduleNextSummaryNotification() {
   if (!summaryNotificationTime || !idToken) return;
-  
+
   // Clear any existing timeout
   if (summaryNotificationTimeout) {
     clearTimeout(summaryNotificationTimeout);
   }
-  
+
   const now = new Date();
   const [hours, minutes] = summaryNotificationTime.split(':').map(Number);
-  
+
   // Set target time for today
   const targetTime = new Date(now);
   targetTime.setHours(hours, minutes, 0, 0);
-  
+
   // If the target time has already passed today, schedule for tomorrow
   if (now > targetTime) {
     targetTime.setDate(targetTime.getDate() + 1);
   }
-  
+
   // Calculate ms until the notification should be shown
   const msUntilNotification = targetTime - now;
-  
+
   console.log(`Scheduling summary notification for ${targetTime.toLocaleString()} (in ${msUntilNotification / 60000} minutes)`);
-  
+
   // Set the timeout
   summaryNotificationTimeout = setTimeout(() => {
     showSummaryNotification();
@@ -574,13 +640,13 @@ function showSummaryNotification() {
     scheduleNextSummaryNotification(); // Schedule for next time
     return;
   }
-  
+
   const notification = new Notification({
     title: 'donethat',
     body: 'Time to submit your daily summary!',
     silent: false
   });
-  
+
   notification.on('click', () => {
     // Open the app when notification is clicked
     if (mainWindow) {
@@ -589,14 +655,14 @@ function showSummaryNotification() {
       toggleWindow();
     }
   });
-  
+
   notification.on('close', () => {
     // If notification was dismissed, reschedule for tomorrow
     scheduleNextSummaryNotification();
   });
-  
+
   notification.show();
-  
+
   // Schedule the next notification
   scheduleNextSummaryNotification();
 }
@@ -604,26 +670,26 @@ function showSummaryNotification() {
 // Function to check if we should skip showing notification
 function shouldSkipNotification() {
   if (!summarySubmittedTimestamp) return false;
-  
+
   const now = new Date();
   const submittedDate = new Date(summarySubmittedTimestamp);
-  
+
   // If submission was on a different day, don't skip
-  if (submittedDate.getDate() !== now.getDate() || 
-      submittedDate.getMonth() !== now.getMonth() || 
-      submittedDate.getFullYear() !== now.getFullYear()) {
+  if (submittedDate.getDate() !== now.getDate() ||
+    submittedDate.getMonth() !== now.getMonth() ||
+    submittedDate.getFullYear() !== now.getFullYear()) {
     return false;
   }
-  
+
   // Get notification time for today
   const [hours, minutes] = summaryNotificationTime.split(':').map(Number);
   const notificationTimeToday = new Date(now);
   notificationTimeToday.setHours(hours, minutes, 0, 0);
-  
+
   // Two hour window before notification time
   const twoHoursBeforeNotification = new Date(notificationTimeToday);
   twoHoursBeforeNotification.setHours(notificationTimeToday.getHours() - 2);
-  
+
   // If submitted within 2 hours before notification time or any time after
   return submittedDate >= twoHoursBeforeNotification;
 }
@@ -638,7 +704,7 @@ ipcMain.on('requestScreenCapturePermission', async () => {
   // On macOS this would open System Preferences > Security & Privacy > Screen Recording
   // On Windows there isn't a direct way to open system settings for this
   const { shell } = require('electron')
-  
+
   if (process.platform === 'darwin') {
     // macOS
     shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
@@ -649,13 +715,13 @@ ipcMain.on('requestScreenCapturePermission', async () => {
     // Linux or other platforms
     console.log('No direct way to open screen capture settings on this platform')
   }
-  
+
   // After opening settings, we should check permission again when app regains focus
   app.on('browser-window-focus', async () => {
     const hasPermission = await checkScreenCapturePermission()
     if (hasPermission && mainWindow) {
       mainWindow.webContents.send('screenCapturePermission', true)
-      
+
       // Update icon and start recording if logged in
       if (idToken && !isPaused) {
         updateTrayIcon(true)

@@ -1,0 +1,4 @@
+owner: donethatai
+repo: donethat-releases
+provider: github
+updaterCacheDirName: donethat-updater 

@@ -143,3 +143,6 @@ build/*
 
 # MAC
 .DS_Store
+
+# Tools
+tools/
