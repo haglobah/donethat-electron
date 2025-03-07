@@ -66,16 +66,27 @@ setupAutoUpdater()
 // Check if we have screen recording permission
 async function checkScreenCapturePermission() {
   try {
+    // Add a small delay to ensure system is ready
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
-      thumbnailSize: { width: 1, height: 1 }
-    })
-    hasScreenCapturePermission = sources.length > 0
-    return hasScreenCapturePermission
+      thumbnailSize: { width: 1, height: 1 },
+      fetchWindowIcons: false
+    });
+    
+    // If we can get sources, we likely have permission
+    if (sources && sources.length > 0) {
+      hasScreenCapturePermission = true;
+      return true;
+    }
+    
+    hasScreenCapturePermission = false;
+    return false;
   } catch (error) {
-    console.error('Error checking screen capture permission:', error)
-    hasScreenCapturePermission = false
-    return false
+    console.error('Error checking screen capture permission:', error);
+    hasScreenCapturePermission = false;
+    return false;
   }
 }
 
@@ -94,7 +105,7 @@ app.whenReady().then(async () => {
   tray.setToolTip('donethat')
 
   // Check screen capture permission
-  await checkScreenCapturePermission()
+  hasScreenCapturePermission = await checkScreenCapturePermission()
 
   // Initial state - if not logged in, show crossed out checkmark and don't record
   updateTrayIcon(false)
@@ -131,6 +142,14 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error('Error checking for updates:', error)
   }
+
+  // Also check permissions when the app is activated
+  app.on('activate', async () => {
+    hasScreenCapturePermission = await checkScreenCapturePermission();
+    if (mainWindow) {
+      mainWindow.webContents.send('screenCapturePermission', hasScreenCapturePermission);
+    }
+  });
 })
 
 // Add IPC handler to manually check for updates with proper error handling
@@ -744,3 +763,20 @@ ipcMain.on('initialAuthCheck', (event, isAuthenticated) => {
     showWindowBelowTray()
   }
 })
+
+// Update the focus handler to be more specific
+app.on('browser-window-focus', async () => {
+  const oldPermission = hasScreenCapturePermission;
+  hasScreenCapturePermission = await checkScreenCapturePermission();
+  
+  // Only send update if permission status actually changed
+  if (oldPermission !== hasScreenCapturePermission && mainWindow) {
+    mainWindow.webContents.send('screenCapturePermission', hasScreenCapturePermission);
+    
+    // Update icon and recording state if needed
+    if (hasScreenCapturePermission && idToken && !isPaused) {
+      updateTrayIcon(true);
+      startRecording();
+    }
+  }
+});

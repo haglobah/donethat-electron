@@ -1,5 +1,25 @@
 @import "tailwindcss";
 
+:root {
+  /* Color definitions */
+  --color-white: #ffffff;
+  --color-black: #000000;
+  
+  /* Primary colors (orange theme) */
+  --color-primary: rgb(255, 182, 35);      /* Base orange */
+  --color-primary-dark: rgb(230, 164, 32); /* Darker orange */
+  --color-primary-light: rgb(255, 200, 82); /* Light orange */
+  
+  /* Neutral colors (gray theme) */
+  --color-neutral-900: #1f2937;
+  --color-neutral-700: #4b5563;
+  --color-neutral-600: #6b7280;
+  --color-neutral-500: #9ca3af;
+  --color-neutral-300: #d1d5db;
+  --color-neutral-200: #e5e7eb;
+  --color-neutral-50: #f9fafb;
+}
+
 /* Ensure hidden class works on all elements with !important to override other styles */
 .hidden {
   display: none !important;
@@ -27,12 +47,17 @@
 
 /* Primary button */
 .btn-primary {
-  @apply w-full bg-purple-500 text-white p-1.5 rounded text-sm cursor-pointer hover:bg-purple-600 transition duration-200 shadow-md;
+  @apply w-full text-white p-1.5 rounded text-sm cursor-pointer transition duration-200 shadow-md;
+  background-color: var(--color-primary);
+}
+.btn-primary:hover {
+  background-color: var(--color-primary-dark);
 }
 
 /* Link style */
 .link {
-  @apply text-purple-500 hover:underline text-sm;
+  @apply hover:underline text-sm;
+  color: var(--color-primary);
 }
 
 /* Section header */
@@ -47,7 +72,9 @@
 
 /* Loading spinner */
 .spinner {
-  @apply w-8 h-8 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin;
+  @apply w-8 h-8 border-4 rounded-full animate-spin;
+  border-color: var(--color-primary-light);
+  border-top-color: var(--color-primary-dark);
 }
 
 /* Spinner overlay */
@@ -62,12 +89,18 @@
 
 /* Email text */
 .email-text {
-  @apply mr-2 text-gray-800 break-all overflow-hidden text-ellipsis text-xs;
+  @apply mr-2 break-all overflow-hidden text-ellipsis text-xs;
+  color: var(--color-neutral-900);
 }
 
 /* Remove email button */
 .remove-email-btn {
-  @apply shrink-0 text-gray-500 bg-gray-200 hover:bg-gray-300 focus:outline-none h-4 w-4 rounded-full flex items-center justify-center transition-colors text-xs;
+  @apply shrink-0 focus:outline-none h-4 w-4 rounded-full flex items-center justify-center transition-colors text-xs;
+  color: var(--color-neutral-600);
+  background-color: var(--color-neutral-200);
+}
+.remove-email-btn:hover {
+  background-color: var(--color-neutral-300);
 }
 
 /* Empty state text */
@@ -137,7 +170,7 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: #8b5cf6; /* Purple checkmark */
+  color: var(--color-primary);
   font-weight: bold;
 }
 
@@ -148,11 +181,18 @@
 
 /* Heart icon styles */
 .heart-icon {
-  @apply ml-auto text-gray-400 cursor-pointer hover:text-gray-600 transition-colors duration-200 text-base;
+  @apply ml-auto cursor-pointer transition-colors duration-200 text-base;
+  color: var(--color-neutral-500);
+}
+.heart-icon:hover {
+  color: var(--color-neutral-700);
 }
 
 .heart-icon.active {
-  @apply text-purple-500 hover:text-purple-600;
+  color: var(--color-primary);
+}
+.heart-icon.active:hover {
+  color: var(--color-primary-dark);
 }
 
 /* Disabled heart icon when item is crossed out */
