@@ -97,11 +97,8 @@ app.whenReady().then(async () => {
   await checkScreenCapturePermission()
 
   // Initial state - if not logged in, show crossed out checkmark and don't record
-  // We don't know auth state yet, so default to not recording
   updateTrayIcon(false)
 
-  // We'll start recording when we receive the login event from renderer
-  
   // Left-click opens the window
   tray.on('click', () => {
     toggleWindow()
@@ -113,19 +110,14 @@ app.whenReady().then(async () => {
     tray.popUpContextMenu(contextMenu)
   })
 
-  // Always open window on startup to check auth state
-  toggleWindow()
+  // Create window but don't show it yet
+  createWindow()
 
   // Check for updates with proper error handling
   try {
-    // Force update check with more detailed logs
-    console.log('Starting update check...')
-    console.log(`Looking for updates as version: ${app.getVersion()}`)
 
-    // For development testing, you can optionally specify the update server directly
     if (!app.isPackaged) {
       console.log('Setting custom update URL for development testing')
-      // This will check for updates directly from GitHub
       const options = {
         provider: 'github',
         owner: 'donethatai',
@@ -317,17 +309,9 @@ function resumeRecording() {
   }
 }
 
-// Function to create or toggle the window.
-function toggleWindow() {
-  if (mainWindow) {
-    // Toggle window visibility.
-    if (mainWindow.isVisible()) {
-      mainWindow.hide()
-    } else {
-      showWindowBelowTray()
-    }
-  } else {
-    // Create the window if it doesn't exist.
+// Separate window creation from showing
+function createWindow() {
+  if (!mainWindow) {
     mainWindow = new BrowserWindow({
       width: debug ? 600 : 250,
       height: debug ? 600 : 400,
@@ -346,9 +330,8 @@ function toggleWindow() {
         // This is important for IndexedDB persistence
         backgroundThrottling: false
       }
-    });
+    })
 
-    // Load the index.html file
     mainWindow.loadFile('./src/index.html')
 
     // Debug inspector
@@ -362,17 +345,25 @@ function toggleWindow() {
 
     // Position the window once it's ready.
     mainWindow.once('ready-to-show', () => {
-      // Send permission status to renderer
       mainWindow.webContents.send('screenCapturePermission', hasScreenCapturePermission)
-      showWindowBelowTray()
     })
 
-    // Optional: Hide the window if it loses focus.
     mainWindow.on('blur', () => {
       if (mainWindow && mainWindow.isVisible()) {
         mainWindow.hide()
       }
     })
+  }
+}
+
+// Update toggleWindow to only handle showing/hiding
+function toggleWindow() {
+  if (mainWindow) {
+    if (mainWindow.isVisible()) {
+      mainWindow.hide()
+    } else {
+      showWindowBelowTray()
+    }
   }
 }
 
@@ -744,4 +735,12 @@ ipcMain.on('requestScreenCapturePermission', async () => {
 ipcMain.handle('checkNotificationPermission', async () => {
   // Just check if notifications are supported by the system
   return Notification.isSupported();
+})
+
+// Add new IPC handler for initial auth check
+ipcMain.on('initialAuthCheck', (event, isAuthenticated) => {
+  if (!isAuthenticated) {
+    // Only show window if user is not authenticated
+    showWindowBelowTray()
+  }
 })

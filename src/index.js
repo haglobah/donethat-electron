@@ -29,6 +29,12 @@ setPersistence(auth, browserLocalPersistence)
     console.error("Error setting persistence:", error);
   });
 
+// Add a small delay to check initial auth state
+setTimeout(() => {
+  const { ipcRenderer } = require('electron');
+  ipcRenderer.send('initialAuthCheck', !!auth.currentUser);
+}, 1000);
+
 // Get references to views and elements
 const signInView = document.getElementById("signInView");
 const signUpView = document.getElementById("signUpView");
@@ -154,16 +160,13 @@ onAuthStateChanged(auth, (user) => {
     // First, get the initial token
     user.getIdToken().then(idToken => {
       userIdToken = idToken;
-      // Send to main process
       ipcRenderer.send("login", idToken);
       loadUserSettings();
       
       // Set up a token refresh listener
       const refreshInterval = setInterval(async () => {
-        // Only refresh if user is still signed in
         if (auth.currentUser) {
           try {
-            // Force token refresh
             const freshToken = await auth.currentUser.getIdToken(true);
             userIdToken = freshToken;
             ipcRenderer.send("login", freshToken);
@@ -171,7 +174,6 @@ onAuthStateChanged(auth, (user) => {
             console.error("Token refresh failed:", error);
           }
         } else {
-          // Clear interval if user is no longer signed in
           clearInterval(refreshInterval);
         }
       }, 45 * 60 * 1000); // Refresh every 45 minutes
