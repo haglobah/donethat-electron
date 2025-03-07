@@ -10,6 +10,7 @@
       script-src 'self';
       style-src 'self';
       connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.cloudfunctions.net;
+      img-src 'self' data: blob:;
     ">
     <meta http-equiv="X-Content-Security-Policy" content="
       default-src 'self';
@@ -317,7 +318,7 @@
       </div>
     </div>
     
-    <!-- External script for SPA logic -->
-    <script type="module" src="index.js"></script>
+    <!-- Update the script tag to use the bundled file -->
+    <script src="../dist/bundle.js"></script>
   </body>
 </html>

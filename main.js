@@ -12,7 +12,9 @@ const firebaseApp = initializeApp(firebaseConfig)
 // Add your Firebase function URL here
 const FIREBASE_CAPTURE_URL = 'https://capturescreenshot-t374dqodfq-ew.a.run.app'
 
-let debug = true
+// To show dev tools next to main window
+let debug = false
+
 let tray = null
 let mainWindow = null
 let idToken = null
@@ -87,10 +89,6 @@ app.setLoginItemSettings({
 })
 
 app.whenReady().then(async () => {
-  // We still need electron-store for other app settings, but not for auth
-  const { default: Store } = await import('electron-store');
-  store = new Store();
-  
   // Create the tray
   tray = new Tray(nativeImage.createEmpty())
   tray.setToolTip('donethat')
@@ -340,11 +338,15 @@ function toggleWindow() {
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,
-        // Add this option to help with persistence
-        partition: 'persist:donethat', // Use a named partition for persistence
-        backgroundThrottling: false,   // Prevent background throttling
+        partition: 'persist:donethat',
+        webSecurity: true,
+        // Add these to ensure proper persistence
+        enableRemoteModule: false,
+        sandbox: false,
+        // This is important for IndexedDB persistence
+        backgroundThrottling: false
       }
-    })
+    });
 
     // Load the index.html file
     mainWindow.loadFile('./src/index.html')
@@ -352,7 +354,11 @@ function toggleWindow() {
     // Debug inspector
     if (debug) {
       mainWindow.webContents.openDevTools();
-    }
+    }    
+    // Log any webContents errors
+    mainWindow.webContents.on('console-message', (event, level, message) => {
+      console.log('Renderer Console:', message);
+    });
 
     // Position the window once it's ready.
     mainWindow.once('ready-to-show', () => {

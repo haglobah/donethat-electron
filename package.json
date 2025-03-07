@@ -5,9 +5,10 @@
   "main": "main.js",
   "scripts": {
     "build:css": "postcss styles.css -o ./build/output.css --verbose",
-    "start": "npm run build:css && electron .",
-    "build": "npm run build:css && electron-builder",
-    "build:all": "npm run build:css && electron-builder -mwl",
+    "build:webpack": "webpack --config webpack.config.js",
+    "start": "npm run build:css && npm run build:webpack && electron .",
+    "build": "npm run build:css && npm run build:webpack && electron-builder",
+    "build:all": "npm run build:css && npm run build:webpack && electron-builder -mwl",
     "release": "dotenv -- npm run build:all && dotenv -- electron-builder -mwl --publish always"
   },
   "repository": {
@@ -21,11 +22,15 @@
   },
   "homepage": "https://donethat.ai",
   "devDependencies": {
+    "@babel/preset-env": "^7.26.9",
+    "babel-loader": "^10.0.0",
     "dotenv-cli": "^8.0.0",
     "electron": "^34.2.0",
     "electron-builder": "^25.1.8",
     "electron-notarize": "^1.2.2",
-    "postcss-cli": "^11.0.0"
+    "postcss-cli": "^11.0.0",
+    "webpack": "^5.98.0",
+    "webpack-cli": "^6.0.1"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.0.6",
@@ -41,7 +46,8 @@
     "productName": "donethat",
     "files": [
       "**/*",
-      "build/**/*"
+      "build/**/*",
+      "dist/**/*"
     ],
     "directories": {
       "buildResources": "resources"

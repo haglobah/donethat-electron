@@ -23,27 +23,8 @@ const saveFinalSummaryFunction = httpsCallable(functions, "saveFinalSummary");
 const getUserSettingsFunction = httpsCallable(functions, "getUserSettings");
 const updateUserSettingsFunction = httpsCallable(functions, "updateUserSettings");
 
-// Explicitly set auth persistence to local storage
-// This needs to happen BEFORE any auth state changes
+// Set persistence to browser local storage
 setPersistence(auth, browserLocalPersistence)
-  .then(() => {
-    console.log("Auth persistence set to local");
-    
-    // Add a log to check if we have a user on startup
-    if (auth.currentUser) {
-      console.log("User already signed in on startup:", auth.currentUser.email);
-    } else {
-      console.log("No user signed in on startup");
-      
-      // Check if we have a user after a short delay
-      // This helps in case Firebase is still initializing
-      setTimeout(() => {
-        if (auth.currentUser) {
-          console.log("User detected after delay:", auth.currentUser.email);
-        }
-      }, 1000);
-    }
-  })
   .catch((error) => {
     console.error("Error setting persistence:", error);
   });
@@ -155,8 +136,6 @@ async function updateNotificationUI() {
 
 // Get the auth state listener to store the ID token when state changes
 onAuthStateChanged(auth, (user) => {
-  console.log("Auth state changed:", user ? user.email : "No user");
-  
   if (user) {
     signInView.classList.add("hidden");
     signUpView.classList.add("hidden");
@@ -175,12 +154,11 @@ onAuthStateChanged(auth, (user) => {
     // First, get the initial token
     user.getIdToken().then(idToken => {
       userIdToken = idToken;
-      // Send to main process - no need to send refresh token
+      // Send to main process
       ipcRenderer.send("login", idToken);
       loadUserSettings();
       
       // Set up a token refresh listener
-      // This ensures we always have a fresh token and send it to main process
       const refreshInterval = setInterval(async () => {
         // Only refresh if user is still signed in
         if (auth.currentUser) {
@@ -189,7 +167,6 @@ onAuthStateChanged(auth, (user) => {
             const freshToken = await auth.currentUser.getIdToken(true);
             userIdToken = freshToken;
             ipcRenderer.send("login", freshToken);
-            console.log("Token refreshed and sent to main process");
           } catch (error) {
             console.error("Token refresh failed:", error);
           }
