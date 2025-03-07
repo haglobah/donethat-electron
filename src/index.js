@@ -25,6 +25,8 @@ const updateUserSettingsFunction = httpsCallable(functions, "updateUserSettings"
 
 // Set persistence to browser local storage
 setPersistence(auth, browserLocalPersistence)
+  .then(() => {
+  })
   .catch((error) => {
     console.error("Error setting persistence:", error);
   });
@@ -269,20 +271,45 @@ backToSignInFromReset.addEventListener("click", (e) => {
   signInView.classList.remove("hidden");
 });
 
-// Handle logout click
-logoutLink.addEventListener("click", (e) => {
-  e.preventDefault();
-  
-  signOut(auth)
-    .then(() => {
-      const {ipcRenderer} = require("electron");
-      ipcRenderer.send("logout");
-    })
-    .catch((error) => {
-      alert("Error signing out: " + error.message);
-      console.error("Sign out error:", error);
-    });
-});
+// Helper function for complete logout cleanup
+async function performFullLogout() {
+  try {
+    // Clear Firebase auth state
+    await auth.signOut();
+    
+    // Clear any Firebase specific storage
+    const firebaseLocalStorageKeys = Object.keys(window.localStorage)
+      .filter(key => key.startsWith('firebase:'));
+    firebaseLocalStorageKeys.forEach(key => window.localStorage.removeItem(key));
+    
+    // Reset application state
+    recipientEmails = [];
+    currentSummaryId = null;
+    userIdToken = null;
+    
+    // Notify main process
+    ipcRenderer.send('logout');
+    
+  } catch (error) {
+    console.error('Error during logout:', error);
+    alert(`Error signing out: ${error.message}`);
+  }
+}
+
+// Update both logout handlers to use the new function
+if (logoutLink) {
+  logoutLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    performFullLogout();
+  });
+}
+
+if (logoutFromPermission) {
+  logoutFromPermission.addEventListener('click', (e) => {
+    e.preventDefault();
+    performFullLogout();
+  });
+}
 
 // Update visibility when summary is generated
 function showSummaryGeneratedState() {
@@ -741,21 +768,6 @@ if (notificationTimeInput) {
 if (openSettingsBtn) {
   openSettingsBtn.addEventListener("click", () => {
     ipcRenderer.send("requestScreenCapturePermission");
-  });
-}
-
-if (logoutFromPermission) {
-  logoutFromPermission.addEventListener("click", (e) => {
-    e.preventDefault();
-    
-    signOut(auth)
-      .then(() => {
-        ipcRenderer.send("logout");
-      })
-      .catch((error) => {
-        alert("Error signing out: " + error.message);
-        console.error("Sign out error:", error);
-      });
   });
 }
 
