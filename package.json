@@ -46,6 +46,7 @@
     "appId": "com.donethat.app",
     "productName": "Done That",
     "afterSign": "scripts/notarize.js",
+    "icon": "resources/icon_inverse.png",
     "files": [
       "main.js",
       "firebase-config.js",
