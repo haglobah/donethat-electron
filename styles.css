@@ -9,6 +9,7 @@
   --color-primary: rgb(255, 182, 35);      /* Base orange */
   --color-primary-dark: rgb(230, 164, 32); /* Darker orange */
   --color-primary-light: rgb(255, 200, 82); /* Light orange */
+  --color-primary-focus: rgba(255, 182, 35, 0.3); /* Primary with transparency for focus rings */
   
   /* Neutral colors (gray theme) */
   --color-neutral-900: #1f2937;
@@ -37,7 +38,8 @@
 
 /* Form input */
 .form-input {
-  @apply w-full border border-black p-1.5 rounded text-sm focus:outline-none focus:ring-1 focus:ring-purple-500 transition duration-200;
+  @apply w-full border border-black p-1.5 rounded text-sm focus:outline-none focus:ring-1 transition duration-200;
+  --tw-ring-color: var(--color-primary);
 }
 
 /* Form label */
@@ -52,6 +54,15 @@
 }
 .btn-primary:hover {
   background-color: var(--color-primary-dark);
+}
+
+/* Secondary button (for consistency) */
+.btn-secondary {
+  @apply w-full text-white p-1.5 rounded text-sm cursor-pointer transition duration-200 shadow-md;
+  background-color: var(--color-neutral-600);
+}
+.btn-secondary:hover {
+  background-color: var(--color-neutral-700);
 }
 
 /* Link style */
@@ -176,7 +187,7 @@
 
 .bullet-checkbox:focus {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.3); /* Purple focus ring */
+  box-shadow: 0 0 0 3px var(--color-primary-focus); /* Using CSS variable for focus ring */
 }
 
 /* Heart icon styles */
@@ -211,7 +222,8 @@
 
 /* Comment input field styling */
 .comment-input {
-  @apply w-full border border-gray-300 p-2 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-purple-500 transition duration-200 mt-3;
+  @apply w-full border border-gray-300 p-2 rounded-lg text-sm focus:outline-none focus:ring-1 transition duration-200 mt-3;
+  --tw-ring-color: var(--color-primary);
   min-height: 60px;
   resize: none;
 }
@@ -223,4 +235,23 @@
 /* Email list container - for flat display without background */
 .email-list-container {
   @apply flex flex-col gap-1 mb-2 w-full max-h-30 overflow-y-auto;
+}
+
+/* Add email button (for email input in settings) */
+.add-email-btn {
+  @apply absolute right-1.5 top-1/2 transform -translate-y-1/2 text-white rounded-full w-4 h-4 flex items-center justify-center transition-colors;
+  background-color: var(--color-primary);
+}
+.add-email-btn:hover {
+  background-color: var(--color-primary-dark);
+}
+
+/* Pause explainer styling */
+.pause-explainer {
+  @apply text-gray-500 text-center text-xs mt-1;
+}
+
+/* Time input container styling */
+.time-input-container {
+  @apply relative w-full;
 }

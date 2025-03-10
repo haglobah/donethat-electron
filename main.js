@@ -800,3 +800,9 @@ app.on('browser-window-focus', async () => {
     }
   }
 });
+
+// Add new IPC handler for pausing until tomorrow from renderer
+ipcMain.on('pauseUntilTomorrow', () => {
+  console.log('Pausing recording until tomorrow due to summary submission');
+  pauseUntilTomorrow();
+});

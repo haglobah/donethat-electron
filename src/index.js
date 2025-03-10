@@ -556,6 +556,17 @@ if (submitSummaryBtn) {
         
         // Notify main process that summary was submitted
         ipcRenderer.send("summarySubmitted");
+        
+        // Pause recording until tomorrow
+        ipcRenderer.send("pauseUntilTomorrow");
+        
+        // Show the explainer text about pausing
+        document.getElementById('pauseExplainer').classList.remove('hidden');
+        
+        // Hide the explainer after 10 seconds
+        setTimeout(() => {
+          document.getElementById('pauseExplainer').classList.add('hidden');
+        }, 10000);
       })
       .catch((error) => {
         summaryLoadingSpinner.classList.add('hidden');
