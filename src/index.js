@@ -535,7 +535,7 @@ if (submitSummaryBtn) {
         let bulletText = textElement.textContent.trim();
         
         if (heartIcon.classList.contains('active')) {
-          bulletText = '💜 ' + bulletText;
+          bulletText = '🧡 ' + bulletText;
         }
         
         selectedBullets.push(bulletText);

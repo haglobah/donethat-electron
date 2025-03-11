@@ -440,15 +440,15 @@ function showWindowBelowTray() {
 // Function to capture and send screenshots
 async function captureAndSendScreenshot() {
   if (!idToken) {
-    console.log('Cannot send screenshot: User not authenticated')
+    console.log('Cannot send screenshots: User not authenticated')
     return
   }
 
   try {
-    // Reduced thumbnail size for initial capture
+    // Capture each screen separately
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
-      thumbnailSize: { width: 1280, height: 720 }
+      thumbnailSize: { width: 1920, height: 1080 } // Higher initial resolution for better quality
     })
 
     if (sources.length === 0) {
@@ -456,88 +456,17 @@ async function captureAndSendScreenshot() {
       return
     }
 
-    let screenshot
-
-    if (sources.length === 1) {
-      // Single screen - standard compression
-      screenshot = await compressImage(sources[0].thumbnail.toDataURL(), 1280, 800)
-    } else {
-      // Multiple screens - need to merge them with higher resolution limits      
-      const { createCanvas, Image } = require('canvas')
-
-      // Calculate total dimensions needed
-      const displays = screen.getAllDisplays()
-      let totalWidth = 0
-      let totalHeight = 0
-
-      for (const display of displays) {
-        const bounds = display.bounds
-        totalWidth = Math.max(totalWidth, bounds.x + bounds.width)
-        totalHeight = Math.max(totalHeight, bounds.y + bounds.height)
-      }
-
-      // Calculate dynamic scaling factor based on number of screens
-      // Using a logarithmic scale to handle many screens better
-      const screenCount = sources.length
-
-      // Base settings for a single screen
-      const BASE_WIDTH = 1280
-      const MAX_WIDTH = 3840 // Cap at 4K width
-
-      // Dynamic scaling that increases with number of screens but at a decreasing rate
-      // For 1 screen: ~1280px, 2 screens: ~1800px, 3 screens: ~2200px, 4 screens: ~2500px, etc.
-      const dynamicWidth = Math.min(
-        MAX_WIDTH,
-        BASE_WIDTH * (1 + Math.log(screenCount) / Math.log(2))
-      )
-
-      const scaleFactor = Math.min(1, dynamicWidth / totalWidth)
-      const scaledWidth = Math.floor(totalWidth * scaleFactor)
-      const scaledHeight = Math.floor(totalHeight * scaleFactor)
-      // Create canvas with scaled dimensions
-      const canvas = createCanvas(scaledWidth, scaledHeight)
-      const ctx = canvas.getContext('2d')
-
-      ctx.fillStyle = '#000'
-      ctx.fillRect(0, 0, scaledWidth, scaledHeight)
-
-      // Draw each screen at its correct position, scaled down
-      for (let i = 0; i < Math.min(sources.length, displays.length); i++) {
-        const display = displays[i]
-        const bounds = display.bounds
-
-        const img = new Image()
-        const dataURL = sources[i].thumbnail.toDataURL()
-
-        await new Promise((resolve) => {
-          img.onload = resolve
-          img.src = dataURL
-        })
-
-        // Draw scaled to maintain relative positions
-        ctx.drawImage(
-          img,
-          bounds.x * scaleFactor,
-          bounds.y * scaleFactor,
-          bounds.width * scaleFactor,
-          bounds.height * scaleFactor
-        )
-      }
-
-      // Dynamic JPEG quality based on number of screens
-      // More screens = slightly lower quality to keep file size manageable
-      const jpegQuality = Math.max(0.4, 0.7 - (screenCount * 0.05))
-
-      screenshot = await compressImage(
-        canvas.toDataURL('image/jpeg'),
-        scaledWidth, // Don't resize width
-        scaledHeight, // Don't resize height
-        jpegQuality  // Dynamic quality
-      )
-    }
+    // Process all screenshots to proper dimensions
+    const screenshots = await Promise.all(
+      sources.map(async (source) => {
+        // Process each screenshot with 819px constraint on shorter edge
+        return await processScreenshotForUpload(source.thumbnail.toDataURL())
+      })
+    )
 
     const fetch = await import('node-fetch').then(module => module.default)
 
+    // Send all screenshots in a single API call
     const response = await fetch(FIREBASE_CAPTURE_URL, {
       method: 'POST',
       headers: {
@@ -546,12 +475,11 @@ async function captureAndSendScreenshot() {
       },
       body: JSON.stringify({
         timestamp: Date.now(),
-        screenshot: screenshot
+        screenshots: screenshots // Now sending an array of screenshots
       })
     })
     
     if (!response.ok) {
-      const errorText = await response.text()
       throw new Error(`Server error: ${response.status}`)
     }
   } catch (error) {
@@ -568,8 +496,8 @@ async function captureAndSendScreenshot() {
   }
 }
 
-// Helper function to compress an image with customizable max dimensions and quality
-function compressImage(dataUrl, maxWidth = 1280, maxHeight = 800, quality = 0.6) {
+// New function to process screenshots for upload with 819px constraint on shorter edge
+async function processScreenshotForUpload(dataUrl) {
   return new Promise((resolve, reject) => {
     try {
       const { createCanvas, Image } = require('canvas')
@@ -578,16 +506,25 @@ function compressImage(dataUrl, maxWidth = 1280, maxHeight = 800, quality = 0.6)
       img.onload = () => {
         let width = img.width
         let height = img.height
-
-        // Only resize if image exceeds the max dimensions
-        if (width > maxWidth) {
-          height = Math.floor(height * (maxWidth / width))
-          width = maxWidth
-        }
-
-        if (height > maxHeight) {
-          width = Math.floor(width * (maxHeight / height))
-          height = maxHeight
+        const targetShortEdge = 819 // Maximum size for the shorter edge
+        
+        // Determine which dimension is shorter
+        const isWidthShorter = width < height
+        
+        // Calculate new dimensions ensuring shorter edge is max 819px
+        // while maintaining aspect ratio
+        if (isWidthShorter) {
+          if (width > targetShortEdge) {
+            const aspectRatio = height / width
+            width = targetShortEdge
+            height = Math.round(width * aspectRatio)
+          }
+        } else {
+          if (height > targetShortEdge) {
+            const aspectRatio = width / height
+            height = targetShortEdge
+            width = Math.round(height * aspectRatio)
+          }
         }
 
         // Create canvas for resized image
@@ -597,13 +534,11 @@ function compressImage(dataUrl, maxWidth = 1280, maxHeight = 800, quality = 0.6)
         // Draw resized image
         ctx.drawImage(img, 0, 0, width, height)
 
-        // Convert to JPEG with specified quality
-        const compressedDataUrl = canvas.toDataURL('image/jpeg', quality)
+        // Convert to JPEG with quality adjusted based on image size
+        const quality = 0.7 // Slightly higher quality since we're controlling dimensions
+        const processedDataUrl = canvas.toDataURL('image/jpeg', quality)
 
-        const originalSize = Math.round(dataUrl.length / 1024)
-        const compressedSize = Math.round(compressedDataUrl.length / 1024)
-
-        resolve(compressedDataUrl)
+        resolve(processedDataUrl)
       }
 
       img.onerror = (err) => {
