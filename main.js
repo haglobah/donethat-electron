@@ -143,7 +143,6 @@ app.whenReady().then(async () => {
 
   // Check for updates with proper error handling
   try {
-
     if (!app.isPackaged) {
       console.log('Setting custom update URL for development testing')
       const options = {
@@ -167,19 +166,13 @@ app.whenReady().then(async () => {
       mainWindow.webContents.send('screenCapturePermission', hasScreenCapturePermission);
     }
   });
-})
 
-// Add IPC handler to manually check for updates with proper error handling
-ipcMain.on('check-for-updates', async () => {
-  try {
-    await autoUpdater.checkForUpdates()
-    console.log('Manual update check completed')
-  } catch (error) {
-    console.error('Error during manual update check:', error)
-    if (mainWindow) {
-      mainWindow.webContents.send('update-error', error.message)
-    }
-  }
+  // Set up periodic update checks (every hour)
+  setInterval(() => {
+    autoUpdater.checkForUpdates()
+      .then(() => console.log('Periodic update check completed'))
+      .catch(err => console.error('Error in periodic update check:', err))
+  }, 60 * 60 * 1000) // 1 hours in milliseconds
 })
 
 // Add IPC handler to install update and restart
