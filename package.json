@@ -14,7 +14,7 @@
     "build:all:arm64": "npm run build:prepare && electron-builder -mwl",
     "build:all:x64": "npm run build:prepare && electron-builder -mwl --x64",
     "build:all": "npm run build:all:arm64 && npm run build:all:x64",
-    "release:arm64": "dotenv -- npm run build:prepare && dotenv -- electron-builder --mwl --publish always",
+    "release:arm64": "dotenv -- npm run build:prepare && dotenv -- electron-builder -mwl --publish always",
     "release:x64": "dotenv -- npm run build:prepare && dotenv -- electron-builder -mwl --x64 --publish always",
     "release": "npm run release:arm64 && npm run release:x64"
   },
