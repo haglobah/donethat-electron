@@ -458,20 +458,55 @@ function toggleWindow() {
   }
 }
 
-// Positions the window directly below the tray icon.
+// Intelligently positions the window relative to the tray icon
+// with support for multiple displays
 function showWindowBelowTray() {
-  // Get tray icon bounds.
+  // Get tray icon bounds
   const trayBounds = tray.getBounds()
-  // Get the window's size.
+  
+  // Get window size
   const windowBounds = mainWindow.getBounds()
-
-  // Calculate x position: center window horizontally relative to the tray icon.
-  const x = Math.round(trayBounds.x + (trayBounds.width / 2) - (windowBounds.width / 2))
-  // Calculate y position: place it directly below the tray icon.
-  const y = Math.round(trayBounds.y + trayBounds.height)
-
+  
+  // Get all displays
+  const allDisplays = screen.getAllDisplays()
+  
+  // Find which display contains the tray icon
+  const trayDisplay = allDisplays.find(display => {
+    const { x, y, width, height } = display.bounds
+    return (
+      trayBounds.x >= x && trayBounds.x < x + width &&
+      trayBounds.y >= y && trayBounds.y < y + height
+    )
+  }) || screen.getPrimaryDisplay() // Fall back to primary if not found
+  
+  // Use the working area of the display containing the tray
+  const { workArea } = trayDisplay
+  
+  // Calculate x position: center window horizontally relative to the tray icon
+  let x = Math.round(trayBounds.x + (trayBounds.width / 2) - (windowBounds.width / 2))
+  
+  // Ensure window doesn't go off-screen horizontally
+  x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - windowBounds.width))
+  
+  // Determine if tray is closer to top or bottom of the display
+  const distanceToTop = trayBounds.y - workArea.y
+  const distanceToBottom = (workArea.y + workArea.height) - (trayBounds.y + trayBounds.height)
+  
+  let y;
+  if (distanceToTop < distanceToBottom) {
+    // Tray is closer to top - position window below tray
+    y = trayBounds.y + trayBounds.height
+  } else {
+    // Tray is closer to bottom - position window above tray
+    y = trayBounds.y - windowBounds.height
+  }
+  
+  // Ensure window doesn't go off-screen vertically
+  y = Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - windowBounds.height))
+  
   mainWindow.setPosition(x, y, false)
   mainWindow.show()
+  mainWindow.focus() // Ensure window gets focus
 }
 
 // Function to capture and send screenshots
