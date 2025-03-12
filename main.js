@@ -2,6 +2,30 @@ const { app, Tray, Menu, BrowserWindow, nativeImage, screen, desktopCapturer, No
 const path = require('path')
 const { ipcMain } = require('electron')
 const { autoUpdater } = require('electron-updater')
+const { execSync } = require('child_process')  // Add this for Linux screenshot alternative
+
+// Add centralized logging configuration
+const log = require('electron-log')
+
+// Configure logging based on environment
+if (app.isPackaged) {
+  // In production: only show warnings and errors
+  log.transports.console.level = 'warn'
+  log.transports.file.level = 'info'  // Still log info to file for troubleshooting
+} else {
+  // In development: show all logs
+  log.transports.console.level = 'silly'
+  log.transports.file.level = 'silly'
+}
+
+// Replace console with electron-log in production
+if (app.isPackaged) {
+  console.log = log.info.bind(log)
+  console.error = log.error.bind(log)
+  console.warn = log.warn.bind(log)
+  console.info = log.info.bind(log)
+  console.debug = log.debug.bind(log)
+}
 
 // Importing Firebase modules using the new modular API.
 const { initializeApp, getAuth } = require('firebase/app')
@@ -52,9 +76,8 @@ if (process.platform === 'win32') {
 
 // Configure autoUpdater
 function setupAutoUpdater() {
-  // Log update events
-  autoUpdater.logger = require('electron-log')
-  autoUpdater.logger.transports.file.level = 'info'
+  // Use the centralized logger
+  autoUpdater.logger = log
   
   // Add configuration for GitHub provider
   autoUpdater.allowPrerelease = false
@@ -87,30 +110,173 @@ function setupAutoUpdater() {
 // Call setup function
 setupAutoUpdater()
 
-// Check if we have screen recording permission
+// Modified function to capture and send screenshots with Linux-specific handling
+async function captureAndSendScreenshot() {
+  if (!idToken) {
+    console.log('Cannot send screenshots: User not authenticated')
+    return
+  }
+
+  try {
+    let screenshots = []
+    
+    // Use different screenshot methods based on platform
+    if (process.platform === 'linux') {
+      // Use a Linux-specific approach to avoid permission dialogs
+      screenshots = await captureScreenshotsLinux()
+    } else {
+      // Use Electron's desktopCapturer for Windows and macOS
+      const sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width: 1920, height: 1080 }
+      })
+
+      if (sources.length === 0) {
+        console.log('No screens detected')
+        return
+      }
+
+      // Process all screenshots to proper dimensions
+      screenshots = await Promise.all(
+        sources.map(async (source) => {
+          return await processScreenshotForUpload(source.thumbnail.toDataURL())
+        })
+      )
+    }
+    
+    if (screenshots.length === 0) {
+      console.log('No screenshots captured')
+      return
+    }
+
+    const fetch = await import('node-fetch').then(module => module.default)
+
+    // Send all screenshots in a single API call
+    const response = await fetch(FIREBASE_CAPTURE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`
+      },
+      body: JSON.stringify({
+        timestamp: Date.now(),
+        screenshots: screenshots
+      })
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Server error: ${response.status}`)
+    }
+  } catch (error) {
+    // Simplified error handling
+    console.error('Screenshot error:', error.message)
+    
+    // If it's an auth error, clear the token to force re-login
+    if (error.message.includes('401') || error.message.includes('403')) {
+      idToken = null
+      if (mainWindow) {
+        mainWindow.webContents.send('auth-error')
+      }
+    }
+  }
+}
+
+// New function for Linux screenshot capture using native commands
+async function captureScreenshotsLinux() {
+  try {
+    const fs = require('fs')
+    const os = require('os')
+    const tempDir = os.tmpdir()
+    const screenshotPath = path.join(tempDir, `screenshot-${Date.now()}.png`)
+    
+    // Check for available tools and use the best one
+    let screenshotTool = null
+    try {
+      // Check for gnome-screenshot (common on Ubuntu/Gnome)
+      execSync('which gnome-screenshot')
+      screenshotTool = 'gnome-screenshot'
+    } catch (e) {
+      try {
+        // Check for scrot (common on many distros)
+        execSync('which scrot')
+        screenshotTool = 'scrot'
+      } catch (e) {
+        try {
+          // Check for import from ImageMagick
+          execSync('which import')
+          screenshotTool = 'import'
+        } catch (e) {
+          log.error('No suitable screenshot tool found on Linux')
+          return []
+        }
+      }
+    }
+    
+    log.debug(`Using Linux screenshot tool: ${screenshotTool}`)
+    
+    // Capture screenshot with the available tool
+    if (screenshotTool === 'gnome-screenshot') {
+      execSync(`gnome-screenshot -f "${screenshotPath}"`)
+    } else if (screenshotTool === 'scrot') {
+      execSync(`scrot "${screenshotPath}"`)
+    } else if (screenshotTool === 'import') {
+      execSync(`import -window root "${screenshotPath}"`)
+    }
+    
+    // Read the file and convert to base64
+    const screenshotData = fs.readFileSync(screenshotPath)
+    const base64Data = `data:image/png;base64,${screenshotData.toString('base64')}`
+    
+    // Clean up the temporary file
+    fs.unlinkSync(screenshotPath)
+    
+    // Process the screenshot to the right size
+    const processedImage = await processScreenshotForUpload(base64Data)
+    
+    return [processedImage]
+  } catch (error) {
+    log.error('Failed to capture Linux screenshot:', error)
+    return []
+  }
+}
+
+// Modified checkScreenCapturePermission function
 async function checkScreenCapturePermission() {
   try {
-    // Add a small delay to ensure system is ready
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // For Linux, we'll check if we have one of the screenshot tools available
+    if (process.platform === 'linux') {
+      try {
+        // Try to detect if any screenshot tool is available
+        execSync('which gnome-screenshot || which scrot || which import')
+        hasScreenCapturePermission = true
+        return true
+      } catch (e) {
+        console.error('No screenshot tools available on Linux')
+        hasScreenCapturePermission = false
+        return false
+      }
+    }
+    
+    // For other platforms, use the existing method
+    await new Promise(resolve => setTimeout(resolve, 500))
     
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
       thumbnailSize: { width: 1, height: 1 },
       fetchWindowIcons: false
-    });
+    })
     
-    // If we can get sources, we likely have permission
     if (sources && sources.length > 0) {
-      hasScreenCapturePermission = true;
-      return true;
+      hasScreenCapturePermission = true
+      return true
     }
     
-    hasScreenCapturePermission = false;
-    return false;
+    hasScreenCapturePermission = false
+    return false
   } catch (error) {
-    console.error('Error checking screen capture permission:', error);
-    hasScreenCapturePermission = false;
-    return false;
+    console.error('Error checking screen capture permission:', error)
+    hasScreenCapturePermission = false
+    return false
   }
 }
 
@@ -507,65 +673,6 @@ function showWindowBelowTray() {
   mainWindow.setPosition(x, y, false)
   mainWindow.show()
   mainWindow.focus() // Ensure window gets focus
-}
-
-// Function to capture and send screenshots
-async function captureAndSendScreenshot() {
-  if (!idToken) {
-    console.log('Cannot send screenshots: User not authenticated')
-    return
-  }
-
-  try {
-    // Capture each screen separately
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: 1920, height: 1080 } // Higher initial resolution for better quality
-    })
-
-    if (sources.length === 0) {
-      console.log('No screens detected')
-      return
-    }
-
-    // Process all screenshots to proper dimensions
-    const screenshots = await Promise.all(
-      sources.map(async (source) => {
-        // Process each screenshot with 819px constraint on shorter edge
-        return await processScreenshotForUpload(source.thumbnail.toDataURL())
-      })
-    )
-
-    const fetch = await import('node-fetch').then(module => module.default)
-
-    // Send all screenshots in a single API call
-    const response = await fetch(FIREBASE_CAPTURE_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${idToken}`
-      },
-      body: JSON.stringify({
-        timestamp: Date.now(),
-        screenshots: screenshots // Now sending an array of screenshots
-      })
-    })
-    
-    if (!response.ok) {
-      throw new Error(`Server error: ${response.status}`)
-    }
-  } catch (error) {
-    // Simplified error handling
-    console.error('Screenshot error:', error.message)
-    
-    // If it's an auth error, clear the token to force re-login
-    if (error.message.includes('401') || error.message.includes('403')) {
-      idToken = null
-      if (mainWindow) {
-        mainWindow.webContents.send('auth-error')
-      }
-    }
-  }
 }
 
 // New function to process screenshots for upload with 819px constraint on shorter edge

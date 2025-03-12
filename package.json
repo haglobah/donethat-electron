@@ -9,6 +9,7 @@
     "build:prepare": "npm run build:css && npm run build:webpack",
     "start": "npm run build:prepare && electron .",
     "build": "npm run build:prepare && electron-builder",
+    "build:linux": "npm run build:prepare && electron-builder --linux",
     "build:all:arm64": "npm run build:prepare && electron-builder -mwl",
     "build:all:x64": "npm run build:prepare && electron-builder -mwl --x64",
     "build:all": "npm run build:all:arm64 && npm run build:all:x64",
