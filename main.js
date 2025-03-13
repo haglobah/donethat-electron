@@ -4,6 +4,9 @@ const { ipcMain } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const { execSync } = require('child_process')  // Add this for Linux screenshot alternative
 
+// To show dev tools next to main window
+let debug = false  // Change this to true for debugging
+
 // Add centralized logging configuration
 const log = require('electron-log')
 
@@ -18,8 +21,41 @@ if (app.isPackaged) {
   log.transports.file.level = 'silly'
 }
 
-// Replace console with electron-log in production
-if (app.isPackaged) {
+// Add debug notifications based on debug flag, not packaging
+if (debug) {
+  // Add custom notification transport for warnings and errors
+  log.hooks.push((message, transport) => {
+    if (transport !== log.transports.console) return message;
+    
+    if (message.level === 'warn' || message.level === 'error') {
+      // Only send notifications after app is ready
+      if (app.isReady()) {
+        try {
+          new Notification({
+            title: `Done That ${message.level.toUpperCase()}`,
+            body: message.data.join(' ').substring(0, 100) + (message.data.join(' ').length > 100 ? '...' : ''),
+            silent: false
+          }).show();
+        } catch (err) {
+          console.error('Failed to show notification:', err);
+        }
+      }
+    }
+    
+    return message;
+  });
+  
+  // For debugging, replace console with more verbose electron-log
+  const originalConsole = { ...console };
+  console.log = (...args) => { log.info(...args); originalConsole.log(...args); };
+  console.error = (...args) => { log.error(...args); originalConsole.error(...args); };
+  console.warn = (...args) => { log.warn(...args); originalConsole.warn(...args); };
+  console.info = (...args) => { log.info(...args); originalConsole.info(...args); };
+  console.debug = (...args) => { log.debug(...args); originalConsole.debug(...args); };
+}
+
+// Only replace console in production, not in debug mode
+if (app.isPackaged && !debug) {
   console.log = log.info.bind(log)
   console.error = log.error.bind(log)
   console.warn = log.warn.bind(log)
@@ -36,9 +72,6 @@ const firebaseApp = initializeApp(firebaseConfig)
 
 // Add your Firebase function URL here
 const FIREBASE_CAPTURE_URL = 'https://europe-west1-donethat.cloudfunctions.net/captureScreenshot'
-
-// To show dev tools next to main window
-let debug = false
 
 let tray = null
 let mainWindow = null
@@ -102,8 +135,8 @@ setupAutoUpdater()
 // Modified function to capture and send screenshots with Linux-specific handling
 async function captureAndSendScreenshot() {
   if (!idToken) {
-    console.log('Cannot send screenshots: User not authenticated')
-    return
+    log.warn('Cannot send screenshots: User not authenticated');
+    return;
   }
 
   try {
@@ -111,36 +144,42 @@ async function captureAndSendScreenshot() {
     
     // Use different screenshot methods based on platform
     if (process.platform === 'linux') {
-      // Use a Linux-specific approach to avoid permission dialogs
+      log.info('Using Linux screenshot method');
       screenshots = await captureScreenshotsLinux()
     } else {
-      // Use Electron's desktopCapturer for Windows and macOS
+      log.info('Using Electron desktopCapturer');
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
         thumbnailSize: { width: 1920, height: 1080 }
       })
 
       if (sources.length === 0) {
-        console.log('No screens detected')
-        return
+        log.warn('No screens detected');
+        return;
       }
+
+      log.info(`Found ${sources.length} screen(s)`);
 
       // Process all screenshots to proper dimensions
       screenshots = await Promise.all(
         sources.map(async (source) => {
-          return await processScreenshotForUpload(source.thumbnail.toDataURL())
+          log.info(`Processing screenshot from source: ${source.name}`);
+          return await processScreenshotForUpload(source.thumbnail.toDataURL());
         })
       )
     }
     
     if (screenshots.length === 0) {
-      console.log('No screenshots captured')
-      return
+      log.warn('No screenshots captured');
+      return;
     }
 
-    const fetch = await import('node-fetch').then(module => module.default)
+    log.info(`Captured ${screenshots.length} screenshot(s), preparing to upload...`);
 
-    // Send all screenshots in a single API call
+    const fetch = await import('node-fetch').then(module => module.default);
+
+    log.info('Sending screenshots to server...');
+    
     const response = await fetch(FIREBASE_CAPTURE_URL, {
       method: 'POST',
       headers: {
@@ -151,20 +190,21 @@ async function captureAndSendScreenshot() {
         timestamp: Date.now(),
         screenshots: screenshots
       })
-    })
+    });
     
     if (!response.ok) {
-      throw new Error(`Server error: ${response.status}`)
+      throw new Error(`Server error: ${response.status}`);
     }
+    
+    log.info('Screenshots uploaded successfully');
   } catch (error) {
-    // Simplified error handling
-    console.error('Screenshot error:', error.message)
+    log.error('Screenshot error:', error.message, error.stack);
     
     // If it's an auth error, clear the token to force re-login
     if (error.message.includes('401') || error.message.includes('403')) {
-      idToken = null
+      idToken = null;
       if (mainWindow) {
-        mainWindow.webContents.send('auth-error')
+        mainWindow.webContents.send('auth-error');
       }
     }
   }
@@ -178,119 +218,108 @@ async function captureScreenshotsLinux() {
     const tempDir = os.tmpdir()
     const screenshotPath = path.join(tempDir, `screenshot-${Date.now()}.png`)
     
-    // Take a combined screenshot first
-    let screenshotTool = null
-    try {
-      execSync('which scrot')
-      screenshotTool = 'scrot'
-    } catch (e) {
+    // Define screenshot tools to try (excluding gnome-screenshot and import)
+    const tools = [
+      { name: 'scrot', cmd: `scrot -m -z "${screenshotPath}"` },
+      { name: 'maim', cmd: `maim "${screenshotPath}"` },             // Alternative modern tool
+      { name: 'spectacle', cmd: `spectacle -b -n -o "${screenshotPath}"` }, // KDE screenshot tool
+      { name: 'flameshot', cmd: `flameshot full -p "${screenshotPath}"` }   // Another alternative
+    ]
+    
+    for (const tool of tools) {
       try {
-        execSync('which import')
-        screenshotTool = 'import'
-      } catch (e) {
-        try {
-          execSync('which gnome-screenshot')
-          screenshotTool = 'gnome-screenshot'
-        } catch (e) {
-          log.error('No suitable screenshot tool found.')
-          return []
+        // Check if tool exists
+        execSync(`which ${tool.name}`)
+        
+        log.info(`Using ${tool.name} for screenshot: ${tool.cmd}`)
+        execSync(tool.cmd, { timeout: 5000 })
+        
+        // Check if screenshot was taken successfully
+        if (fs.existsSync(screenshotPath)) {
+          const stats = fs.statSync(screenshotPath)
+          log.info(`Screenshot file size: ${stats.size} bytes`)
+          
+          if (stats.size > 0) {
+            const screenshotData = fs.readFileSync(screenshotPath)
+            const base64Data = `data:image/png;base64,${screenshotData.toString('base64')}`
+            fs.unlinkSync(screenshotPath)
+            
+            // Try to detect multiple displays
+            try {
+              // Get display information using xrandr
+              const displays = await getLinuxDisplays()
+              
+              if (displays.length > 1) {
+                // If we have multiple displays, try to split the screenshot
+                // Convert base64 to buffer for nativeImage
+                const imageBuffer = Buffer.from(base64Data.replace(/^data:image\/\w+;base64,/, ''), 'base64')
+                
+                // Use Electron's nativeImage to crop the screenshots
+                const croppedImages = await cropScreenshotsWithNativeImage(imageBuffer, displays)
+                return croppedImages
+              }
+            } catch (e) {
+              log.info(`Failed to process multi-display: ${e.message}, using full screenshot`)
+            }
+            
+            // If multi-display handling fails or there's only one display,
+            // process the single full screenshot
+            const processedImage = await processScreenshotForUpload(base64Data)
+            return [processedImage]
+          } else {
+            log.info(`${tool.name} created an empty file, trying next tool`)
+          }
+        } else {
+          log.info(`${tool.name} did not create a file, trying next tool`)
         }
-      }
-    }
-    
-    log.debug(`Using Linux screenshot tool: ${screenshotTool}`)
-    
-    // Capture screenshot with the available tool
-    if (screenshotTool === 'scrot') {
-      execSync(`scrot -m -z "${screenshotPath}"`)
-    } else if (screenshotTool === 'import') {
-      execSync(`import -window root -silent "${screenshotPath}"`)
-    } else if (screenshotTool === 'gnome-screenshot') {
-      try {
-        execSync(`gnome-screenshot --silent -f "${screenshotPath}" 2>/dev/null`)
       } catch (e) {
-        try {
-          execSync(`gnome-screenshot -f "${screenshotPath}" 2>/dev/null`)
-        } catch (e) {
-          execSync(`gnome-screenshot -f "${screenshotPath}"`)
-        }
+        log.info(`${tool.name} failed: ${e.message}`)
+        // Continue to next tool
       }
     }
     
-    // Read the screenshot file
-    const screenshotData = fs.readFileSync(screenshotPath)
-    
-    // Try to get display information using xrandr
-    try {
-      const displays = await getLinuxDisplayInfo()
-      
-      if (displays.length > 1) {
-        // We have multiple displays, try to crop them using nativeImage
-        const results = await cropScreenshotsWithNativeImage(screenshotData, displays)
-        // Clean up the temporary file
-        fs.unlinkSync(screenshotPath)
-        return results
-      }
-    } catch (err) {
-      log.warn('Failed to get display info, using combined screenshot:', err)
-    }
-    
-    // Fallback to single combined screenshot
-    const base64Data = `data:image/png;base64,${screenshotData.toString('base64')}`
-    
-    // Clean up the temporary file
-    fs.unlinkSync(screenshotPath)
-    
-    // Process the screenshot to the right size
-    const processedImage = await processScreenshotForUpload(base64Data)
-    
-    // Return as array to match Windows/macOS behavior
-    return [processedImage]
+    // If we got here, all tools failed
+    log.error('No screenshot tools were successful. Please install scrot: sudo apt-get install scrot. Fallbacks are maim, kde-spectacle, flameshot, or shutter.')
+    return []
   } catch (error) {
     log.error('Failed to capture Linux screenshot:', error)
     return []
   }
 }
 
-// New function to get display information using xrandr
-async function getLinuxDisplayInfo() {
+// Helper function to get display information on Linux
+async function getLinuxDisplays() {
   try {
-    const output = execSync('xrandr --current').toString()
+    // Try to get display info using xrandr
+    const xrandrOutput = execSync('xrandr --current').toString()
     const displays = []
     
-    // Parse xrandr output to extract connected displays
-    const connectedDisplays = output.match(/^(.*) connected.*/gm)
+    // Parse xrandr output to find connected displays
+    const displayRegex = /(\S+) connected.*?(\d+)x(\d+)\+(\d+)\+(\d+)/g
+    let match
     
-    if (!connectedDisplays) {
-      throw new Error('No connected displays found in xrandr output')
-    }
-    
-    for (const displayLine of connectedDisplays) {
-      // Get display name and position info
-      const displayName = displayLine.split(' ')[0]
+    while ((match = displayRegex.exec(xrandrOutput)) !== null) {
+      const [, name, width, height, x, y] = match
+      displays.push({
+        name,
+        width: parseInt(width, 10),
+        height: parseInt(height, 10),
+        x: parseInt(x, 10),
+        y: parseInt(y, 10)
+      })
       
-      // Look for the resolution and position like 1920x1080+0+0
-      const geometryMatch = displayLine.match(/(\d+)x(\d+)\+(\d+)\+(\d+)/)
-      
-      if (geometryMatch) {
-        displays.push({
-          name: displayName,
-          width: parseInt(geometryMatch[1]),
-          height: parseInt(geometryMatch[2]),
-          x: parseInt(geometryMatch[3]),
-          y: parseInt(geometryMatch[4])
-        })
-      }
+      if (debug) log.info(`Detected display: ${name} ${width}x${height}+${x}+${y}`)
     }
     
     return displays
   } catch (error) {
-    log.error('Error getting display info:', error)
-    return []
+    if (debug) log.info(`Failed to get display information: ${error.message}`)
+    // Return a default display if xrandr fails
+    return [{ name: 'default', width: 1920, height: 1080, x: 0, y: 0 }]
   }
 }
 
-// New function to crop screenshots using Electron's nativeImage
+// Modified function to crop screenshots using Electron's nativeImage
 async function cropScreenshotsWithNativeImage(imageBuffer, displays) {
   try {
     const results = []
