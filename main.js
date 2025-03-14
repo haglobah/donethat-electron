@@ -1,28 +1,43 @@
-const { app, Tray, Menu, BrowserWindow, nativeImage, screen, desktopCapturer, Notification } = require('electron')
+const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification } = require('electron')
 const path = require('path')
-const { ipcMain } = require('electron')
 const { autoUpdater } = require('electron-updater')
-const { execSync } = require('child_process')  // Add this for Linux screenshot alternative
+const log = require('electron-log')
+const { initializeApp } = require('firebase/app')
+const firebaseConfig = require('./firebase-config')
+const { 
+  captureAndSendScreenshot: moduleCapture, 
+  checkScreenCapturePermission: moduleCheckPermission,
+  getWaylandStatus
+} = require('./src-main/screenshot-capture')
 
 // To show dev tools next to main window
-let debug = false  // Change this to true for debugging
-
-// Add centralized logging configuration
-const log = require('electron-log')
-
-// Configure logging based on environment
-if (app.isPackaged) {
-  // In production: only show warnings and errors
-  log.transports.console.level = 'warn'
-  log.transports.file.level = 'info'  // Still log info to file for troubleshooting
-} else {
-  // In development: show all logs
-  log.transports.console.level = 'silly'
-  log.transports.file.level = 'silly'
+let DEBUG = false
+// Add your Firebase function URL here
+const FIREBASE_CAPTURE_URL = 'https://europe-west1-donethat.cloudfunctions.net/captureScreenshot'
+// Update screenshot interval logic
+let SCREENSHOT_INTERVAL_MINUTES = 5; // Default to 5 minutes for release
+// Set interval based on whether it's development or production
+if (!app.isPackaged) {
+  SCREENSHOT_INTERVAL_MINUTES = 1; // Every minute for development
 }
 
-// Add debug notifications based on debug flag, not packaging
-if (debug) {
+let iconRecordingPath = path.join(__dirname, 'resources', 'icon_recording.png')
+let iconPausedPath = path.join(__dirname, 'resources', 'icon_paused.png')
+let iconErrorPath = path.join(__dirname, 'resources', 'icon_error.png')
+
+let tray = null
+let mainWindow = null
+let idToken = null
+let screenshotInterval = null
+let pauseTimeout = null
+let isPaused = false
+let summaryNotificationTime = null
+let summaryNotificationTimeout = null
+let summarySubmittedTimestamp = null
+let hasScreenCapturePermission = false
+let isWaylandSession = null;
+
+if (DEBUG) {
   // Add custom notification transport for warnings and errors
   log.hooks.push((message, transport) => {
     if (transport !== log.transports.console) return message;
@@ -55,7 +70,7 @@ if (debug) {
 }
 
 // Only replace console in production, not in debug mode
-if (app.isPackaged && !debug) {
+if (app.isPackaged && !DEBUG) {
   console.log = log.info.bind(log)
   console.error = log.error.bind(log)
   console.warn = log.warn.bind(log)
@@ -63,52 +78,21 @@ if (app.isPackaged && !debug) {
   console.debug = log.debug.bind(log)
 }
 
-// Importing Firebase modules using the new modular API.
-const { initializeApp, getAuth } = require('firebase/app')
-const firebaseConfig = require('./firebase-config')
+// Configure logging based on environment
+if (app.isPackaged) {
+  // In production: only show warnings and errors
+  log.transports.console.level = 'warn'
+  log.transports.file.level = 'info'  // Still log info to file for troubleshooting
+} else {
+  // In development: show all logs
+  log.transports.console.level = 'silly'
+  log.transports.file.level = 'silly'
+}
 
 // Initialize Firebase with the new config
 const firebaseApp = initializeApp(firebaseConfig)
 
-// Add your Firebase function URL here
-const FIREBASE_CAPTURE_URL = 'https://europe-west1-donethat.cloudfunctions.net/captureScreenshot'
-
-let tray = null
-let mainWindow = null
-let idToken = null
-let screenshotInterval = null
-let pauseTimeout = null
-let isPaused = false
-let summaryNotificationTime = null
-let summaryNotificationTimeout = null
-let summarySubmittedTimestamp = null
-let hasScreenCapturePermission = false
-
-// Update screenshot interval logic
-let SCREENSHOT_INTERVAL_MINUTES = 5; // Default to 5 minutes for release
-
-// Set interval based on whether it's development or production
-if (!app.isPackaged) {
-  SCREENSHOT_INTERVAL_MINUTES = 1; // Every minute for development
-}
-
-let iconRecordingPath = path.join(__dirname, 'resources', 'icon_recording.png')
-let iconPausedPath = path.join(__dirname, 'resources', 'icon_paused.png')
-let iconErrorPath = path.join(__dirname, 'resources', 'icon_error.png')
-
-// Add a global variable for the Linux screenshot tool
-let linuxScreenshotTool = null; // Will be 'gnome-screenshot', 'scrot', or 'maim'
-
-// Add global variable for session type
-let isWaylandSession = null;
-
-// Function to check if running on Wayland or X11
-function checkSessionType() {
-  // Check if running on Wayland
-  isWaylandSession = process.env.XDG_SESSION_TYPE === 'wayland';
-  log.info(`Session type: ${isWaylandSession ? 'Wayland' : 'X11'}`);
-  return isWaylandSession;
-}
+///// AUTOUPDATER /////
 
 // Configure autoUpdater
 function setupAutoUpdater() {
@@ -143,381 +127,35 @@ function setupAutoUpdater() {
   })
 }
 
+// Add IPC handler to install update and restart
+ipcMain.on('install-update', () => {
+  console.log('Installing update and restarting...')
+  autoUpdater.quitAndInstall(true, true)
+})
+
+// Function to handle scheduled update checks
+function scheduleUpdateChecks() {
+  log.info('Setting up update check schedule...');
+  
+  // First check after 1 minute to let the app fully initialize
+  setTimeout(() => {
+    log.info('Running first scheduled update check...');
+    autoUpdater.checkForUpdates()
+      .catch(err => log.error('Error in first update check:', err));
+    
+    // Then check every hour
+    setInterval(() => {
+      log.info('Running hourly update check...');
+      autoUpdater.checkForUpdates()
+        .catch(err => log.error('Error in hourly update check:', err));
+    }, 60 * 60 * 1000);
+  }, 1 * 60 * 1000);
+}
+
 // Call setup function
 setupAutoUpdater()
 
-// Use a single unified method for all platforms
-async function captureAndSendScreenshot() {
-  if (!idToken) {
-    log.warn('Cannot send screenshots: User not authenticated');
-    return;
-  }
-
-  try {
-    let screenshots = [];
-    
-    // Use Linux-specific method on Linux platforms
-    if (process.platform === 'linux') {
-      log.info('Using Linux-specific screenshot method');
-      screenshots = await captureScreenshotsLinux();
-    } else {
-      // Use the standard Electron approach for other platforms
-      const sources = await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: { width: 1920, height: 1080 }
-      });
-      
-      if (sources.length === 0) {
-        log.warn('No screen sources found');
-        return;
-      }
-      
-      log.info(`Captured ${sources.length} screen sources`);
-      
-      // Process each source
-      screenshots = await Promise.all(
-        sources.map(async source => {
-          return await processScreenshotForUpload(source.thumbnail.toDataURL());
-        })
-      );
-    }
-    
-    if (screenshots.length === 0) {
-      log.warn('No screenshots captured');
-      return;
-    }
-
-    log.info(`Processing ${screenshots.length} screenshots for upload`);
-
-    const fetch = await import('node-fetch').then(module => module.default);
-    
-    const response = await fetch(FIREBASE_CAPTURE_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${idToken}`
-      },
-      body: JSON.stringify({
-        timestamp: Date.now(),
-        screenshots: screenshots
-      })
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Server error: ${response.status}`);
-    }
-    
-    log.info('Screenshots uploaded successfully');
-  } catch (error) {
-    log.error('Screenshot error:', error.message, error.stack);
-    
-    // If it's an auth error, clear the token to force re-login
-    if (error.message.includes('401') || error.message.includes('403')) {
-      idToken = null;
-      if (mainWindow) {
-        mainWindow.webContents.send('auth-error');
-      }
-    }
-  }
-}
-
-// Linux-specific permission checking and tool detection
-async function checkLinuxScreenCapturePermission() {
-  checkSessionType();
-  // Session type already checked by parent function
-  try {
-    log.info(`Checking Linux screenshot permission (Wayland: ${isWaylandSession})`);
-    
-    // Check available tools based on the environment
-    if (isWaylandSession) {
-      // For Wayland, check if gnome-screenshot is available
-      try {
-        execSync('which gnome-screenshot', { stdio: 'ignore' });
-        log.info('gnome-screenshot is available for Wayland');
-        
-        // Test if it actually works
-        const fs = require('fs');
-        const os = require('os');
-        const tempDir = os.tmpdir();
-        const testPath = path.join(tempDir, `test-screenshot-${Date.now()}.png`);
-        
-        // Try to take a test screenshot 
-        execSync(`gnome-screenshot -f "${testPath}"`, { timeout: 3000 });
-        
-        if (fs.existsSync(testPath)) {
-          fs.unlinkSync(testPath);
-          linuxScreenshotTool = 'gnome-screenshot';
-          log.info('gnome-screenshot permission test successful');
-          return true;
-        }
-      } catch (e) {
-        log.warn(`gnome-screenshot not available or failed: ${e.message}`);
-      }
-      
-      log.error('No working screenshot tool found for Wayland');
-      linuxScreenshotTool = null;
-      return false;
-    } else {
-      // For X11, try scrot first, then maim
-      try {
-        execSync('which scrot', { stdio: 'ignore' });
-        log.info('scrot is available for X11');
-        
-        // Test if it works
-        const fs = require('fs');
-        const os = require('os');
-        const tempDir = os.tmpdir();
-        const testPath = path.join(tempDir, `test-screenshot-${Date.now()}.png`);
-        
-        execSync(`scrot -z "${testPath}"`, { timeout: 3000 });
-        
-        if (fs.existsSync(testPath)) {
-          fs.unlinkSync(testPath);
-          linuxScreenshotTool = 'scrot';
-          log.info('scrot permission test successful');
-          return true;
-        }
-      } catch (e) {
-        log.warn(`scrot not available or failed: ${e.message}`);
-      }
-      
-      // Try maim as alternative
-      try {
-        execSync('which maim', { stdio: 'ignore' });
-        log.info('maim is available for X11');
-        
-        // Test if it works
-        const fs = require('fs');
-        const os = require('os');
-        const tempDir = os.tmpdir();
-        const testPath = path.join(tempDir, `test-screenshot-${Date.now()}.png`);
-        
-        execSync(`maim "${testPath}"`, { timeout: 3000 });
-        
-        if (fs.existsSync(testPath)) {
-          fs.unlinkSync(testPath);
-          linuxScreenshotTool = 'maim';
-          log.info('maim permission test successful');
-          return true;
-        }
-      } catch (e) {
-        log.warn(`maim not available or failed: ${e.message}`);
-      }
-      
-      log.error('No working screenshot tool found for X11');
-      linuxScreenshotTool = null;
-      return false;
-    }
-  } catch (error) {
-    log.error('Linux screenshot permission check failed:', error);
-    linuxScreenshotTool = null;
-    return false;
-  }
-}
-
-// Function to check screen capture permission
-async function checkScreenCapturePermission() {
-  try {
-    // Linux-specific handling
-    if (process.platform === 'linux') {    
-      hasScreenCapturePermission = await checkLinuxScreenCapturePermission();
-      return hasScreenCapturePermission;
-    }
-    
-    // For other platforms (macOS, Windows)
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: 1, height: 1 }
-    });
-    
-    hasScreenCapturePermission = sources && sources.length > 0;
-    return hasScreenCapturePermission;
-  } catch (error) {
-    console.error('Error checking screen capture permission:', error);
-    hasScreenCapturePermission = false;
-    return false;
-  }
-}
-
-// Simplified Linux screenshot function using the detected tool
-async function captureScreenshotsLinux() {
-  try {
-    // If no tool was found during permission check, abort
-    if (!linuxScreenshotTool) {
-      log.error('No screenshot tool available for Linux');
-      return [];
-    }
-    
-    const fs = require('fs');
-    const os = require('os');
-    const tempDir = os.tmpdir();
-    const screenshotPath = path.join(tempDir, `screenshot-${Date.now()}.png`);
-    
-    // Use the appropriate tool based on what was detected
-    if (linuxScreenshotTool === 'gnome-screenshot') {
-      // For Wayland with gnome-screenshot
-      try {
-        // Save original animation and sound settings to restore later
-        const getOriginalAnimationSetting = execSync('gsettings get org.gnome.desktop.interface enable-animations').toString().trim();
-        const getOriginalSoundSetting = execSync('gsettings get org.gnome.desktop.sound event-sounds').toString().trim();
-        
-        try {
-          // Disable animations and sounds
-          execSync('gsettings set org.gnome.desktop.interface enable-animations false');
-          execSync('gsettings set org.gnome.desktop.sound event-sounds false');
-          
-          // Take screenshot with gnome-screenshot
-          execSync(`gnome-screenshot -f "${screenshotPath}"`, { timeout: 5000 });
-        } finally {
-          // Restore original settings (even if screenshot fails)
-          execSync(`gsettings set org.gnome.desktop.interface enable-animations ${getOriginalAnimationSetting}`);
-          execSync(`gsettings set org.gnome.desktop.sound event-sounds ${getOriginalSoundSetting}`);
-        }
-      } catch (e) {
-        log.error(`gnome-screenshot failed: ${e.message}`);
-        return [];
-      }
-    } else if (linuxScreenshotTool === 'scrot') {
-      // For X11 with scrot
-      try {
-        execSync(`scrot -z "${screenshotPath}"`, { timeout: 5000 });
-      } catch (e) {
-        log.error(`scrot failed: ${e.message}`);
-        return [];
-      }
-    } else if (linuxScreenshotTool === 'maim') {
-      // For X11 with maim
-      try {
-        execSync(`maim "${screenshotPath}"`, { timeout: 5000 });
-      } catch (e) {
-        log.error(`maim failed: ${e.message}`);
-        return [];
-      }
-    } else {
-      log.error(`Unknown screenshot tool: ${linuxScreenshotTool}`);
-      return [];
-    }
-    
-    // Process the screenshot if it was created successfully
-    if (fs.existsSync(screenshotPath) && fs.statSync(screenshotPath).size > 0) {
-      log.info(`Screenshot captured successfully with ${linuxScreenshotTool}`);
-      const screenshotData = fs.readFileSync(screenshotPath);
-      const base64Data = `data:image/png;base64,${screenshotData.toString('base64')}`;
-      fs.unlinkSync(screenshotPath);
-      
-      // For multi-monitor setups
-      if (linuxScreenshotTool === 'gnome-screenshot') {
-        // Process for all displays if needed
-        const displays = await getLinuxDisplays();
-        
-        if (displays.length <= 1) {
-          // If only one display, just process the whole image
-          const processedImage = await processScreenshotForUpload(base64Data);
-          return [processedImage];
-        } else {
-          // For multiple displays, crop the image for each display
-          return await cropScreenshotsWithNativeImage(
-            Buffer.from(base64Data.split(',')[1], 'base64'),
-            displays.map(d => d.bounds)
-          );
-        }
-      } else {
-        // For scrot and maim, just process the whole image
-        const processedImage = await processScreenshotForUpload(base64Data);
-        return [processedImage];
-      }
-    } else {
-      log.error('Screenshot file was not created or is empty');
-      return [];
-    }
-  } catch (error) {
-    log.error('Failed to capture Linux screenshot:', error);
-    return [];
-  }
-}
-
-// Modified function to crop screenshots using Electron's nativeImage
-async function cropScreenshotsWithNativeImage(imageBuffer, displays) {
-  try {
-    const results = [];
-    
-    // Create nativeImage from buffer
-    const fullImage = nativeImage.createFromBuffer(imageBuffer);
-    
-    for (const display of displays) {
-      const { width, height, x, y } = display;
-      
-      // Crop the image for this display
-      const croppedImage = fullImage.crop({ x, y, width, height });
-      
-      // Convert to data URL
-      const dataUrl = croppedImage.toDataURL();
-      
-      // Process the cropped screenshot
-      const processedImage = await processScreenshotForUpload(dataUrl);
-      results.push(processedImage);
-    }
-    
-    return results;
-  } catch (error) {
-    log.error('Error cropping screenshots:', error);
-    // Fall back to processing the full image
-    const dataUrl = nativeImage.createFromBuffer(imageBuffer).toDataURL();
-    const processedImage = await processScreenshotForUpload(dataUrl);
-    return [processedImage];
-  }
-}
-
-// Helper function to get Linux display information for multi-monitor setups
-async function getLinuxDisplays() {
-  try {
-    // For X11, we can use xrandr to get display information
-    if (process.env.XDG_SESSION_TYPE !== 'wayland') {
-      const { execSync } = require('child_process');
-      const xrandrOutput = execSync('xrandr --current').toString();
-      
-      // Parse the output to get display information
-      const displays = [];
-      const displayRegex = /(\S+) connected (\d+)x(\d+)\+(\d+)\+(\d+)/g;
-      let match;
-      
-      while ((match = displayRegex.exec(xrandrOutput)) !== null) {
-        const [, name, width, height, x, y] = match;
-        displays.push({
-          name,
-          bounds: {
-            x: parseInt(x),
-            y: parseInt(y),
-            width: parseInt(width),
-            height: parseInt(height)
-          }
-        });
-      }
-      
-      if (displays.length > 0) {
-        log.info(`Found ${displays.length} displays using xrandr`);
-        return displays;
-      }
-    }
-    
-    // Fallback to electron's screen module
-    const displays = screen.getAllDisplays().map(display => ({
-      name: `Display ${display.id}`,
-      bounds: display.bounds
-    }));
-    
-    log.info(`Found ${displays.length} displays using Electron screen API`);
-    return displays;
-  } catch (error) {
-    log.error('Failed to get Linux displays:', error);
-    // Default to the primary display
-    const primaryDisplay = screen.getPrimaryDisplay();
-    return [{
-      name: 'Primary Display',
-      bounds: primaryDisplay.bounds
-    }];
-  }
-}
+///// AUTOSTART /////
 
 // Fix autostart implementation with platform-specific logic
 function setupAutoStart() {
@@ -554,6 +192,8 @@ function setupAutoStart() {
     log.error('Failed to configure autostart:', error);
   }
 }
+
+///// MAIN /////
 
 app.whenReady().then(async () => {
   // Create tray with initial error icon
@@ -634,10 +274,34 @@ app.whenReady().then(async () => {
   }, 60 * 60 * 1000) // 1 hours in milliseconds
 })
 
-// Add IPC handler to install update and restart
-ipcMain.on('install-update', () => {
-  console.log('Installing update and restarting...')
-  autoUpdater.quitAndInstall(true, true)
+// Handle OS-level quit events properly - especially important for macOS
+app.on('before-quit', () => {
+  // Flag that we're actually quitting, not just closing windows
+  app.isQuitting = true;
+  
+  // Clean up resources
+  if (screenshotInterval) {
+    clearInterval(screenshotInterval);
+  }
+  
+  if (pauseTimeout) {
+    clearTimeout(pauseTimeout);
+  }
+  
+  if (summaryNotificationTimeout) {
+    clearTimeout(summaryNotificationTimeout);
+  }
+})
+
+
+///// AUTH /////
+
+// Add new IPC handler for initial auth check
+ipcMain.on('initialAuthCheck', (event, isAuthenticated) => {
+  if (!isAuthenticated) {
+    // Only show window if user is not authenticated
+    showWindowBelowTray()
+  }
 })
 
 // Updated listener for login event - simplified to not store token
@@ -675,6 +339,8 @@ ipcMain.on('logout', (event) => {
   // Update icon to show inactive state
   updateTrayIcon(false)
 })
+
+///// TRAY /////
 
 // Function to update the tray icon based on recording state
 function updateTrayIcon(isRecording) {
@@ -714,14 +380,6 @@ function updateTrayIcon(isRecording) {
   if (process.platform === 'linux') {
     const contextMenu = buildContextMenu()
     tray.setContextMenu(contextMenu)
-  }
-}
-
-// Function to start the recording
-function startRecording() {
-  if (!screenshotInterval) {
-    screenshotInterval = setInterval(captureAndSendScreenshot, SCREENSHOT_INTERVAL_MINUTES * 60000)
-    console.log(`Screenshot recording started (every ${SCREENSHOT_INTERVAL_MINUTES} minutes)`)
   }
 }
 
@@ -857,12 +515,20 @@ function resumeRecording() {
   }
 }
 
+// Add new IPC handler for pausing until tomorrow from renderer
+ipcMain.on('pauseUntilTomorrow', () => {
+  log.info('Pausing recording until tomorrow due to summary submission');
+  pauseUntilTomorrow();
+});
+
+///// WINDOWS /////
+
 // Separate window creation from showing
 function createWindow() {
   if (!mainWindow) {
     mainWindow = new BrowserWindow({
-      width: debug ? 600 : 250,
-      height: debug ? 600 : 400,
+      width: DEBUG ? 600 : 250,
+      height: DEBUG ? 600 : 400,
       // Add frame on Linux, keep frameless on other platforms
       frame: false,
       resizable: false,
@@ -886,7 +552,7 @@ function createWindow() {
     mainWindow.loadFile('./src/index.html')
 
     // Debug inspector
-    if (debug) {
+    if (DEBUG) {
       mainWindow.webContents.openDevTools();
     }    
     // Log any webContents errors
@@ -993,58 +659,50 @@ function showWindowBelowTray() {
   mainWindow.show()
   mainWindow.focus() // Ensure window gets focus
 }
-
-// Simplified function to process screenshots using only Electron's nativeImage
-async function processScreenshotForUpload(dataUrl) {
-  try {
-    // Convert data URL to buffer
-    const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, '');
-    const buffer = Buffer.from(base64Data, 'base64');
-    
-    // Create native image from buffer
-    let img = nativeImage.createFromBuffer(buffer);
-    
-    // Get original dimensions
-    const { width, height } = img.getSize();
-    
-    // Calculate new dimensions with 819px constraint on shorter edge
-    let newWidth = width;
-    let newHeight = height;
-    const targetShortEdge = 819;
-    
-    if (width < height) {
-      // Width is shorter
-      if (width > targetShortEdge) {
-        const aspectRatio = height / width;
-        newWidth = targetShortEdge;
-        newHeight = Math.round(newWidth * aspectRatio);
-      }
-    } else {
-      // Height is shorter
-      if (height > targetShortEdge) {
-        const aspectRatio = width / height;
-        newHeight = targetShortEdge;
-        newWidth = Math.round(newHeight * aspectRatio);
-      }
-    }
-    
-    // Resize image if needed
-    if (newWidth !== width || newHeight !== height) {
-      img = img.resize({ width: newWidth, height: newHeight });
-    }
-    
-    // Convert to JPEG with 70% quality
-    const jpegOptions = { quality: 70 };
-    const jpegBuffer = img.toJPEG(jpegOptions.quality);
-    
-    // Convert back to data URL
-    return `data:image/jpeg;base64,${jpegBuffer.toString('base64')}`;
-  } catch (error) {
-    console.error('Error processing screenshot:', error);
-    // Return original as fallback
-    return dataUrl;
+// Modify the window-all-closed handler to respect system quit
+app.on('window-all-closed', (event) => {
+  // Only prevent default if we're not in the quit process
+  if (!app.isQuitting) {
+    event.preventDefault();
   }
-}
+  // Otherwise let the app quit normally
+});
+
+// Update the focus handler to use the global isWaylandSession variable
+app.on('browser-window-focus', async () => {
+  const oldPermission = hasScreenCapturePermission;
+  hasScreenCapturePermission = await checkScreenCapturePermission();
+  
+  // Only send update if permission status actually changed
+  if (oldPermission !== hasScreenCapturePermission && mainWindow) {
+    // Use the global isWaylandSession variable
+    mainWindow.webContents.send('screenCapturePermission', {
+      hasPermission: hasScreenCapturePermission,
+      isWaylandSession: isWaylandSession
+    });
+    
+    // Update icon and recording state if needed
+    if (hasScreenCapturePermission && idToken && !isPaused) {
+      updateTrayIcon(true);
+      startRecording();
+    }
+  }
+});
+
+
+// Add listener for when summary is submitted
+ipcMain.on('summarySubmitted', (event) => {
+  console.log("Summary submitted notification received");
+  summarySubmittedTimestamp = Date.now();
+})
+
+///// NOTIFICATIONS /////
+
+// Simplify this handler to just check if notifications are supported at all
+ipcMain.handle('checkNotificationPermission', async () => {
+  // Just check if notifications are supported by the system
+  return Notification.isSupported();
+})
 
 // Add new listener for receiving summary notification settings
 ipcMain.on('updateSummaryNotificationTime', (event, time) => {
@@ -1061,12 +719,6 @@ ipcMain.on('updateSummaryNotificationTime', (event, time) => {
   if (summaryNotificationTime) {
     scheduleNextSummaryNotification();
   }
-})
-
-// Add listener for when summary is submitted
-ipcMain.on('summarySubmitted', (event) => {
-  console.log("Summary submitted notification received");
-  summarySubmittedTimestamp = Date.now();
 })
 
 // Function to schedule the next summary notification
@@ -1169,32 +821,47 @@ function shouldSkipNotification() {
   return submittedDate >= twoHoursBeforeNotification;
 }
 
-// Handle OS-level quit events properly - especially important for macOS
-app.on('before-quit', () => {
-  // Flag that we're actually quitting, not just closing windows
-  app.isQuitting = true;
-  
-  // Clean up resources
-  if (screenshotInterval) {
-    clearInterval(screenshotInterval);
-  }
-  
-  if (pauseTimeout) {
-    clearTimeout(pauseTimeout);
-  }
-  
-  if (summaryNotificationTimeout) {
-    clearTimeout(summaryNotificationTimeout);
-  }
-})
+//// SCREENSHOTS ////
 
-// Modify the window-all-closed handler to respect system quit
-app.on('window-all-closed', (event) => {
-  // Only prevent default if we're not in the quit process
-  if (!app.isQuitting) {
-    event.preventDefault();
+function startRecording() {
+  if (!screenshotInterval) {
+    screenshotInterval = setInterval(captureAndSendScreenshot, SCREENSHOT_INTERVAL_MINUTES * 60000)
+    console.log(`Screenshot recording started (every ${SCREENSHOT_INTERVAL_MINUTES} minutes)`)
   }
-  // Otherwise let the app quit normally
+}
+
+// Function to check screen capture permission
+async function checkScreenCapturePermission() {
+  hasScreenCapturePermission = await moduleCheckPermission();
+  isWaylandSession = getWaylandStatus();
+  return hasScreenCapturePermission;
+}
+
+async function captureAndSendScreenshot() {
+  const result = await moduleCapture(idToken, FIREBASE_CAPTURE_URL);
+  
+  // Handle auth error specially
+  if (result && result.authError) {
+    idToken = null;
+    if (mainWindow) {
+      mainWindow.webContents.send('auth-error');
+    }
+  }
+  
+  return result;
+}
+
+// Also update the explicit permission check handler
+ipcMain.on('checkScreenCapturePermission', async () => {
+  hasScreenCapturePermission = await checkScreenCapturePermission();
+  
+  if (mainWindow) {    
+    // Send both permission status and session type
+    mainWindow.webContents.send('screenCapturePermission', {
+      hasPermission: hasScreenCapturePermission,
+      isWaylandSession: isWaylandSession
+    });
+  }
 });
 
 // Add a new IPC handler for requesting screen capture permission
@@ -1217,7 +884,6 @@ ipcMain.on('requestScreenCapturePermission', async () => {
   // After opening settings, we should check permission again when app regains focus
   app.on('browser-window-focus', async () => {
     const hasPermission = await checkScreenCapturePermission()
-    log.warn(`S Sending permission check result: hasPermission=${hasScreenCapturePermission}, isWaylandSession=${isWaylandSession}`);
 
     if (hasPermission && mainWindow) {
       mainWindow.webContents.send('screenCapturePermission', {
@@ -1233,78 +899,3 @@ ipcMain.on('requestScreenCapturePermission', async () => {
     }
   })
 })
-
-// Simplify this handler to just check if notifications are supported at all
-ipcMain.handle('checkNotificationPermission', async () => {
-  // Just check if notifications are supported by the system
-  return Notification.isSupported();
-})
-
-// Add new IPC handler for initial auth check
-ipcMain.on('initialAuthCheck', (event, isAuthenticated) => {
-  if (!isAuthenticated) {
-    // Only show window if user is not authenticated
-    showWindowBelowTray()
-  }
-})
-
-// Update the focus handler to use the global isWaylandSession variable
-app.on('browser-window-focus', async () => {
-  const oldPermission = hasScreenCapturePermission;
-  hasScreenCapturePermission = await checkScreenCapturePermission();
-  
-  // Only send update if permission status actually changed
-  if (oldPermission !== hasScreenCapturePermission && mainWindow) {
-    // Use the global isWaylandSession variable
-    mainWindow.webContents.send('screenCapturePermission', {
-      hasPermission: hasScreenCapturePermission,
-      isWaylandSession: isWaylandSession
-    });
-    
-    // Update icon and recording state if needed
-    if (hasScreenCapturePermission && idToken && !isPaused) {
-      updateTrayIcon(true);
-      startRecording();
-    }
-  }
-});
-
-// Also update the explicit permission check handler
-ipcMain.on('checkScreenCapturePermission', async () => {
-  hasScreenCapturePermission = await checkScreenCapturePermission();
-  
-  if (mainWindow) {
-    log.warn(`Sending permission check result: hasPermission=${hasScreenCapturePermission}, isWaylandSession=${isWaylandSession}`);
-    
-    // Send both permission status and session type
-    mainWindow.webContents.send('screenCapturePermission', {
-      hasPermission: hasScreenCapturePermission,
-      isWaylandSession: isWaylandSession
-    });
-  }
-});
-
-// Add new IPC handler for pausing until tomorrow from renderer
-ipcMain.on('pauseUntilTomorrow', () => {
-  log.info('Pausing recording until tomorrow due to summary submission');
-  pauseUntilTomorrow();
-});
-
-// Function to handle scheduled update checks
-function scheduleUpdateChecks() {
-  log.info('Setting up update check schedule...');
-  
-  // First check after 1 minute to let the app fully initialize
-  setTimeout(() => {
-    log.info('Running first scheduled update check...');
-    autoUpdater.checkForUpdates()
-      .catch(err => log.error('Error in first update check:', err));
-    
-    // Then check every hour
-    setInterval(() => {
-      log.info('Running hourly update check...');
-      autoUpdater.checkForUpdates()
-        .catch(err => log.error('Error in hourly update check:', err));
-    }, 60 * 60 * 1000);
-  }, 1 * 60 * 1000);
-}
