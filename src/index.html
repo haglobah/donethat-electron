@@ -200,15 +200,14 @@
       <div class="form-container">
         <h1 class="section-header">Done That</h1>
         <div class="text-center">
-          <p class="text-sm text-gray-600 mb-4">
-            Done That needs screen recording permission to track your activities.
-          </p>
-          <p class="text-sm text-gray-600 mb-4">
-            Your privacy is protected. Screenshots are encrypted and stored securely.
-          </p>
-          
           <!-- Standard permission button (for macOS/Windows) -->
           <div id="standardPermissionSection">
+            <p class="text-sm text-gray-600 mb-4">
+              Done That needs screen recording permission to track your activities.
+            </p>
+            <p class="text-sm text-gray-600 mb-4">
+              Your privacy is protected. Screenshots are encrypted and stored securely.
+            </p>
             <button id="openSettingsBtn" class="btn-primary">
               Open System Settings
             </button>
@@ -217,27 +216,24 @@
           <!-- Linux-specific installation instructions (hidden by default) -->
           <div id="linuxInstallSection" class="hidden">
             <h3 class="linux-section-heading">Screenshot Tool Required</h3>
-            <p class="instruction-text">
-              Done That requires a screenshot tool that is not currently installed on your system.
-            </p>
             
             <!-- Wayland instructions -->
             <div id="waylandInstructions" class="hidden linux-install-instructions">
-              <p class="instruction-text font-medium">You are running Wayland. Please install:</p>
+              <p class="instruction-text font-medium">For Wayland, please install:</p>
               <div class="code-block">
-                <code>sudo apt install gnome-screenshot</code>
+                <input type="text" value="sudo apt install gnome-screenshot" readonly class="code-input" onclick="this.select()" />
               </div>
             </div>
             
             <!-- X11 instructions -->
             <div id="x11Instructions" class="hidden linux-install-instructions">
-              <p class="instruction-text font-medium">You are running X11. Please install one of:</p>
+              <p class="instruction-text font-medium">For X11, please install:</p>
               <div class="code-block">
-                <code>sudo apt install scrot</code>
+                <input type="text" value="sudo apt install scrot" readonly class="code-input" onclick="this.select()" />
               </div>
               <p class="instruction-text text-xs mt-2">Alternative:</p>
               <div class="code-block">
-                <code>sudo apt install maim</code>
+                <input type="text" value="sudo apt install maim" readonly class="code-input" onclick="this.select()" />
               </div>
             </div>
           </div>

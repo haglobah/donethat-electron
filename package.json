@@ -56,13 +56,14 @@
     "productName": "Done That",
     "afterSign": "scripts/notarize.js",
     "icon": "resources/icon_inverse.png",
-    "artifactName": "${productName}-${os}-${arch}.${ext}",
+    "artifactName": "${productName} ${arch}.${ext}",
     "files": [
       "main.js",
       "firebase-config.js",
       "src/**/*",
       "build/**/*",
       "resources/**/*",
+      "src-main/**/*",
       "package.json"
     ],
     "directories": {

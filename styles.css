@@ -294,3 +294,21 @@
   @apply text-sm mb-2;
   color: var(--color-neutral-700);
 }
+
+/* Selectable code input */
+.code-input {
+  width: 100%;
+  font-family: monospace;
+  padding: 8px;
+  background: #f1f1f1;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: text;
+  color: #333;
+  font-size: 14px;
+  text-align: center;
+}
+
+.code-input:focus {
+  outline: 2px solid var(--color-primary);
+}
