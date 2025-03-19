@@ -1,13 +1,13 @@
 {
   "name": "donethat",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Remembering your work for you",
   "main": "main.js",
   "scripts": {
     "build:css": "postcss styles.css -o ./build/output.css --verbose",
     "build:webpack": "webpack --config webpack.config.js",
     "build:prepare": "npm run build:css && npm run build:webpack",
-    "start": "npm run build:prepare && electron .",
+    "dev": "npm run build:prepare && electron .",
     "build": "npm run build:prepare && electron-builder",
     "build:linux": "npm run build:prepare && electron-builder --linux",
     "build:win": "npm run build:prepare && electron-builder --win",
@@ -60,11 +60,13 @@
     "files": [
       "main.js",
       "firebase-config.js",
+      "slack-config.js",
       "src/**/*",
       "build/**/*",
       "resources/**/*",
       "src-main/**/*",
-      "package.json"
+      "package.json",
+      "resources/donethat-protocol.desktop"
     ],
     "directories": {
       "buildResources": "resources",
@@ -113,9 +115,16 @@
       "desktop": {
         "StartupWMClass": "done-that",
         "NoDisplay": true,
-        "Type": "Application"
+        "Type": "Application",
+        "MimeType": "x-scheme-handler/donethat"
       }
     },
-    "compression": "maximum"
+    "compression": "maximum",
+    "protocols": {
+      "name": "donethat-protocol",
+      "schemes": [
+        "donethat"
+      ]
+    }
   }
 }

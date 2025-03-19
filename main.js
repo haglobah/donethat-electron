@@ -14,6 +14,7 @@ const {
 let DEBUG = false
 // Add your Firebase function URL here
 const FIREBASE_CAPTURE_URL = 'https://europe-west1-donethat.cloudfunctions.net/captureScreenshot'
+
 // Update screenshot interval logic
 let SCREENSHOT_INTERVAL_MINUTES = 5; // Default to 5 minutes for release
 // Set interval based on whether it's development or production
@@ -216,24 +217,18 @@ app.whenReady().then(async () => {
 
   // Initial state - update icon after tray is created
   updateTrayIcon(false)
-
-  // Platform-specific tray click handlers
-  if (process.platform === 'linux') {
-    // For Linux: Set a persistent context menu and don't handle left-click
+  
+  // Handle left-click to show a fresh context menu
+  tray.on('click', () => {
     const contextMenu = buildContextMenu()
-    tray.setContextMenu(contextMenu)
-    // No click handler - all functionality is in the context menu
-  } else {
-    // Windows & macOS: Use separate events
-    tray.on('click', () => {
-      toggleWindow()
-    })
-    
-    tray.on('right-click', () => {
-      const contextMenu = buildContextMenu()
-      tray.popUpContextMenu(contextMenu)
-    })
-  }
+    tray.popUpContextMenu(contextMenu)
+  })
+  
+  // Also handle right-click to show a fresh context menu
+  tray.on('right-click', () => {
+    const contextMenu = buildContextMenu()
+    tray.popUpContextMenu(contextMenu)
+  })
 
   // Create window but don't show it yet
   createWindow()
@@ -272,6 +267,7 @@ app.whenReady().then(async () => {
       .then(() => console.log('Periodic update check completed'))
       .catch(err => console.error('Error in periodic update check:', err))
   }, 60 * 60 * 1000) // 1 hours in milliseconds
+
 })
 
 // Handle OS-level quit events properly - especially important for macOS
@@ -576,7 +572,7 @@ function createWindow() {
   }
 }
 
-// Update toggleWindow to only handle showing/hiding
+// Function to toggle window visibility (used from menu)
 function toggleWindow() {
   if (mainWindow) {
     if (mainWindow.isVisible()) {

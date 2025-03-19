@@ -312,3 +312,18 @@
 .code-input:focus {
   outline: 2px solid var(--color-primary);
 }
+
+/* Loading and success states for form inputs */
+.form-input.loading {
+  background-image: url('data:image/svg+xml;charset=utf8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%236B7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"%3E%3C/path%3E%3C/svg%3E');
+  background-position: right 8px center;
+  background-repeat: no-repeat;
+  background-size: 16px 16px;
+}
+
+.form-input.success {
+  background-image: url('data:image/svg+xml;charset=utf8,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%2322C55E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M20 6L9 17l-5-5"%3E%3C/path%3E%3C/svg%3E');
+  background-position: right 8px center;
+  background-repeat: no-repeat;
+  background-size: 16px 16px;
+}

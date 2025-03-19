@@ -22,6 +22,9 @@ const generateRawSummaryFunction = httpsCallable(functions, "generateRawSummary"
 const saveFinalSummaryFunction = httpsCallable(functions, "saveFinalSummary");
 const getUserSettingsFunction = httpsCallable(functions, "getUserSettings");
 const updateUserSettingsFunction = httpsCallable(functions, "updateUserSettings");
+const slackConnectFunction = httpsCallable(functions, 'slackConnect');
+const slackDisconnectFunction = httpsCallable(functions, 'slackDisconnect');
+const slackUpdateChannelFunction = httpsCallable(functions, 'slackUpdateChannel');
 
 // Set persistence to browser local storage
 setPersistence(auth, browserLocalPersistence)
@@ -93,6 +96,11 @@ let recipientEmails = [];
 
 // Update variable reference to the new summary spinner
 const summaryLoadingSpinner = document.getElementById("summaryLoadingSpinner");
+
+// Add near the top with other state variables
+let slackConnected = false;
+let slackChannel = '';
+let slackConfig = null;
 
 // Modify the existing screenCapturePermission listener to include session type
 ipcRenderer.on('screenCapturePermission', (event, data) => {
@@ -407,6 +415,24 @@ async function loadUserSettings() {
       emailTagsContainer.innerHTML = '<p class="empty-state-text">No recipients added. Add emails to receive your summaries.</p>';
     }
     
+    // Handle Slack settings
+    if (result.data.slack?.accessToken) {
+      slackConnected = true;
+      slackChannel = result.data.slack.defaultChannel || '';
+      
+      // Update the input value with the current channel
+      const slackInput = document.getElementById('slackInput');
+      if (slackInput) {
+        slackInput.value = slackChannel;
+      }
+      
+      updateSlackInputState(true, result.data.slack.teamName, slackChannel);
+    } else {
+      slackConnected = false;
+      slackChannel = '';
+      updateSlackInputState(false);
+    }
+    
     // Load notification time if available
     if (result.data && result.data.summaryNotificationTime) {
       summaryNotificationTime = result.data.summaryNotificationTime;
@@ -594,49 +620,45 @@ if (submitSummaryBtn) {
     
     const commentText = document.getElementById('commentInput').value.trim();
     
-    // Call the cloud function to save the final summary
+    
     saveFinalSummaryFunction({
       summaryId: currentSummaryId,
       selectedBullets: selectedBullets,
       comment: commentText
-    })
-      .then((result) => {
-        summaryLoadingSpinner.classList.add('hidden');
-        
-        // Clear summary content immediately before resetSummary later after delay
-        document.getElementById('summaryContainer').innerHTML = 
-          '<p class="empty-state-text"></p>';
-        
-        // Reset internal state
-        currentSummaryId = null;
-        selectedBulletPoints = [];
-        
-        // Update button text and disable it
-        submitSummaryBtn.textContent = "Well done! Paused recording.";
-        submitSummaryBtn.disabled = true; // Disable the button
-        submitSummaryBtn.classList.add('disabled-btn'); // Add a class for styling
-        submitSummaryBtn.classList.remove('hidden'); // Make sure button is visible
-        
-        // Notify main process that summary was submitted
-        ipcRenderer.send("summarySubmitted");
-        
-        // Pause recording until tomorrow
-        ipcRenderer.send("pauseUntilTomorrow");
-        
-        // Reset summary state AFTER button update and ensure button stays visible
-        setTimeout(() => {
-          resetSummaryState();
-          submitSummaryBtn.textContent = "Submit"; // Reset button text
-          submitSummaryBtn.classList.remove('disabled-btn'); // Remove disabled styling
-          submitSummaryBtn.disabled = false; // Re-enable the button
-        }, 10000);
-      })
-      .catch((error) => {
+    }).then(() => {
+      summaryLoadingSpinner.classList.add('hidden');
+      // Clear summary content immediately before resetSummary later after delay
+      document.getElementById('summaryContainer').innerHTML = 
+        '<p class="empty-state-text"></p>';
+      
+      // Reset internal state
+      currentSummaryId = null;
+      selectedBulletPoints = [];
+      
+      // Update button text and disable it
+      submitSummaryBtn.textContent = "Well done! Paused recording.";
+      submitSummaryBtn.disabled = true;
+      submitSummaryBtn.classList.add('disabled-btn');
+      submitSummaryBtn.classList.remove('hidden');
+
+      // Notify main process that summary was submitted
+      ipcRenderer.send("summarySubmitted");
+      
+      // Pause recording until tomorrow
+      ipcRenderer.send("pauseUntilTomorrow");
+      
+      // Reset summary state AFTER button update and ensure button stays visible
+      setTimeout(() => {
+        resetSummaryState();
+        submitSummaryBtn.textContent = "Submit";
+        submitSummaryBtn.classList.remove('disabled-btn');
+        submitSummaryBtn.disabled = false;
+      }, 10000);
+      }).catch((error) => {
         summaryLoadingSpinner.classList.add('hidden');
         console.error("Error submitting summary:", error);
         alert(`Error submitting summary: ${error.message}`);
-        // Keep the current state for retry
-      });
+      })
   });
 }
 
@@ -897,5 +919,237 @@ const restartForUpdateBtn = document.getElementById("restartForUpdateBtn");
 if (restartForUpdateBtn) {
   restartForUpdateBtn.addEventListener("click", () => {
     ipcRenderer.send("install-update");
+  });
+}
+
+
+function updateSlackUI(connected, team = '') {
+  const connectedDiv = document.getElementById('slackConnected');
+  const disconnectedDiv = document.getElementById('slackDisconnected');
+  const channelContainer = document.getElementById('slackChannelContainer');
+  const teamNameSpan = document.getElementById('slackTeamName');
+  
+  if (connected) {
+    connectedDiv.classList.remove('hidden');
+    disconnectedDiv.classList.add('hidden');
+    channelContainer.classList.remove('hidden');
+    teamNameSpan.textContent = team;
+    slackConnected = true;
+  } else {
+    connectedDiv.classList.add('hidden');
+    disconnectedDiv.classList.remove('hidden');
+    channelContainer.classList.add('hidden');
+    slackConnected = false;
+  }
+}
+
+// Update the connect button click handler
+const connectSlackBtn = document.getElementById('connectSlackBtn');
+if (connectSlackBtn) {
+  connectSlackBtn.addEventListener('click', async () => {
+    try {
+      const result = await slackConnectFunction();
+      const authWindow = window.open(result.data.authUrl);
+      
+      // When the window closes, reload settings to check if connection was successful
+      authWindow.addEventListener('beforeunload', () => {
+        loadUserSettings();
+      });
+      
+    } catch (error) {
+      console.error('Error starting Slack connection:', error);
+      alert('Error connecting to Slack: ' + error.message);
+    }
+  });
+}
+
+// Update the disconnect button handler
+const disconnectSlackBtn = document.getElementById('disconnectSlackBtn');
+if (disconnectSlackBtn) {
+  disconnectSlackBtn.addEventListener('click', async () => {
+    try {
+      await slackDisconnectFunction();
+      updateSlackUI(false);
+    } catch (error) {
+      console.error('Error disconnecting Slack:', error);
+      alert('Error disconnecting from Slack: ' + error.message);
+    }
+  });
+}
+
+// Add event listener for Slack channel input changes
+const slackChannelInput = document.getElementById('slackChannelInput');
+if (slackChannelInput) {
+  // Add a debounce function to avoid too many requests
+  let updateTimeout;
+  slackChannelInput.addEventListener('change', async () => {
+    const channel = slackChannelInput.value.trim();
+    
+    try {
+      // Show loading state
+      slackChannelInput.classList.add('loading');
+      slackChannelInput.disabled = true;
+      
+      // Update the channel
+      await slackUpdateChannelFunction({ channel });
+      
+      // Show success state briefly
+      slackChannelInput.classList.remove('loading');
+      slackChannelInput.classList.add('success');
+      
+      // Reset state after a moment
+      setTimeout(() => {
+        slackChannelInput.classList.remove('success');
+        slackChannelInput.disabled = false;
+      }, 1000);
+      
+    } catch (error) {
+      console.error('Error updating Slack channel:', error);
+      alert('Error updating Slack channel: ' + error.message);
+      
+      // Reset state
+      slackChannelInput.classList.remove('loading');
+      slackChannelInput.disabled = false;
+    }
+  });
+}
+
+// Update the updateSlackInputState function to be simpler
+function updateSlackInputState(connected, teamName = '', channel = '') {
+  const slackInput = document.getElementById('slackInput');
+  const slackButton = document.getElementById('slackActionBtn');
+  
+  if (!slackInput || !slackButton) return;
+  
+  if (connected) {
+    slackInput.value = channel;
+    slackInput.placeholder = `Set channel for ${teamName}`;
+    slackInput.disabled = false;
+    
+    // Update button icon based on state
+    if (channel) {
+      slackButton.className = 'add-email-btn'; // Use the same class as email button
+      slackButton.innerHTML = `
+        <div class="w-4 h-4 rounded-full bg-red-500 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </div>
+      `;
+    } else {
+      slackButton.className = 'add-email-btn'; // Use the same class as email button
+      slackButton.innerHTML = `
+        <div class="w-4 h-4 rounded-full flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </div>
+      `;
+    }
+  } else {
+    slackInput.value = '';
+    slackInput.placeholder = 'Connect to Slack';
+    slackInput.disabled = true;
+    slackButton.className = 'add-email-btn';
+    slackButton.innerHTML = `
+      <div class="w-4 h-4 rounded-full flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </div>
+    `;
+  }
+}
+
+// Update the Slack action button handler
+const slackActionBtn = document.getElementById('slackActionBtn');
+if (slackActionBtn) {
+  slackActionBtn.addEventListener('click', async () => {
+    if (!slackConnected) {
+      // Connect to Slack
+      try {
+        const result = await slackConnectFunction();
+        const authWindow = window.open(result.data.authUrl);
+        
+        // Poll for connection status
+        const checkConnection = setInterval(async () => {
+          if (authWindow.closed) {
+            clearInterval(checkConnection);
+            await loadUserSettings();
+          }
+        }, 1000);
+        
+        // Clear interval after 2 minutes as safety
+        setTimeout(() => clearInterval(checkConnection), 120000);
+      } catch (error) {
+        console.error('Error connecting to Slack:', error);
+        alert('Error connecting to Slack: ' + error.message);
+      }
+    } else {
+      const slackInput = document.getElementById('slackInput');
+      const currentChannel = slackInput.value.trim();
+      
+      if (currentChannel === slackChannel) {
+        // Disconnect from Slack if channel hasn't changed
+        if (confirm('Are you sure you want to disconnect from Slack?')) {
+          try {
+            await slackDisconnectFunction();
+            slackConnected = false;
+            slackChannel = '';
+            slackInput.value = ''; // Explicitly clear the input field
+            slackInput.disabled = true; // Disable the input field
+            updateSlackInputState(false);
+          } catch (error) {
+            console.error('Error disconnecting from Slack:', error);
+            alert('Error disconnecting from Slack: ' + error.message);
+          }
+        }
+      } else {
+        // Update channel
+        try {
+          await slackUpdateChannelFunction({ channel: currentChannel });
+          slackChannel = currentChannel;
+          updateSlackInputState(true, undefined, currentChannel);
+        } catch (error) {
+          console.error('Error updating Slack channel:', error);
+          alert('Error updating Slack channel: ' + error.message);
+          slackInput.value = slackChannel; // Reset to previous value
+        }
+      }
+    }
+  });
+}
+
+// Add input event listener for Slack channel input
+const slackInput = document.getElementById('slackInput');
+if (slackInput) {
+  slackInput.addEventListener('input', () => {
+    const currentValue = slackInput.value.trim();
+    const slackButton = document.getElementById('slackActionBtn');
+    
+    if (currentValue !== slackChannel) {
+      // Show orange plus when the value is different from saved channel
+      slackButton.innerHTML = `
+        <div class="w-4 h-4 rounded-full flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </div>
+      `;
+    } else {
+      // Show red X when the value matches the saved channel
+      slackButton.innerHTML = `
+        <div class="w-4 h-4 rounded-full bg-red-500 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </div>
+      `;
+    }
   });
 }

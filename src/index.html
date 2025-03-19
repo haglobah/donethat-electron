@@ -292,12 +292,37 @@
             </div>
           </div>
           
-          <!-- New notification time setting with its own spinner -->
-          <div class="mt-4 relative">
+          <!-- Slack Integration (moved up) -->
+          <div class="mt-4">
+            <label class="form-label mb-1">
+              Slack Integration
+            </label>
+            <div class="relative w-full">
+              <input
+                type="text"
+                id="slackInput"
+                class="form-input pr-6 text-xs py-1.5"
+                placeholder="Connect to Slack"
+                disabled
+              />
+              <button
+                id="slackActionBtn"
+                class="add-email-btn text-orange-500"
+                aria-label="Slack action"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+          
+          <!-- Daily Reminder (moved down) -->
+          <div class="mt-4">
             <label class="form-label mb-1">
               Daily Reminder
             </label>
-            
             <!-- Show either the time input or the permission button -->
             <div id="notificationTimeContainer" class="relative cursor-pointer time-input-container">
               <input
@@ -307,13 +332,11 @@
                 value="17:00"
                 readonly
               />
-              
               <!-- Loading spinner overlay for time setting -->
               <div id="timeLoadingSpinner" class="spinner-overlay hidden">
                 <div class="spinner"></div>
               </div>
             </div>
-            
             <!-- Button to enable notifications (hidden by default) -->
             <div id="notificationPermissionContainer" class="hidden">
               <button id="enableNotificationsBtn" class="btn-secondary w-full">
