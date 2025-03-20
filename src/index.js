@@ -941,73 +941,86 @@ function updateSlackUI(connected, team = '') {
   }
 }
 
+// Helper function for Slack connection
+async function handleSlackConnect() {
+  try {
+    const result = await slackConnectFunction();
+    const authWindow = window.open(result.data.authUrl);
+    
+    // Listen for navigation events
+    authWindow.addEventListener('load', () => {
+      try {
+        if (authWindow.location.href.includes('slack-success')) {
+          loadUserSettings(); // Update when hitting success URL
+        }
+      } catch (err) {
+        // Handle potential cross-origin errors silently
+        // This will happen when navigating to Slack's domain
+      }
+    });
+    
+    // Keep the close listener as backup
+    authWindow.addEventListener('beforeunload', () => {
+      loadUserSettings(); // Update when window is closed
+    });
+    
+    // Safety cleanup after 5 minutes
+    setTimeout(() => {
+      if (!authWindow.closed) {
+        authWindow.close();
+      }
+    }, 5 * 60 * 1000);
+    
+  } catch (error) {
+    console.error('Error starting Slack connection:', error);
+    alert('Error connecting to Slack: ' + error.message);
+  }
+}
+
 // Update the connect button click handler
 const connectSlackBtn = document.getElementById('connectSlackBtn');
 if (connectSlackBtn) {
-  connectSlackBtn.addEventListener('click', async () => {
-    try {
-      const result = await slackConnectFunction();
-      const authWindow = window.open(result.data.authUrl);
-      
-      // When the window closes, reload settings to check if connection was successful
-      authWindow.addEventListener('beforeunload', () => {
-        loadUserSettings();
-      });
-      
-    } catch (error) {
-      console.error('Error starting Slack connection:', error);
-      alert('Error connecting to Slack: ' + error.message);
-    }
-  });
+  connectSlackBtn.addEventListener('click', handleSlackConnect);
 }
 
-// Update the disconnect button handler
-const disconnectSlackBtn = document.getElementById('disconnectSlackBtn');
-if (disconnectSlackBtn) {
-  disconnectSlackBtn.addEventListener('click', async () => {
-    try {
-      await slackDisconnectFunction();
-      updateSlackUI(false);
-    } catch (error) {
-      console.error('Error disconnecting Slack:', error);
-      alert('Error disconnecting from Slack: ' + error.message);
-    }
-  });
-}
-
-// Add event listener for Slack channel input changes
-const slackChannelInput = document.getElementById('slackChannelInput');
-if (slackChannelInput) {
-  // Add a debounce function to avoid too many requests
-  let updateTimeout;
-  slackChannelInput.addEventListener('change', async () => {
-    const channel = slackChannelInput.value.trim();
-    
-    try {
-      // Show loading state
-      slackChannelInput.classList.add('loading');
-      slackChannelInput.disabled = true;
+// Update the Slack action button handler
+const slackActionBtn = document.getElementById('slackActionBtn');
+if (slackActionBtn) {
+  slackActionBtn.addEventListener('click', async () => {
+    if (!slackConnected) {
+      // Connect to Slack
+      await handleSlackConnect();
+    } else {
+      const slackInput = document.getElementById('slackInput');
+      const currentChannel = slackInput.value.trim();
       
-      // Update the channel
-      await slackUpdateChannelFunction({ channel });
-      
-      // Show success state briefly
-      slackChannelInput.classList.remove('loading');
-      slackChannelInput.classList.add('success');
-      
-      // Reset state after a moment
-      setTimeout(() => {
-        slackChannelInput.classList.remove('success');
-        slackChannelInput.disabled = false;
-      }, 1000);
-      
-    } catch (error) {
-      console.error('Error updating Slack channel:', error);
-      alert('Error updating Slack channel: ' + error.message);
-      
-      // Reset state
-      slackChannelInput.classList.remove('loading');
-      slackChannelInput.disabled = false;
+      if (currentChannel === slackChannel) {
+        // Disconnect from Slack if channel hasn't changed
+        if (confirm('Are you sure you want to disconnect from Slack?')) {
+          try {
+            await slackDisconnectFunction();
+            slackConnected = false;
+            slackChannel = '';
+            slackInput.value = ''; // Explicitly clear the input field
+            slackInput.disabled = true; // Disable the input field
+            updateSlackInputState(false);
+          } catch (error) {
+            console.error('Error disconnecting from Slack:', error);
+            alert('Error disconnecting from Slack: ' + error.message);
+          }
+        }
+      } else {
+        // Update channel
+        try {
+          await slackUpdateChannelFunction({ channel: currentChannel });
+          slackChannel = currentChannel;
+          updateSlackInputState(true, undefined, currentChannel);
+        } catch (error) {
+          console.error('Error updating Slack channel:', error);
+          alert('Error updating Slack channel: ' + error.message);
+          slackInput.value = slackChannel; // Reset to previous value
+        }
+      }
     }
   });
 }
@@ -1060,65 +1073,6 @@ function updateSlackInputState(connected, teamName = '', channel = '') {
       </div>
     `;
   }
-}
-
-// Update the Slack action button handler
-const slackActionBtn = document.getElementById('slackActionBtn');
-if (slackActionBtn) {
-  slackActionBtn.addEventListener('click', async () => {
-    if (!slackConnected) {
-      // Connect to Slack
-      try {
-        const result = await slackConnectFunction();
-        const authWindow = window.open(result.data.authUrl);
-        
-        // Poll for connection status
-        const checkConnection = setInterval(async () => {
-          if (authWindow.closed) {
-            clearInterval(checkConnection);
-            await loadUserSettings();
-          }
-        }, 1000);
-        
-        // Clear interval after 2 minutes as safety
-        setTimeout(() => clearInterval(checkConnection), 120000);
-      } catch (error) {
-        console.error('Error connecting to Slack:', error);
-        alert('Error connecting to Slack: ' + error.message);
-      }
-    } else {
-      const slackInput = document.getElementById('slackInput');
-      const currentChannel = slackInput.value.trim();
-      
-      if (currentChannel === slackChannel) {
-        // Disconnect from Slack if channel hasn't changed
-        if (confirm('Are you sure you want to disconnect from Slack?')) {
-          try {
-            await slackDisconnectFunction();
-            slackConnected = false;
-            slackChannel = '';
-            slackInput.value = ''; // Explicitly clear the input field
-            slackInput.disabled = true; // Disable the input field
-            updateSlackInputState(false);
-          } catch (error) {
-            console.error('Error disconnecting from Slack:', error);
-            alert('Error disconnecting from Slack: ' + error.message);
-          }
-        }
-      } else {
-        // Update channel
-        try {
-          await slackUpdateChannelFunction({ channel: currentChannel });
-          slackChannel = currentChannel;
-          updateSlackInputState(true, undefined, currentChannel);
-        } catch (error) {
-          console.error('Error updating Slack channel:', error);
-          alert('Error updating Slack channel: ' + error.message);
-          slackInput.value = slackChannel; // Reset to previous value
-        }
-      }
-    }
-  });
 }
 
 // Add input event listener for Slack channel input
