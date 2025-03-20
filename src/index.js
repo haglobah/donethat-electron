@@ -12,6 +12,9 @@ const {
 const { getFunctions, httpsCallable } = require("firebase/functions");
 const firebaseConfig = require("../firebase-config.js");
 
+// Import Slack functionality
+const { initializeSlack, updateSlackInputState, updateSlackUI } = require('./slack');
+
 // Initialize Firebase
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -22,9 +25,6 @@ const generateRawSummaryFunction = httpsCallable(functions, "generateRawSummary"
 const saveFinalSummaryFunction = httpsCallable(functions, "saveFinalSummary");
 const getUserSettingsFunction = httpsCallable(functions, "getUserSettings");
 const updateUserSettingsFunction = httpsCallable(functions, "updateUserSettings");
-const slackConnectFunction = httpsCallable(functions, 'slackConnect');
-const slackDisconnectFunction = httpsCallable(functions, 'slackDisconnect');
-const slackUpdateChannelFunction = httpsCallable(functions, 'slackUpdateChannel');
 
 // Set persistence to browser local storage
 setPersistence(auth, browserLocalPersistence)
@@ -415,21 +415,22 @@ async function loadUserSettings() {
       emailTagsContainer.innerHTML = '<p class="empty-state-text">No recipients added. Add emails to receive your summaries.</p>';
     }
     
-    // Handle Slack settings
+    // Handle Slack settings using both imported functions
     if (result.data.slack?.accessToken) {
       slackConnected = true;
       slackChannel = result.data.slack.defaultChannel || '';
       
-      // Update the input value with the current channel
       const slackInput = document.getElementById('slackInput');
       if (slackInput) {
         slackInput.value = slackChannel;
       }
       
+      updateSlackUI(true, result.data.slack.teamName);
       updateSlackInputState(true, result.data.slack.teamName, slackChannel);
     } else {
       slackConnected = false;
       slackChannel = '';
+      updateSlackUI(false);
       updateSlackInputState(false);
     }
     
@@ -920,211 +921,7 @@ if (restartForUpdateBtn) {
   });
 }
 
-
-function updateSlackUI(connected, team = '') {
-  const connectedDiv = document.getElementById('slackConnected');
-  const disconnectedDiv = document.getElementById('slackDisconnected');
-  const channelContainer = document.getElementById('slackChannelContainer');
-  const teamNameSpan = document.getElementById('slackTeamName');
-  
-  if (connected) {
-    connectedDiv.classList.remove('hidden');
-    disconnectedDiv.classList.add('hidden');
-    channelContainer.classList.remove('hidden');
-    teamNameSpan.textContent = team;
-    slackConnected = true;
-  } else {
-    connectedDiv.classList.add('hidden');
-    disconnectedDiv.classList.remove('hidden');
-    channelContainer.classList.add('hidden');
-    slackConnected = false;
-  }
-}
-
-// Helper function for Slack connection
-async function handleSlackConnect() {
-  try {
-    const result = await slackConnectFunction();
-    const authWindow = window.open(result.data.authUrl);
-    
-    // Listen for navigation events
-    authWindow.addEventListener('load', () => {
-      try {
-        if (authWindow.location.href.includes('slack-success')) {
-          loadUserSettings(); // Update when hitting success URL
-        }
-      } catch (err) {
-        // Handle potential cross-origin errors silently
-        // This will happen when navigating to Slack's domain
-      }
-    });
-    
-    // Keep the close listener as backup
-    authWindow.addEventListener('beforeunload', () => {
-      loadUserSettings(); // Update when window is closed
-    });
-    
-    // Safety cleanup after 5 minutes
-    setTimeout(() => {
-      if (!authWindow.closed) {
-        authWindow.close();
-      }
-    }, 5 * 60 * 1000);
-    
-  } catch (error) {
-    console.error('Error starting Slack connection:', error);
-    alert('Error connecting to Slack: ' + error.message);
-  }
-}
-
-// Update the connect button click handler
-const connectSlackBtn = document.getElementById('connectSlackBtn');
-if (connectSlackBtn) {
-  connectSlackBtn.addEventListener('click', handleSlackConnect);
-}
-
-// Update the Slack action button handler
-const slackActionBtn = document.getElementById('slackActionBtn');
-if (slackActionBtn) {
-  slackActionBtn.addEventListener('click', async () => {
-    if (!slackConnected) {
-      // Connect to Slack
-      await handleSlackConnect();
-    } else {
-      const slackInput = document.getElementById('slackInput');
-      const currentChannel = slackInput.value.trim();
-      
-      if (currentChannel === slackChannel) {
-        // Disconnect from Slack if channel hasn't changed
-        if (confirm('Are you sure you want to disconnect from Slack?')) {
-          try {
-            await slackDisconnectFunction();
-            slackConnected = false;
-            slackChannel = '';
-            slackInput.value = ''; // Explicitly clear the input field
-            slackInput.disabled = true; // Disable the input field
-            updateSlackInputState(false);
-          } catch (error) {
-            console.error('Error disconnecting from Slack:', error);
-            alert('Error disconnecting from Slack: ' + error.message);
-          }
-        }
-      } else {
-        // Update channel
-        try {
-          await slackUpdateChannelFunction({ channel: currentChannel });
-          slackChannel = currentChannel;
-          updateSlackInputState(true, undefined, currentChannel);
-        } catch (error) {
-          console.error('Error updating Slack channel:', error);
-          alert('Error updating Slack channel: ' + error.message);
-          slackInput.value = slackChannel; // Reset to previous value
-        }
-      }
-    }
-  });
-}
-
-// Update the updateSlackInputState function to be simpler
-function updateSlackInputState(connected, teamName = '', channel = '') {
-  const slackInput = document.getElementById('slackInput');
-  const slackButton = document.getElementById('slackActionBtn');
-  
-  if (!slackInput || !slackButton) return;
-  
-  if (connected) {
-    slackInput.value = channel;
-    slackInput.placeholder = `Set channel for ${teamName}`;
-    slackInput.disabled = false;
-    
-    // Update button icon based on state
-    if (channel) {
-      slackButton.className = 'add-email-btn'; // Use the same class as email button
-      slackButton.innerHTML = `
-        <div class="w-4 h-4 rounded-full bg-red-500 flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </div>
-      `;
-    } else {
-      slackButton.className = 'add-email-btn'; // Use the same class as email button
-      slackButton.innerHTML = `
-        <div class="w-4 h-4 rounded-full flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </div>
-      `;
-    }
-  } else {
-    slackInput.value = '';
-    slackInput.placeholder = 'Connect to Slack';
-    slackInput.disabled = true;
-    slackButton.className = 'add-email-btn';
-    slackButton.innerHTML = `
-      <div class="w-4 h-4 rounded-full flex items-center justify-center">
-        <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="12" y1="5" x2="12" y2="19"></line>
-          <line x1="5" y1="12" x2="19" y2="12"></line>
-        </svg>
-      </div>
-    `;
-  }
-}
-
-// Add input event listener for Slack channel input
-const slackInput = document.getElementById('slackInput');
-if (slackInput) {
-  slackInput.addEventListener('input', () => {
-    const currentValue = slackInput.value.trim();
-    const slackButton = document.getElementById('slackActionBtn');
-    
-    if (currentValue !== slackChannel) {
-      // Show orange plus when the value is different from saved channel
-      slackButton.innerHTML = `
-        <div class="w-4 h-4 rounded-full flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </div>
-      `;
-    } else {
-      // Show red X when the value matches the saved channel
-      slackButton.innerHTML = `
-        <div class="w-4 h-4 rounded-full bg-red-500 flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </div>
-      `;
-    }
-  });
-}
-
-// Slack input handling
-if (slackInput) {
-  slackInput.addEventListener('keypress', async (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const currentValue = slackInput.value.trim();
-      
-      // Only handle channel updates since input is disabled when not connected
-      if (currentValue !== slackChannel) {
-        try {
-          await slackUpdateChannelFunction({ channel: currentValue });
-          slackChannel = currentValue;
-          updateSlackInputState(true, undefined, currentValue);
-        } catch (error) {
-          console.error('Error updating Slack channel:', error);
-          alert('Error updating Slack channel: ' + error.message);
-          slackInput.value = slackChannel; // Reset to previous value
-        }
-      }
-    }
-  });
-}
+// Initialize Slack functionality after DOM content is loaded
+document.addEventListener('DOMContentLoaded', () => {
+  initializeSlack(loadUserSettings);
+});
