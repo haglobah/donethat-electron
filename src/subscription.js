@@ -30,12 +30,12 @@ let selectedPlan = null;
 
 async function subscriptionSetupElements() {
   const auth = getAuth();
-  
+
   if (!auth.currentUser) {
     setTimeout(subscriptionSetupElements, 1000);
     return;
   }
-  
+
   try {
     // Wait for Stripe to be available
     let attempts = 0;
@@ -52,13 +52,13 @@ async function subscriptionSetupElements() {
       isCompany: selectedPlan?.type === 'Team',
       companyId: document.getElementById('companyId')?.value || null
     });
-    
+
     if (!result.data?.clientSecret || !result.data?.publishableKey) {
       throw new Error('Missing client secret or publishable key');
     }
-    
+
     stripe = window.Stripe(result.data.publishableKey);
-    
+
     elements = stripe.elements({
       clientSecret: result.data.clientSecret,
       appearance: {
@@ -72,34 +72,34 @@ async function subscriptionSetupElements() {
         }
       }
     });
-    
+
     paymentElement = elements.create('payment', {
       layout: {
         type: 'tabs',
         defaultCollapsed: false
       },
     });
-    
+
     const paymentElementContainer = document.getElementById('payment-element');
     if (paymentElementContainer) {
       paymentElement.mount('#payment-element');
-      
+
       // Start with button disabled
       const subscribeButton = document.getElementById('subscribeButton');
       if (subscribeButton) {
         subscribeButton.disabled = true;
         subscribeButton.classList.add('disabled-btn');
       }
-      
+
       // Listen for changes in the payment element
       paymentElement.on('change', (event) => {
         const subscribeButton = document.getElementById('subscribeButton');
         const errorElement = document.getElementById('card-errors');
-        
+
         if (errorElement) {
           errorElement.textContent = event.error ? event.error.message : '';
         }
-        
+
         // Update button state based on form completeness
         if (subscribeButton) {
           subscribeButton.disabled = !event.complete;
@@ -113,7 +113,7 @@ async function subscriptionSetupElements() {
     } else {
       throw new Error('Payment element container not found');
     }
-    
+
   } catch (error) {
     const errorElement = document.getElementById('card-errors');
     if (errorElement) {
@@ -130,13 +130,15 @@ function subscriptionInitialize(onSettingsUpdate, showBlockingSpinner, hideBlock
   showSpinner = showBlockingSpinner;
   hideSpinner = hideBlockingSpinner;
   navigateToView = viewNavigator;
-  
+
   // Check if document is already loaded
   if (document.readyState === 'complete') {
     initializeWhenReady();
   } else {
     // Wait for DOM to be fully loaded before initializing
-    document.addEventListener('DOMContentLoaded', initializeWhenReady);
+    document.addEventListener('DOMContentLoaded', () => {
+      initializeWhenReady();
+    });
   }
 
   // Get plans if user is already authenticated
@@ -158,12 +160,19 @@ function subscriptionInitialize(onSettingsUpdate, showBlockingSpinner, hideBlock
 }
 
 function initializeWhenReady() {
-  // Set up subscribe button event listener
-  const subscribeButton = document.getElementById('subscribeButton');
-  if (subscribeButton) {
-    subscribeButton.addEventListener('click', subscriptionHandleSubscribe);
-  }
+  // Set up form submit handler
+  const paymentForm = document.getElementById('paymentForm');
   
+  if (paymentForm) {
+    // Remove any existing listeners first
+    paymentForm.removeEventListener('submit', subscriptionHandleSubscribe);
+    paymentForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      subscriptionHandleSubscribe(e);
+    });
+  }
+
   // Set up team link to open in external browser
   document.addEventListener('click', (e) => {
     if (e.target.tagName === 'A' && e.target.getAttribute('href') === 'https://app.donethat.ai') {
@@ -181,26 +190,30 @@ function subscriptionUpdateUI(data) {
   if (!data) {
     return;
   }
-  
-  const subscriptionView = document.getElementById('subscriptionView');
-  const dashboardView = document.getElementById('dashboardView');
-  const settingsView = document.getElementById('settingsView');
-  
+
   // If we need to show the subscription view
   if (data.shouldPromptForSubscription) {
-    // Hide other views
-    dashboardView.classList.add('hidden');
-    settingsView.classList.add('hidden');
+    navigateToView('subscription');
+
+    // Set up form submit handler when subscription view is shown
+    const paymentForm = document.getElementById('paymentForm');
     
-    // Show subscription view
-    subscriptionView.classList.remove('hidden');
-    
+    if (paymentForm) {
+      // Remove any existing listeners first
+      paymentForm.removeEventListener('submit', subscriptionHandleSubscribe);
+      paymentForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        subscriptionHandleSubscribe(e);
+      });
+    }
+
     // If we haven't loaded plans yet, do it now
     if (!selectedPlan) {
       subscriptionGetPlans();
     }
   }
-  
+
   // Update subscription info in the settings view
   updateSubscriptionInfoInSettings(data);
 }
@@ -211,39 +224,39 @@ function subscriptionUpdateUI(data) {
 function updateSubscriptionInfoInSettings(data) {
   // Find or create subscription info container in settings
   let subscriptionInfoContainer = document.getElementById('subscriptionInfoContainer');
-  
+
   if (!subscriptionInfoContainer) {
     // Create the container if it doesn't exist
     const dailyReminderContainer = document.querySelector('.form-group');
-    
+
     if (dailyReminderContainer) {
       subscriptionInfoContainer = document.createElement('div');
       subscriptionInfoContainer.id = 'subscriptionInfoContainer';
       subscriptionInfoContainer.className = 'mt-4';
-      
+
       const subscriptionLabel = document.createElement('label');
       subscriptionLabel.className = 'form-label mb-1';
       subscriptionLabel.textContent = 'Subscription';
-      
+
       subscriptionInfoContainer.appendChild(subscriptionLabel);
-      
+
       // Create the info panel
       const infoPanel = document.createElement('div');
       infoPanel.id = 'subscriptionInfoPanel';
       infoPanel.className = 'subscription-info-panel';
       subscriptionInfoContainer.appendChild(infoPanel);
-      
+
       // Add the container after daily reminder
       dailyReminderContainer.appendChild(subscriptionInfoContainer);
     }
   }
-  
+
   // Update subscription info content
   const infoPanel = document.getElementById('subscriptionInfoPanel');
   if (infoPanel) {
     if (data.active) {
       let statusContent = '';
-      
+
       // For company subscription
       if (data.source === 'company') {
         statusContent = `
@@ -257,7 +270,7 @@ function updateSubscriptionInfoInSettings(data) {
       else if (data.trialActive && data.trialEndsAt) {
         const trialEndDate = new Date(data.trialEndsAt);
         const formattedDate = trialEndDate.toLocaleDateString();
-        
+
         statusContent = `
           <div class="subscription-status-container">
             <p class="subscription-status">Free Trial Active</p>
@@ -265,12 +278,12 @@ function updateSubscriptionInfoInSettings(data) {
             ${data.trialDaysRemaining ? `<p class="subscription-detail">${data.trialDaysRemaining} days remaining</p>` : ''}
           </div>
         `;
-      } 
+      }
       // For active paid individual subscription
       else if (data.paidActive) {
         const renewalDate = new Date(data.currentPeriodEnd || 0);
         const formattedRenewalDate = renewalDate.toLocaleDateString();
-        
+
         statusContent = `
           <div class="subscription-status-container">
             <p class="subscription-status">Subscription Active</p>
@@ -281,9 +294,9 @@ function updateSubscriptionInfoInSettings(data) {
           </div>
         `;
       }
-      
+
       infoPanel.innerHTML = statusContent;
-      
+
       // Add event listeners for buttons
       const cancelBtn = document.getElementById('subscriptionCancelBtn');
       if (cancelBtn) {
@@ -299,7 +312,7 @@ function updateSubscriptionInfoInSettings(data) {
           </button>
         </div>
       `;
-      
+
       // Add event listener for trial button
       const startTrialBtn = document.getElementById('subscriptionStartTrialBtn');
       if (startTrialBtn) {
@@ -315,28 +328,35 @@ function updateSubscriptionInfoInSettings(data) {
  * Handle subscription form submission
  */
 async function subscriptionHandleSubscribe(e) {
-  e.preventDefault();
-  
+  if (e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
   const subscribeButton = document.getElementById('subscribeButton');
   const errorMessage = document.getElementById('card-errors');
-  
+
+  if (!subscribeButton) {
+    return;
+  }
+
   if (!selectedPlan) {
     errorMessage.textContent = 'No subscription plan available';
     return;
   }
-  
+
   if (!stripe || !elements) {
     errorMessage.textContent = 'Payment system not initialized';
     return;
   }
-  
+
   // Disable the button and show processing state
   subscribeButton.disabled = true;
   subscribeButton.classList.add('disabled-btn');
   subscribeButton.textContent = 'Processing...';
-  
+
   showSpinner();
-  
+
   try {
     // First validate the payment element
     const { error: validationError } = await elements.submit();
@@ -344,44 +364,47 @@ async function subscriptionHandleSubscribe(e) {
       throw new Error(validationError.message);
     }
 
-    // Then confirm the setup
+    console.log('Stripe confirmSetup');
+    // Then confirm the setup without redirect
     const { error, setupIntent } = await stripe.confirmSetup({
       elements,
       confirmParams: {
         return_url: window.location.origin,
-      },
-      redirect: 'if_required'
+      }
     });
-    
+
+    console.log('Stripe confirmSetup done');
+
     if (error) {
+      console.error('Stripe setup error:', error);
       throw new Error(error.message);
     }
-    
+
     if (!setupIntent || !setupIntent.payment_method) {
       throw new Error('Failed to set up payment method');
     }
-    
+
     // For individual plans
     const auth = getAuth();
+    console.log('Stripe subscriptionIndividualCreate');
     const result = await subscriptionIndividualCreateFunction({
       email: auth.currentUser.email,
       paymentMethodId: setupIntent.payment_method
     });
-    
+
     if (result.data.error) {
       throw new Error(result.data.error);
     }
-    
+
     // Handle subscription success
     if (loadUserSettingsCallback) {
       await loadUserSettingsCallback();
     }
-    
+
     // Navigate to dashboard
     navigateToView('dashboard');
-    
+
   } catch (error) {
-    console.error('Error creating subscription:', error);
     if (errorMessage) {
       errorMessage.textContent = error.message || 'An error occurred while processing your payment.';
     }
@@ -401,10 +424,10 @@ async function subscriptionHandleCancel() {
   if (confirm('Are you sure you want to cancel your subscription? You will still have access until the end of your current billing period.')) {
     try {
       showSpinner();
-      
+
       // Use the new function name
       const result = await subscriptionIndividualCancelFunction();
-      
+
       if (result.data.success) {
         alert('Your subscription has been canceled. You will still have access until the end of your current billing period.');
         if (loadUserSettingsCallback) {
@@ -436,18 +459,15 @@ async function subscriptionGetPlans() {
     const result = await subscriptionPlansGetFunction();
 
     availablePlans = result.data.plans || [];
-    
+
     // Find the first Individual plan
     selectedPlan = availablePlans.find(plan => plan.type === 'Individual');
-    
+
     if (selectedPlan) {
-      
       // Show the selected plan and update price displays
       displaySelectedPlan(selectedPlan);
-    } else {
-      console.error('No Individual plan found');
     }
-    
+
     return result.data;
   } catch (error) {
     console.error('Error fetching plans:', error);
@@ -461,7 +481,7 @@ async function subscriptionGetPlans() {
 function displaySelectedPlan(plan) {
   // Get trial days from plan
   const trialDays = plan.trial?.days || 0;
-  
+
   // Format price and period
   let formattedPrice = 'Free';
   let periodText = '';
@@ -474,39 +494,39 @@ function displaySelectedPlan(plan) {
     }
     periodText = getFormattedPeriod(plan.price);
   }
-  
+
   // Update header and description
-  const sectionHeader = document.querySelector('#subscriptionView h1') || 
-                       document.querySelector('#subscriptionView .section-header') ||
-                       document.querySelector('.section-header');
+  const sectionHeader = document.querySelector('#subscriptionView h1') ||
+    document.querySelector('#subscriptionView .section-header') ||
+    document.querySelector('.section-header');
   if (sectionHeader) {
     const headerText = trialDays ? `${trialDays}-Day Free Trial` : 'Subscribe';
     sectionHeader.textContent = headerText;
   }
-  
+
   const trialDescription = document.querySelector('#subscriptionView .text-sm.text-gray-600.text-center.mb-4');
   if (trialDescription) {
-    trialDescription.textContent = trialDays 
+    trialDescription.textContent = trialDays
       ? `Try Done That for ${trialDays} days, no strings attached.`
       : 'Get started with Done That today.';
   }
-  
+
   // Update all price elements
   document.querySelectorAll('.subscription-price, .subscription-bullet-price').forEach(element => {
     element.textContent = formattedPrice;
   });
-  
+
   // Update all period elements
   document.querySelectorAll('.subscription-period, .subscription-bullet-period').forEach(element => {
     element.textContent = periodText;
   });
-  
+
   // Update bullet points with trial text and price
   const bulletPoints = document.querySelectorAll('.bullet-item');
   if (bulletPoints.length > 0) {
     const lastBullet = bulletPoints[bulletPoints.length - 1];
     const contentElement = lastBullet.querySelector('.bullet-content');
-    
+
     if (contentElement) {
       const priceText = trialDays
         ? `after your ${trialDays}-day free trial ends`
@@ -514,26 +534,24 @@ function displaySelectedPlan(plan) {
       contentElement.innerHTML = `${priceText} <span class="subscription-bullet-price">${formattedPrice}</span><span class="subscription-bullet-period">${periodText}</span>`;
     }
   }
-  
+
   // Use the existing payment form
   const paymentForm = document.getElementById('paymentForm');
   if (paymentForm) {
     paymentForm.classList.remove('hidden');
-    
+
     // Disable autofill
     paymentForm.setAttribute('autocomplete', 'off');
     paymentForm.setAttribute('novalidate', true);
-    
+
     // Also disable autofill for the payment element container
     const paymentElement = document.getElementById('payment-element');
     if (paymentElement) {
       paymentElement.setAttribute('autocomplete', 'off');
       paymentElement.setAttribute('data-autofill', 'false');
     }
-    
+
     subscriptionSetupElements();
-  } else {
-    console.error('Payment form not found');
   }
 }
 
@@ -542,10 +560,10 @@ function displaySelectedPlan(plan) {
  */
 function getFormattedPeriod(price) {
   if (!price || !price.interval) return '';
-  
+
   const interval = price.interval;
   const count = price.intervalCount || 1;
-  
+
   let periodText = '/month';
   if (interval === 'year') {
     periodText = count > 1 ? `/${count} years` : '/year';
@@ -556,12 +574,13 @@ function getFormattedPeriod(price) {
   } else if (interval === 'day') {
     periodText = count > 1 ? `/${count} days` : '/day';
   }
-  
+
   return periodText;
 }
 
 module.exports = {
   subscriptionInitialize,
   subscriptionHandleCancel,
-  subscriptionGetPlans
+  subscriptionGetPlans,
+  subscriptionUpdateUI
 }; 

@@ -173,8 +173,6 @@ async function captureAndSendScreenshot(idToken, FIREBASE_CAPTURE_URL) {
       return
     }
 
-    log.info(`Processing ${screenshots.length} screenshots for upload`)
-
     const fetch = await import('node-fetch').then(module => module.default)
     
     const response = await fetch(FIREBASE_CAPTURE_URL, {
@@ -193,7 +191,6 @@ async function captureAndSendScreenshot(idToken, FIREBASE_CAPTURE_URL) {
       throw new Error(`Server error: ${response.status}`)
     }
     
-    log.info('Screenshots uploaded successfully')
     return true
   } catch (error) {
     log.error('Screenshot error:', error.message, error.stack)
