@@ -4,8 +4,8 @@ const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
 const { initializeApp } = require('firebase/app')
 const firebaseConfig = require('./firebase-config')
-const { 
-  captureAndSendScreenshot: moduleCapture, 
+const {
+  captureAndSendScreenshot: moduleCapture,
   checkScreenCapturePermission: moduleCheckPermission,
   getWaylandStatus
 } = require('./src-main/screenshot-capture')
@@ -42,7 +42,7 @@ if (DEBUG) {
   // Add custom notification transport for warnings and errors
   log.hooks.push((message, transport) => {
     if (transport !== log.transports.console) return message;
-    
+
     if (message.level === 'warn' || message.level === 'error') {
       // Only send notifications after app is ready
       if (app.isReady()) {
@@ -57,10 +57,10 @@ if (DEBUG) {
         }
       }
     }
-    
+
     return message;
   });
-  
+
   // For debugging, replace console with more verbose electron-log
   const originalConsole = { ...console };
   console.log = (...args) => { log.info(...args); originalConsole.log(...args); };
@@ -99,7 +99,7 @@ const firebaseApp = initializeApp(firebaseConfig)
 function setupAutoUpdater() {
   // Use the centralized logger
   autoUpdater.logger = log
-  
+
   // Add configuration for GitHub provider
   autoUpdater.allowPrerelease = false
   autoUpdater.autoDownload = true
@@ -117,7 +117,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on('error', (error) => {
     log.error('Update error:', error);
-    
+
     // More detailed error logging
     if (error.stack) {
       log.error('Error stack:', error.stack);
@@ -137,13 +137,13 @@ ipcMain.on('install-update', () => {
 // Function to handle scheduled update checks
 function scheduleUpdateChecks() {
   log.info('Setting up update check schedule...');
-  
+
   // First check after 1 minute to let the app fully initialize
   setTimeout(() => {
     log.info('Running first scheduled update check...');
     autoUpdater.checkForUpdates()
       .catch(err => log.error('Error in first update check:', err));
-    
+
     // Then check every hour
     setInterval(() => {
       log.info('Running hourly update check...');
@@ -168,25 +168,23 @@ function setupAutoStart() {
         path: process.execPath,
         args: []
       });
-      
+
       log.info('Windows autostart configured with path:', process.execPath);
     } else if (process.platform === 'darwin') {
       // For macOS, use the special path resolution needed for app bundles
       const appFolder = path.dirname(process.execPath);
       const exeName = path.basename(process.execPath);
       const macOSPath = path.resolve(appFolder, '..', exeName);
-      
+
       app.setLoginItemSettings({
         openAtLogin: true,
         path: macOSPath
       });
-      
-      log.info('macOS autostart configured with path:', macOSPath);
+
     } else {
       // Linux - autostart is not currently supported
-      log.info('Autostart on Linux is not currently supported');
     }
-    
+
     // After update is installed, this will run again with the new executable path
     // when the app restarts, ensuring the autostart always points to latest version
   } catch (error) {
@@ -199,13 +197,13 @@ function setupAutoStart() {
 app.whenReady().then(async () => {
   // Create tray with initial error icon
   let trayIcon = nativeImage.createFromPath(iconErrorPath)
-  
+
   // Apply platform-specific resizing for initial icon
   if (process.platform === 'darwin') {
     // macOS menu bar icons should be 18-22px
     trayIcon = trayIcon.resize({ width: 18, height: 18 })
   }
-  
+
   tray = new Tray(trayIcon)
   tray.setToolTip('Done That')
 
@@ -217,13 +215,13 @@ app.whenReady().then(async () => {
 
   // Initial state - update icon after tray is created
   updateTrayIcon(false)
-  
+
   // Handle left-click to show a fresh context menu
   tray.on('click', () => {
     const contextMenu = buildContextMenu()
     tray.popUpContextMenu(contextMenu)
   })
-  
+
   // Also handle right-click to show a fresh context menu
   tray.on('right-click', () => {
     const contextMenu = buildContextMenu()
@@ -237,12 +235,10 @@ app.whenReady().then(async () => {
   try {
     // Setup updater
     setupAutoUpdater();
-    
+
     if (app.isPackaged) {
-      log.info('Setting up auto-update checks...');
       scheduleUpdateChecks();
     } else {
-      log.info('Skipping update checks in development mode');
     }
   } catch (error) {
     log.error('Error setting up updater:', error);
@@ -274,16 +270,16 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   // Flag that we're actually quitting, not just closing windows
   app.isQuitting = true;
-  
+
   // Clean up resources
   if (screenshotInterval) {
     clearInterval(screenshotInterval);
   }
-  
+
   if (pauseTimeout) {
     clearTimeout(pauseTimeout);
   }
-  
+
   if (summaryNotificationTimeout) {
     clearTimeout(summaryNotificationTimeout);
   }
@@ -302,9 +298,8 @@ ipcMain.on('initialAuthCheck', (event, isAuthenticated) => {
 
 // Updated listener for login event - simplified to not store token
 ipcMain.on('login', (event, token) => {
-  console.log("ID Token received from renderer");
   idToken = token
-  
+
   // Start recording if we weren't already and not paused and have permissions
   if (!screenshotInterval && !isPaused && hasScreenCapturePermission) {
     startRecording()
@@ -325,7 +320,7 @@ ipcMain.on('login', (event, token) => {
 ipcMain.on('logout', (event) => {
   console.log("User logged out");
   idToken = null
-  
+
   // Stop recording if we were recording
   if (screenshotInterval) {
     clearInterval(screenshotInterval)
@@ -341,7 +336,7 @@ ipcMain.on('logout', (event) => {
 // Function to update the tray icon based on recording state
 function updateTrayIcon(isRecording) {
   let iconPath;
-  
+
   if (isRecording) {
     // Use recording icon when recording
     iconPath = iconRecordingPath
@@ -355,23 +350,23 @@ function updateTrayIcon(isRecording) {
     iconPath = iconErrorPath
     tray.setToolTip('Done That - Not Recording')
   }
-  
+
   // Load and set the appropriate icon
   let icon = nativeImage.createFromPath(iconPath)
-  
+
   // MODIFY the resizing code to skip Windows
   if (process.platform === 'darwin') {
     // macOS menu bar icons look best at 18-22px
     icon = icon.resize({ width: 18, height: 18 })
   }
-  
+
   tray.setImage(icon)
-  
+
   // Clear any previous title (macOS specific)
   if (process.platform === 'darwin') {
     tray.setTitle('')
   }
-  
+
   // Update context menu on Linux to reflect current state
   if (process.platform === 'linux') {
     const contextMenu = buildContextMenu()
@@ -385,7 +380,7 @@ function buildContextMenu() {
 
   // Start with basic template
   const template = []
-  
+
   // Add "Open App" as the first option for all platforms
   template.push({
     label: 'Open App',
@@ -455,7 +450,6 @@ function pauseRecording(duration) {
   // Set pause state
   isPaused = true
   updateTrayIcon(false)
-  console.log(`Screenshot recording paused for ${duration / 60000} minutes`)
 
   // Set timeout to resume recording after duration
   pauseTimeout = setTimeout(() => {
@@ -472,7 +466,6 @@ function pauseUntilTomorrow() {
 
   const duration = tomorrow - now
   pauseRecording(duration)
-  console.log(`Screenshot recording paused until tomorrow`)
 }
 
 // Add new function to pause until next week
@@ -484,7 +477,6 @@ function pauseUntilNextWeek() {
 
   const duration = nextMonday - now
   pauseRecording(duration)
-  console.log(`Screenshot recording paused until next Monday`)
 }
 
 // Function to resume recording
@@ -503,11 +495,9 @@ function resumeRecording() {
     // Restart screenshot interval
     if (!screenshotInterval) {
       screenshotInterval = setInterval(captureAndSendScreenshot, SCREENSHOT_INTERVAL_MINUTES * 60000)
-      console.log(`Screenshot recording resumed (every ${SCREENSHOT_INTERVAL_MINUTES} minutes)`)
     }
   } else {
     updateTrayIcon(false)
-    console.log('Cannot resume recording - user not logged in')
   }
 }
 
@@ -550,7 +540,7 @@ function createWindow() {
     // Debug inspector
     if (DEBUG) {
       mainWindow.webContents.openDevTools();
-    }    
+    }
     // Log any webContents errors
     mainWindow.webContents.on('console-message', (event, level, message) => {
       console.log('Renderer Console:', message);
@@ -588,13 +578,13 @@ function toggleWindow() {
 function showWindowBelowTray() {
   // Get tray icon bounds
   const trayBounds = tray.getBounds()
-  
+
   // Get window size
   const windowBounds = mainWindow.getBounds()
-  
+
   // Get all displays
   const allDisplays = screen.getAllDisplays()
-  
+
   // Find which display contains the tray icon
   const trayDisplay = allDisplays.find(display => {
     const { x, y, width, height } = display.bounds
@@ -603,19 +593,19 @@ function showWindowBelowTray() {
       trayBounds.y >= y && trayBounds.y < y + height
     )
   }) || screen.getPrimaryDisplay() // Fall back to primary if not found
-  
+
   // Use the working area of the display containing the tray
   const { workArea } = trayDisplay
-  
+
   let x, y;
-  
+
   // Linux-specific positioning logic
   if (process.platform === 'linux') {
     // On Linux, center in the primary display as a fallback
     // since tray positioning can be unreliable
     x = Math.round(workArea.x + (workArea.width / 2) - (windowBounds.width / 2))
     y = Math.round(workArea.y + (workArea.height / 2) - (windowBounds.height / 2))
-    
+
     // If we have valid tray bounds, try to position near it
     if (trayBounds.width > 0 && trayBounds.height > 0) {
       // Position at the bottom of the screen if the tray appears to be at the bottom
@@ -631,11 +621,11 @@ function showWindowBelowTray() {
     // Original positioning for Windows and macOS
     // Calculate x position: center window horizontally relative to the tray icon
     x = Math.round(trayBounds.x + (trayBounds.width / 2) - (windowBounds.width / 2))
-    
+
     // Determine if tray is closer to top or bottom of the display
     const distanceToTop = trayBounds.y - workArea.y
     const distanceToBottom = (workArea.y + workArea.height) - (trayBounds.y + trayBounds.height)
-    
+
     if (distanceToTop < distanceToBottom) {
       // Tray is closer to top - position window below tray
       y = trayBounds.y + trayBounds.height
@@ -644,13 +634,13 @@ function showWindowBelowTray() {
       y = trayBounds.y - windowBounds.height
     }
   }
-  
+
   // Ensure window doesn't go off-screen horizontally
   x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - windowBounds.width))
-  
+
   // Ensure window doesn't go off-screen vertically
   y = Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - windowBounds.height))
-  
+
   mainWindow.setPosition(x, y, false)
   mainWindow.show()
   mainWindow.focus() // Ensure window gets focus
@@ -668,7 +658,7 @@ app.on('window-all-closed', (event) => {
 app.on('browser-window-focus', async () => {
   const oldPermission = hasScreenCapturePermission;
   hasScreenCapturePermission = await checkScreenCapturePermission();
-  
+
   // Only send update if permission status actually changed
   if (oldPermission !== hasScreenCapturePermission && mainWindow) {
     // Use the global isWaylandSession variable
@@ -676,7 +666,7 @@ app.on('browser-window-focus', async () => {
       hasPermission: hasScreenCapturePermission,
       isWaylandSession: isWaylandSession
     });
-    
+
     // Update icon and recording state if needed
     if (hasScreenCapturePermission && idToken && !isPaused) {
       updateTrayIcon(true);
@@ -702,7 +692,6 @@ ipcMain.handle('checkNotificationPermission', async () => {
 
 // Add new listener for receiving summary notification settings
 ipcMain.on('updateSummaryNotificationTime', (event, time) => {
-  console.log("Updating summary notification time:", time);
   summaryNotificationTime = time;
 
   // Clear any existing notification timeout
@@ -740,8 +729,6 @@ function scheduleNextSummaryNotification() {
 
   // Calculate ms until the notification should be shown
   const msUntilNotification = targetTime - now;
-
-  console.log(`Scheduling summary notification for ${targetTime.toLocaleString()} (in ${msUntilNotification / 60000} minutes)`);
 
   // Set the timeout
   summaryNotificationTimeout = setTimeout(() => {
@@ -822,7 +809,6 @@ function shouldSkipNotification() {
 function startRecording() {
   if (!screenshotInterval) {
     screenshotInterval = setInterval(captureAndSendScreenshot, SCREENSHOT_INTERVAL_MINUTES * 60000)
-    console.log(`Screenshot recording started (every ${SCREENSHOT_INTERVAL_MINUTES} minutes)`)
   }
 }
 
@@ -835,7 +821,7 @@ async function checkScreenCapturePermission() {
 
 async function captureAndSendScreenshot() {
   const result = await moduleCapture(idToken, FIREBASE_CAPTURE_URL);
-  
+
   // Handle auth error specially
   if (result && result.authError) {
     idToken = null;
@@ -843,15 +829,15 @@ async function captureAndSendScreenshot() {
       mainWindow.webContents.send('auth-error');
     }
   }
-  
+
   return result;
 }
 
 // Also update the explicit permission check handler
 ipcMain.on('checkScreenCapturePermission', async () => {
   hasScreenCapturePermission = await checkScreenCapturePermission();
-  
-  if (mainWindow) {    
+
+  if (mainWindow) {
     // Send both permission status and session type
     mainWindow.webContents.send('screenCapturePermission', {
       hasPermission: hasScreenCapturePermission,

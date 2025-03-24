@@ -49,8 +49,6 @@ function updateSlackUI(connected, team = '') {
 // Helper function for Slack connection - no spinner involved
 async function handleSlackConnect() {
   try {
-    console.log("handleSlackConnect");
-    // No spinner for the connection process
     
     const result = await slackConnectFunction();
     const authWindow = window.open(result.data.authUrl);
@@ -62,11 +60,9 @@ async function handleSlackConnect() {
 
     // Function to check if auth window was closed
     const checkWindowClosed = () => {
-      console.log("main window focus");
       if (loadUserSettingsCallback) loadUserSettingsCallback();
 
       if (authWindow.closed) {
-        console.log("auth window was closed");
         cleanup();
       }
     };

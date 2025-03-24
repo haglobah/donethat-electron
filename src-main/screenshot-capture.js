@@ -159,10 +159,7 @@ async function captureAndSendScreenshot(idToken, FIREBASE_CAPTURE_URL) {
       if (sources.length === 0) {
         log.warn('No screen sources found')
         return
-      }
-      
-      log.info(`Captured ${sources.length} screen sources`)
-      
+      }      
       // Process each source
       screenshots = await Promise.all(
         sources.map(async source => {
@@ -270,7 +267,6 @@ async function captureScreenshotsLinux() {
     
     // Process the screenshot if it was created successfully
     if (fs.existsSync(screenshotPath) && fs.statSync(screenshotPath).size > 0) {
-      log.info(`Screenshot captured successfully with ${linuxScreenshotTool}`)
       const screenshotData = fs.readFileSync(screenshotPath)
       const base64Data = `data:image/png;base64,${screenshotData.toString('base64')}`
       fs.unlinkSync(screenshotPath)

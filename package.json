@@ -65,8 +65,7 @@
       "build/**/*",
       "resources/**/*",
       "src-main/**/*",
-      "package.json",
-      "resources/donethat-protocol.desktop"
+      "package.json"
     ],
     "directories": {
       "buildResources": "resources",
@@ -115,16 +114,9 @@
       "desktop": {
         "StartupWMClass": "done-that",
         "NoDisplay": true,
-        "Type": "Application",
-        "MimeType": "x-scheme-handler/donethat"
+        "Type": "Application"
       }
     },
-    "compression": "maximum",
-    "protocols": {
-      "name": "donethat-protocol",
-      "schemes": [
-        "donethat"
-      ]
-    }
+    "compression": "maximum"
   }
 }

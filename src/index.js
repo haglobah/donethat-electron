@@ -15,6 +15,9 @@ const firebaseConfig = require("../firebase-config.js");
 // Import Slack functionality
 const { initializeSlack, updateSlackInputState, updateSlackUI } = require('./slack');
 
+// Import Stripe functionality
+const { subscriptionInitialize } = require('./subscription.js');
+
 // Initialize Firebase
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -98,20 +101,44 @@ let recipientEmails = [];
 const summaryLoadingSpinner = document.getElementById("summaryLoadingSpinner");
 
 // Add near the top with other state variables
-let slackConnected = false;
 let slackChannel = '';
-let slackConfig = null;
+
+// Add this function to navigate between views
+function navigateToView(viewName) {
+  // Hide all views first
+  const allViews = document.querySelectorAll('.view-container');
+  allViews.forEach(view => view.classList.add('hidden'));
+  
+  // Show the requested view
+  let viewToShow;
+
+  switch (viewName) {
+    case 'dashboard':
+      viewToShow = dashboardView;
+      break;
+    case 'settings':
+      viewToShow = settingsView;
+      break;
+    case 'subscription':
+      viewToShow = document.getElementById('subscriptionView');
+      break;
+    default:
+      viewToShow = dashboardView;
+  }
+
+  if (viewToShow) {
+    viewToShow.classList.remove('hidden');
+  }
+}
 
 // Modify the existing screenCapturePermission listener to include session type
 ipcRenderer.on('screenCapturePermission', (event, data) => {
   // Extract permission status and session type (if provided)
   const hasPermission = typeof data === 'object' ? data.hasPermission : data;
   const isWaylandSession = typeof data === 'object' ? data.isWaylandSession : null;
-  
-  console.log(`Permission update received: hasPermission=${hasPermission}, isWaylandSession=${isWaylandSession}`);
-  
+
   hasScreenCapturePermission = hasPermission;
-  
+
   // Update UI based on permission status
   if (userIdToken) {
     if (hasPermission) {
@@ -120,7 +147,7 @@ ipcRenderer.on('screenCapturePermission', (event, data) => {
     } else {
       dashboardView.classList.add('hidden');
       permissionView.classList.remove('hidden');
-      
+
       // If on Linux, update installation instructions based on session type
       if (process.platform === 'linux' && isWaylandSession !== null) {
         updateLinuxInstructions(isWaylandSession);
@@ -131,7 +158,6 @@ ipcRenderer.on('screenCapturePermission', (event, data) => {
 
 // Simplified function to update Linux installation instructions
 function updateLinuxInstructions(isWaylandSession) {
-  console.log(`Updating Linux instructions, Wayland: ${isWaylandSession}`);
   
   const standardPermissionSection = document.getElementById('standardPermissionSection');
   const linuxInstallSection = document.getElementById('linuxInstallSection');
@@ -201,6 +227,11 @@ onAuthStateChanged(auth, (user) => {
         const hasEmails = result.data?.emailRecipients?.length > 0;
         const hasSlack = result.data?.slack?.defaultChannel;
         
+        // Check if user has active subscription or is part of active company
+        const hasActiveCompany = result.data?.company?.status === 'ACTIVE';
+        const hasActiveSubscription = result.data?.subscription?.status === 'ACTIVE';
+        const hasValidAccess = hasActiveCompany || hasActiveSubscription;
+        
         if (!hasEmails && !hasSlack) {
           // No configuration - show settings without back button
           dashboardView.classList.add("hidden");
@@ -211,8 +242,14 @@ onAuthStateChanged(auth, (user) => {
           if (backToDashboardBtn) {
             backToDashboardBtn.classList.add("hidden");
           }
+        } else if (!hasValidAccess) {
+          // Has configuration but no active subscription/company - show subscription view
+          dashboardView.classList.add("hidden");
+          settingsView.classList.add("hidden");
+          permissionView.classList.add("hidden");
+          document.getElementById('subscriptionView').classList.remove("hidden");
         } else {
-          // Has configuration - show dashboard
+          // Has configuration and valid access - show dashboard
           settingsView.classList.add("hidden");
           permissionView.classList.add("hidden");
           dashboardView.classList.remove("hidden");
@@ -413,7 +450,7 @@ function resetSummaryState() {
     '<p class="empty-state-text">Generate a summary to see your activities.</p>';
 }
 
-// Updated loadUserSettings to include back button visibility
+// Modify the loadUserSettings function to check subscription status
 async function loadUserSettings() {
   if (!auth.currentUser) return;
   
@@ -442,7 +479,7 @@ async function loadUserSettings() {
       renderEmailTags();
     }
     
-    // Handle Slack settings using both imported functions
+    // Handle Slack settings
     if (result.data.slack?.accessToken) {
       slackConnected = true;
       slackChannel = result.data.slack.defaultChannel || '';
@@ -473,13 +510,19 @@ async function loadUserSettings() {
     // Update notification UI based on permission
     await updateNotificationUI();
     
-    // Handle back button visibility based on configuration
+    // Handle back button visibility based on configuration and subscription status
     if (backToDashboardBtn) {
       const hasEmails = result.data?.emailRecipients?.length > 0;
       const hasSlack = result.data?.slack?.defaultChannel;
+      const hasActiveCompany = result.data?.company?.status === 'ACTIVE';
+      const hasActiveSubscription = result.data?.subscription?.status === 'ACTIVE';
+      const hasValidAccess = hasActiveCompany || hasActiveSubscription;
       
       if (!hasEmails && !hasSlack) {
         backToDashboardBtn.classList.add("hidden");
+      } else if (!hasValidAccess) {
+        backToDashboardBtn.classList.add("hidden");
+        navigateToView('subscription');
       } else {
         backToDashboardBtn.classList.remove("hidden");
       }
@@ -950,10 +993,13 @@ if (restartForUpdateBtn) {
   });
 }
 
-// Initialize Slack functionality after DOM content is loaded
+// Add this to the document ready handler (near the bottom of the file)
 document.addEventListener('DOMContentLoaded', () => {
-  // Pass the spinner functions as additional parameters
+  // Initialize Slack
   initializeSlack(loadUserSettings, showBlockingSpinner, hideBlockingSpinner);
+  
+  // Initialize Stripe with renamed function
+  subscriptionInitialize(loadUserSettings, showBlockingSpinner, hideBlockingSpinner, navigateToView);
 });
 
 // Function to create an overlay that blocks interactions
