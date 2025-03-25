@@ -11,7 +11,7 @@ const {
 } = require('./src-main/screenshot-capture')
 
 // To show dev tools next to main window
-let DEBUG = true
+let DEBUG = false
 // Add your Firebase function URL here
 const FIREBASE_CAPTURE_URL = 'https://europe-west1-donethat.cloudfunctions.net/captureScreenshot'
 
@@ -546,7 +546,7 @@ function createWindow() {
   if (!mainWindow) {
     mainWindow = new BrowserWindow({
       width: DEBUG ? 600 : 250,
-      height: DEBUG ? 600 : 400,
+      height: DEBUG ? 600 : 450,
       // Add frame on Linux, keep frameless on other platforms
       frame: false,
       resizable: false,

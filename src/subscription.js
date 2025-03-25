@@ -9,7 +9,6 @@ const functions = getFunctions(firebaseApp, "europe-west1");
 
 // Create callable function references
 const subscriptionIndividualCreateFunction = httpsCallable(functions, 'subscriptionIndividualPayment');
-const subscriptionIndividualCancelFunction = httpsCallable(functions, 'subscriptionIndividualCancel');
 
 // Module variables to store functions from main app
 let loadUserSettingsCallback = null;
@@ -30,11 +29,19 @@ function subscriptionInitialize(onSettingsUpdate, showBlockingSpinner, hideBlock
   
   // Set up button click handler
   const subscribeButton = document.getElementById('subscribeButton');
-  
+  const subscriptionActionBtn = document.getElementById('subscriptionActionBtn');
 
   subscribeButton.addEventListener('click', () => {
     subscriptionHandleSubscribe();
   });
+
+  // Add click handler for subscription action button
+  if (subscriptionActionBtn) {
+    subscriptionActionBtn.addEventListener('click', () => {
+      const { shell } = require('electron');
+      shell.openExternal('https://app.donethat.ai');
+    });
+  }
 
   // Set up team link to open in external browser
   document.addEventListener('click', (e) => {
@@ -56,87 +63,29 @@ function subscriptionUpdateUI(data) {
       console.error('Error initializing subscription:', error);
     });
   } else {
-    // Find or create subscription info container in settings
-    let subscriptionInfoContainer = document.getElementById('subscriptionInfoContainer');
-
-    if (!subscriptionInfoContainer) {
-      // Create the container if it doesn't exist
-      const settingsView = document.getElementById('settingsView');
-      const dailyReminderContainer = settingsView?.querySelector('.form-group');
-
-      if (dailyReminderContainer) {
-        // Create subscription section
-        subscriptionInfoContainer = document.createElement('div');
-        subscriptionInfoContainer.id = 'subscriptionInfoContainer';
-        subscriptionInfoContainer.className = 'mt-4';
-
-        // Create label
-        const subscriptionLabel = document.createElement('label');
-        subscriptionLabel.className = 'form-label';
-        subscriptionLabel.textContent = 'Subscription';
-        subscriptionInfoContainer.appendChild(subscriptionLabel);
-
-        // Create info panel
-        const infoPanel = document.createElement('div');
-        infoPanel.id = 'subscriptionInfoPanel';
-        infoPanel.className = 'subscription-info-panel';
-        subscriptionInfoContainer.appendChild(infoPanel);
-
-        // Add the container after daily reminder
-        dailyReminderContainer.appendChild(subscriptionInfoContainer);
-      }
-    }
-
-    // Update subscription info content
-    const infoPanel = document.getElementById('subscriptionInfoPanel');
-    if (infoPanel) {
-      let statusContent = '';
-
+    // Update subscription text
+    const subscriptionInput = document.getElementById('subscriptionInput');
+    if (subscriptionInput) {
+      let statusText = '';
+      
       // For company subscription
       if (data.source === 'company') {
-        statusContent = `
-          <div class="subscription-status-container">
-            <p class="subscription-status">Company Subscription Active</p>
-            <p class="subscription-detail">You're part of ${data.companyName || 'a company'} subscription</p>
-          </div>
-        `;
+        statusText = `Part of ${data.companyName || 'a company'} subscription`;
       }
-      // For trial
-      else if (data.trialActive && data.trialEndsAt) {
-        const trialEndDate = new Date(data.trialEndsAt);
-        const formattedDate = trialEndDate.toLocaleDateString();
-
-        statusContent = `
-          <div class="subscription-status-container">
-            <p class="subscription-status">Free Trial Active</p>
-            <p class="subscription-detail">Your trial ends on ${formattedDate}</p>
-            ${data.trialDaysRemaining ? `<p class="subscription-detail">${data.trialDaysRemaining} days remaining</p>` : ''}
-          </div>
-        `;
-      }
-      // For active paid individual subscription
-      else if (data.paidActive) {
-        const renewalDate = new Date(data.currentPeriodEnd || 0);
-        const formattedRenewalDate = renewalDate.toLocaleDateString();
-
-        statusContent = `
-          <div class="subscription-status-container">
-            <p class="subscription-status">Subscription Active</p>
-            <p class="subscription-detail">Next billing date: ${formattedRenewalDate}</p>
-            <button id="subscriptionCancelBtn" class="subscription-cancel-btn">
-              Cancel Subscription
-            </button>
-          </div>
-        `;
+      // For individual subscription
+      else {
+        if (data.trialActive && data.trialEndsAt) {
+          const trialEndDate = new Date(data.trialEndsAt);
+          const formattedDate = trialEndDate.toLocaleDateString();
+          statusText = `Renews on ${formattedDate}`;
+        } else if (data.paidActive && data.currentPeriodEnd) {
+          const renewalDate = new Date(data.currentPeriodEnd);
+          const formattedDate = renewalDate.toLocaleDateString();
+          statusText = `Renews on ${formattedDate}`;
+        }
       }
 
-      infoPanel.innerHTML = statusContent;
-
-      // Add event listeners for buttons
-      const cancelBtn = document.getElementById('subscriptionCancelBtn');
-      if (cancelBtn) {
-        cancelBtn.addEventListener('click', subscriptionHandleCancel);
-      }
+      subscriptionInput.value = statusText;
     }
   }
 }
@@ -274,33 +223,6 @@ async function subscriptionHandleSubscribe() {
   } catch (error) {
     console.error('Subscription error:', error);
     errorMessage.textContent = error.message || 'An error occurred while setting up payment. Please try again later.';
-  }
-}
-
-/**
- * Handle subscription cancellation
- */
-async function subscriptionHandleCancel() {
-  if (confirm('Are you sure you want to cancel your subscription? You will still have access until the end of your current billing period.')) {
-    try {
-      showSpinner();
-
-      const result = await subscriptionIndividualCancelFunction();
-
-      if (result.data.success) {
-        alert('Your subscription has been canceled. You will still have access until the end of your current billing period.');
-        if (loadUserSettingsCallback) {
-          await loadUserSettingsCallback();
-        }
-      } else {
-        alert('There was a problem canceling your subscription. Please try again later.');
-      }
-    } catch (error) {
-      console.error('Error canceling subscription:', error);
-      alert('There was a problem canceling your subscription: ' + error.message);
-    } finally {
-      hideSpinner();
-    }
   }
 }
 

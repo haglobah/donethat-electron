@@ -295,7 +295,7 @@
               />
               <button
                 id="slackActionBtn"
-                class="add-email-btn text-orange-500"
+                class="add-email-btn"
                 aria-label="Slack action"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
@@ -329,6 +329,32 @@
             <div id="notificationPermissionContainer" class="hidden">
               <button id="enableNotificationsBtn" class="btn-secondary w-full">
                 Enable Notifications
+              </button>
+            </div>
+          </div>
+
+          <!-- Subscription Management Section -->
+          <div class="mt-4">
+            <label class="form-label mb-1">
+              Subscription
+            </label>
+            <div class="relative w-full">
+              <input
+                type="text"
+                id="subscriptionInput"
+                class="form-input pr-6 text-xs py-1.5"
+                placeholder="Subscription status"
+                disabled
+              />
+              <button
+                id="subscriptionActionBtn"
+                class="add-email-btn"
+                aria-label="Subscription action"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                  <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
               </button>
             </div>
           </div>
