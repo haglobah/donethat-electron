@@ -136,7 +136,7 @@
 
 /* Summary container */
 .summary-container {
-  @apply h-72 mb-3 border border-gray-200 rounded p-2 overflow-y-auto text-sm;
+  @apply h-56 mb-3 border border-gray-200 rounded p-2 overflow-y-auto text-sm;
 }
 
 /* Make borders consistent between inputs and containers */
