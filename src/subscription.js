@@ -68,9 +68,9 @@ function subscriptionUpdateUI(data) {
     if (subscriptionInput) {
       let statusText = '';
       
-      // For company subscription
-      if (data.source === 'company') {
-        statusText = `Part of ${data.companyName || 'a company'} subscription`;
+      // For team subscription
+      if (data.source === 'team') {
+        statusText = `Part of ${data.teamName || 'a team'} subscription`;
       }
       // For individual subscription
       else {

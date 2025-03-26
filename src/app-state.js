@@ -10,7 +10,7 @@ const state = {
   // Subscription state
   hasValidAccess: false,
   subscriptionStatus: null,
-  companyStatus: null,
+  teamStatus: null,
 
   // Settings state
   hasEmails: false,
@@ -67,10 +67,10 @@ function updateScreenCapturePermission(hasPermission) {
   state.hasScreenCapturePermission = hasPermission;
 }
 
-function updateSubscriptionState(subscriptionStatus, companyStatus) {
+function updateSubscriptionState(subscriptionStatus, teamStatus) {
   state.subscriptionStatus = subscriptionStatus;
-  state.companyStatus = companyStatus;
-  state.hasValidAccess = companyStatus === 'ACTIVE' || 
+  state.teamStatus = teamStatus;
+  state.hasValidAccess = teamStatus === 'ACTIVE' || 
                         subscriptionStatus === 'trialing' || 
                         subscriptionStatus === 'active';
 }
