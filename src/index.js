@@ -95,7 +95,7 @@ async function loadUserSettingsCallback() {
   // Update app state with settings
   const hasEmails = result.data?.emailRecipients?.length > 0;
   const hasSlack = result.data?.slack?.defaultChannel;
-  const hasActiveteam = result.data?.team?.status === 'ACTIVE';
+  const hasActiveTeam = result.data?.team?.status === 'ACTIVE';
   const hasActiveSubscription = result.data?.subscription?.status === 'trialing' || result.data?.subscription?.status === 'active';
 
   // Update all relevant state
@@ -105,8 +105,8 @@ async function loadUserSettingsCallback() {
 
   // Always update subscription UI with current data
   subscriptionUpdateUI({
-    active: hasActiveSubscription || hasActiveteam,
-    source: hasActiveteam ? 'team' : 'individual',
+    active: hasActiveSubscription || hasActiveTeam,
+    source: hasActiveTeam ? 'team' : 'individual',
     teamName: result.data?.team?.name,
     trialActive: result.data?.subscription?.status === 'trialing',
     trialEndsAt: result.data?.subscription?.trialEndsAt,
