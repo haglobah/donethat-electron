@@ -70,6 +70,7 @@ function subscriptionUpdateUI(data) {
       
       // For team subscription
       if (data.source === 'team') {
+        // Find the first active team to display
         statusText = `Part of ${data.teamName || 'a team'} subscription`;
       }
       // For individual subscription
@@ -77,7 +78,7 @@ function subscriptionUpdateUI(data) {
         if (data.trialActive && data.trialEndsAt) {
           const trialEndDate = new Date(data.trialEndsAt);
           const formattedDate = trialEndDate.toLocaleDateString();
-          statusText = `Renews on ${formattedDate}`;
+          statusText = `Trial ends on ${formattedDate}`;
         } else if (data.paidActive && data.currentPeriodEnd) {
           const renewalDate = new Date(data.currentPeriodEnd);
           const formattedDate = renewalDate.toLocaleDateString();

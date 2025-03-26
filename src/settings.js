@@ -149,51 +149,57 @@ async function updateSettingsUI(result) {
   if (emailTagsContainer) {
     emailTagsContainer.innerHTML = "";
   }
-    // Handle email recipients
-    if (result.data &&
+
+  // Handle email recipients
+  if (result.data &&
     result.data.emailRecipients &&
     Array.isArray(result.data.emailRecipients) &&
     result.data.emailRecipients.length > 0) {
-        // Get unique emails from server response
-        const uniqueEmails = [...new Set(result.data.emailRecipients)];
+    // Get unique emails from server response
+    const uniqueEmails = [...new Set(result.data.emailRecipients)];
 
-        // Set our internal state
-        recipientEmails = uniqueEmails;
+    // Set our internal state
+    recipientEmails = uniqueEmails;
 
-        // Render the email tags
-        renderEmailTags();
+    // Render the email tags
+    renderEmailTags();
+  }
+  
+  // Handle Slack settings
+  if (result.data.slack?.accessToken) {
+    const slackInput = document.getElementById('slackInput');
+    if (slackInput) {
+      slackInput.value = result.data.slack.defaultChannel || '';
     }
-  
-    // Handle Slack settings
-    if (result.data.slack?.accessToken) {
-        const slackInput = document.getElementById('slackInput');
-        if (slackInput) {
-            slackInput.value = result.data.slack.defaultChannel || '';
-        }
 
-        // Update Slack UI
-        updateSlackUI(true, result.data.slack.teamName);
-        updateSlackInputState(true, result.data.slack.teamName, result.data.slack.defaultChannel || '');
-    } else {
-        updateSlackUI(false);
-        updateSlackInputState(false);
+    // Get team name from the first active team if available
+    const teams = result.data.teams || {};
+    const activeTeam = Object.values(teams).find(team => team.status === 'ACTIVE');
+    const teamName = activeTeam?.name || result.data.slack.teamName;
+
+    // Update Slack UI with the active team's name
+    updateSlackUI(true, teamName);
+    updateSlackInputState(true, teamName, result.data.slack.defaultChannel || '');
+  } else {
+    updateSlackUI(false);
+    updateSlackInputState(false);
+  }
+  
+  // Load notification time if available
+  if (result.data && result.data.summaryNotificationTime) {
+    summaryNotificationTime = result.data.summaryNotificationTime;
+    const notificationTimeInput = document.getElementById("notificationTimeInput");
+    if (notificationTimeInput) {
+      notificationTimeInput.value = summaryNotificationTime;
     }
+  }
   
-      // Load notification time if available
-      if (result.data && result.data.summaryNotificationTime) {
-        summaryNotificationTime = result.data.summaryNotificationTime;
-        const notificationTimeInput = document.getElementById("notificationTimeInput");
-        if (notificationTimeInput) {
-          notificationTimeInput.value = summaryNotificationTime;
-        }
-      }
+  // Send the notification time to the main process
+  const { ipcRenderer } = require('electron');
+  ipcRenderer.send("updateSummaryNotificationTime", summaryNotificationTime);
   
-      // Send the notification time to the main process
-      const { ipcRenderer } = require('electron');
-      ipcRenderer.send("updateSummaryNotificationTime", summaryNotificationTime);
-  
-      // Update notification UI based on permission
-      await updateNotificationUI();
+  // Update notification UI based on permission
+  await updateNotificationUI();
 }
 
 /**

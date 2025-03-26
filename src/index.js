@@ -95,11 +95,16 @@ async function loadUserSettingsCallback() {
   // Update app state with settings
   const hasEmails = result.data?.emailRecipients?.length > 0;
   const hasSlack = result.data?.slack?.defaultChannel;
-  const hasActiveTeam = result.data?.team?.status === 'ACTIVE';
+  
+  // Check if user has any active teams
+  const teams = result.data?.teams || {};
+  const hasActiveTeam = Object.values(teams).some(team => team.status === 'ACTIVE');
+  const activeTeam = Object.values(teams).find(team => team.status === 'ACTIVE');
+  
   const hasActiveSubscription = result.data?.subscription?.status === 'trialing' || result.data?.subscription?.status === 'active';
 
   // Update all relevant state
-  updateSubscriptionState(result.data?.subscription?.status, result.data?.team?.status);
+  updateSubscriptionState(result.data?.subscription?.status, hasActiveTeam);
   updateEmailSettings(result.data?.emailRecipients || []);
   updateSlackSettings(result.data?.slack?.defaultChannel);
 
@@ -107,7 +112,7 @@ async function loadUserSettingsCallback() {
   subscriptionUpdateUI({
     active: hasActiveSubscription || hasActiveTeam,
     source: hasActiveTeam ? 'team' : 'individual',
-    teamName: result.data?.team?.name,
+    teamName: activeTeam?.name,
     trialActive: result.data?.subscription?.status === 'trialing',
     trialEndsAt: result.data?.subscription?.trialEndsAt,
     trialDaysRemaining: result.data?.subscription?.trialDaysRemaining,
