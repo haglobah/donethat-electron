@@ -1,5 +1,7 @@
 const { ipcRenderer } = require("electron");
 
+let navigateToView;
+
 // Listen for update events from main process
 ipcRenderer.on('update-downloaded', () => {
   // Use navigateToView to show the update view

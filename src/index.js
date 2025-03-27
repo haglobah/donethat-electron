@@ -52,9 +52,13 @@ const updateView = document.getElementById("updateView");
 
 // Update the navigateToView function
 function navigateToView(viewName) {
-  console.log('Navigating to view:', viewName);
-
   const currentView = getCurrentView();
+
+  // If the current view is update, don't let people navigate
+  // View will change on app restart 
+  if(currentView === 'update') {
+    return;
+  }
   
   // Only navigate to a core view if the current view is a core view
   // Eg prevent navigating to settings when signup not complete
@@ -77,12 +81,6 @@ function navigateToView(viewName) {
       viewName = 'dashboard';
     }
   }
-
-  console.log('Result:', viewName);
-  console.log('Screen capture permission:', hasScreenCapturePermission());
-  console.log('Emails:', hasEmails());
-  console.log('Slack:', hasSlack());
-  console.log('Authenticated:', isAuthenticated());
 
   // Show the requested view
   let viewToShow;
