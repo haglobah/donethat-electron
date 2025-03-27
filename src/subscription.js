@@ -70,8 +70,16 @@ function subscriptionUpdateUI(data) {
       
       // For team subscription
       if (data.source === 'team') {
-        // Find the first active team to display
-        statusText = `Part of ${data.teamName || 'a team'} subscription`;
+        // Check if the team is active
+        if (data.status === 'ACTIVE') {
+          statusText = `Part of ${data.teamName || 'a team'} subscription`;
+        } else {
+          // If team is not active, show subscription view
+          createCheckoutSession().catch(error => {
+            console.error('Error initializing subscription:', error);
+          });
+          return;
+        }
       }
       // For individual subscription
       else {

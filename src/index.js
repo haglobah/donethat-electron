@@ -108,11 +108,12 @@ async function loadUserSettingsCallback() {
   updateEmailSettings(result.data?.emailRecipients || []);
   updateSlackSettings(result.data?.slack?.defaultChannel);
 
-  // Always update subscription UI with current data
+  // Update subscription UI with current data
   subscriptionUpdateUI({
     active: hasActiveSubscription || hasActiveTeam,
     source: hasActiveTeam ? 'team' : 'individual',
     teamName: activeTeam?.name,
+    status: activeTeam?.status,
     trialActive: result.data?.subscription?.status === 'trialing',
     trialEndsAt: result.data?.subscription?.trialEndsAt,
     trialDaysRemaining: result.data?.subscription?.trialDaysRemaining,
