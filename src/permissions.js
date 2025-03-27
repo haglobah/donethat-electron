@@ -19,18 +19,10 @@ ipcRenderer.on('screenCapturePermission', (event, data) => {
     updateScreenCapturePermission(hasPermission);
   
     // Update UI based on permission status
-    if (isAuthenticated()) {
-      if (hasPermission) {
-        navigateToView('dashboard');
-      } else {
-        navigateToView('permission');
-  
-        // If on Linux, update installation instructions based on session type
-        if (process.platform === 'linux' && isWaylandSession !== null) {
-          updateLinuxInstructions(isWaylandSession);
-        }
-      }
+    if (!hasPermission && process.platform === 'linux' && isWaylandSession !== null) {
+          updateLinuxInstructions(isWaylandSession);     
     }
+    navigateToView('signup-next');
   });
 
 

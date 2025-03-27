@@ -2,6 +2,8 @@ const {
   browserLocalPersistence,
   setPersistence,
 } = require("firebase/auth");
+const { ipcRenderer } = require('electron');
+
 const { auth } = require('./firebase.js');
 const { initializeSlack} = require('./slack');
 const { subscriptionInitialize, subscriptionUpdateUI } = require('./subscription.js');
@@ -15,8 +17,15 @@ const {
   hasValidAccess,
   updateSubscriptionState,
   updateEmailSettings,
-  updateSlackSettings
+  updateSlackSettings,
+  updateCurrentView,
+  getCurrentView,
+  hasEmails,
+  hasSlack,
+  isAuthenticated
 } = require('./app-state.js');
+
+const coreViews = ['settings', 'dashbaord'];
 
 // Set persistence to browser local storage
 setPersistence(auth, browserLocalPersistence)
@@ -44,10 +53,36 @@ const updateView = document.getElementById("updateView");
 // Update the navigateToView function
 function navigateToView(viewName) {
   console.log('Navigating to view:', viewName);
+
+  const currentView = getCurrentView();
   
-  // Hide all views first
-  const allViews = document.querySelectorAll('.view-container');
-  allViews.forEach(view => view.classList.add('hidden'));
+  // Only navigate to a core view if the current view is a core view
+  // Eg prevent navigating to settings when signup not complete
+  if (coreViews.includes(viewName) && !coreViews.includes(currentView)) {
+    viewName = currentView;
+  }
+
+  // Handle 'signup-next' parameter
+  if (viewName === 'signup-next') {
+    // If not authenticated, always go to signin
+    if (!isAuthenticated()) {
+      viewName = 'signin';
+    } else if (!hasScreenCapturePermission()) {
+      viewName = 'permission';
+    } else if (!hasEmails() && !hasSlack()) {
+      viewName = 'settings';
+    } else if (!hasValidAccess()) {
+      viewName = 'subscription';
+    } else {
+      viewName = 'dashboard';
+    }
+  }
+
+  console.log('Result:', viewName);
+  console.log('Screen capture permission:', hasScreenCapturePermission());
+  console.log('Emails:', hasEmails());
+  console.log('Slack:', hasSlack());
+  console.log('Authenticated:', isAuthenticated());
 
   // Show the requested view
   let viewToShow;
@@ -81,8 +116,15 @@ function navigateToView(viewName) {
       viewToShow = dashboardView;
   }
 
-  if (viewToShow) {
+  // Check there is an actual change in view
+  if (viewToShow && viewToShow != currentView) {
+    // Hide all views first
+    const allViews = document.querySelectorAll('.view-container');
+    allViews.forEach(view => view.classList.add('hidden'));
+    // Show the requested view
     viewToShow.classList.remove('hidden');
+    // Update the current view state
+    updateCurrentView(viewName);
   } else {
     console.error('View not found:', viewName);
   }
@@ -91,10 +133,6 @@ function navigateToView(viewName) {
 async function loadUserSettingsCallback() {
   const result = await loadUserSettings();
   if (!result) return; // Exit if no result (user not logged in)
-
-  // Update app state with settings
-  const hasEmails = result.data?.emailRecipients?.length > 0;
-  const hasSlack = result.data?.slack?.defaultChannel;
   
   // Check if user has any active teams
   const teams = result.data?.teams || {};
@@ -121,18 +159,8 @@ async function loadUserSettingsCallback() {
     currentPeriodEnd: result.data?.subscription?.currentPeriodEnd
   });
 
-  // Navigate based on state
-  if (!hasEmails && !hasSlack) {
-    navigateToView('settings');
-  } else if (!hasValidAccess()) {
-    console.log('No valid subscription, showing subscription page');
-    navigateToView('subscription');
-    subscriptionUpdateUI({ shouldPromptForSubscription: true });
-  } else if (!hasScreenCapturePermission()) {
-    navigateToView('permission');
-  } else {
-    navigateToView('dashboard');
-  }
+  // Navigate to signup-next which will handle all navigation logic
+  navigateToView('signup-next');
 }
 
 // Update the document ready handler
@@ -173,7 +201,6 @@ function hideBlockingSpinner() {
 }
 
 // Add IPC listener for navigation
-const { ipcRenderer } = require('electron');
 ipcRenderer.on('navigate', (event, viewName) => {
   navigateToView(viewName);
 });

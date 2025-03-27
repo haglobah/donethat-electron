@@ -18,6 +18,9 @@ const state = {
   emailRecipients: [],
   slackChannel: null,
   summaryNotificationTime: "17:00", // Default time (5:00 PM)
+
+  // Navigation state
+  currentView: null
 };
 
 // Getters
@@ -57,6 +60,10 @@ function getSummaryNotificationTime() {
   return state.summaryNotificationTime;
 }
 
+function getCurrentView() {
+  return state.currentView;
+}
+
 // Setters
 function updateAuthState(isAuthenticated, userIdToken) {
   state.isAuthenticated = isAuthenticated;
@@ -89,6 +96,10 @@ function updateNotificationTime(time) {
   state.summaryNotificationTime = time;
 }
 
+function updateCurrentView(view) {
+  state.currentView = view;
+}
+
 // Reset state (useful for logout)
 function resetState() {
   Object.keys(state).forEach(key => {
@@ -114,11 +125,13 @@ module.exports = {
   getEmailRecipients,
   getSlackChannel,
   getSummaryNotificationTime,
+  getCurrentView,
   updateAuthState,
   updateScreenCapturePermission,
   updateSubscriptionState,
   updateEmailSettings,
   updateSlackSettings,
   updateNotificationTime,
+  updateCurrentView,
   resetState
 }; 

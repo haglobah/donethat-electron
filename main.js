@@ -260,7 +260,7 @@ app.whenReady().then(async () => {
   // Set up periodic update checks (every hour)
   setInterval(() => {
     autoUpdater.checkForUpdates()
-      .then(() => console.log('Periodic update check completed'))
+      .then()
       .catch(err => console.error('Error in periodic update check:', err))
   }, 60 * 60 * 1000) // 1 hours in milliseconds
 
@@ -318,7 +318,6 @@ ipcMain.on('login', (event, token) => {
 })
 
 ipcMain.on('logout', (event) => {
-  console.log("User logged out");
   idToken = null
 
   // Stop recording if we were recording
@@ -390,7 +389,7 @@ function buildContextMenu() {
   // Add "Open App" as the first option for all platforms
   template.push({
     label: 'Open App',
-    click: () => navigateToView('dashboard')
+    click: () => navigateToView('signup-next')
   }, { type: 'separator' })
 
   // Add pause options
@@ -784,7 +783,7 @@ function showSummaryNotification() {
     if (mainWindow) {
       showWindowBelowTray();
     } else {
-      navigateToView('dashboard');
+      navigateToView('signup-next');
     }
   });
 
