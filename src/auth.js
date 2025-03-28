@@ -3,7 +3,8 @@ const {
     createUserWithEmailAndPassword,
     sendPasswordResetEmail,
     onAuthStateChanged,
-    signOut
+    signOut,
+    sendEmailVerification
   } = require("firebase/auth");
 
 const { ipcRenderer } = require("electron");
@@ -49,6 +50,22 @@ ipcRenderer.on('logout', async () => {
 // Update the auth state listener
 onAuthStateChanged(auth, async (user) => {
   if (user) {
+    // Check if email is verified
+    if (!user.emailVerified) {
+      // Ask if user wants to receive another verification email
+      if (confirm("Your email is not verified. Would you like us to send another verification email?")) {
+        try {
+          await sendEmailVerification(user);
+          alert("Verification email sent. Please check your inbox.");
+        } catch (error) {
+          console.error("Error sending verification email:", error);
+          alert("Error sending verification email: " + error.message);
+        }
+      }
+      await signOut(auth);
+      return;
+    }
+    
     // User is signed in
     const token = await user.getIdToken();
     updateAuthState(true, token);
@@ -104,6 +121,17 @@ signInForm.addEventListener("submit", (e) => {
   
     createUserWithEmailAndPassword(auth, email, password)
       .then((userCredential) => {
+        // Send email verification
+        sendEmailVerification(userCredential.user)
+          .then(() => {
+            alert("Verification email sent. Please check your inbox to verify your account before signing in.");
+            signOut(auth); // Sign out until email is verified
+            navigateToView('signin');
+          })
+          .catch((error) => {
+            console.error("Error sending verification email:", error);
+            alert("Error sending verification email: " + error.message);
+          });
       })
       .catch((error) => {
         alert("Sign up error: " + error.message);
