@@ -134,8 +134,10 @@ async function loadUserSettingsCallback() {
   
   // Check if user has any active teams
   const teams = result.data?.teams || {};
-  const hasActiveTeam = Object.values(teams).some(team => team.status === 'ACTIVE');
-  const activeTeam = Object.values(teams).find(team => team.status === 'ACTIVE');
+  
+  // Use lowercase team status
+  const hasActiveTeam = Object.values(teams).some(team => 
+    team.status === 'active');
   
   const hasActiveSubscription = result.data?.subscription?.status === 'trialing' || result.data?.subscription?.status === 'active';
 
@@ -148,8 +150,7 @@ async function loadUserSettingsCallback() {
   subscriptionUpdateUI({
     active: hasActiveSubscription || hasActiveTeam,
     source: hasActiveTeam ? 'team' : 'individual',
-    teamName: activeTeam?.name,
-    status: activeTeam?.status,
+    status: 'active', // Use lowercase status
     trialActive: result.data?.subscription?.status === 'trialing',
     trialEndsAt: result.data?.subscription?.trialEndsAt,
     trialDaysRemaining: result.data?.subscription?.trialDaysRemaining,

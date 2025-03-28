@@ -47,6 +47,25 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
       }
     });
   }
+  
+  // Display app version
+  const versionElement = document.querySelector('#appVersion');
+  if (versionElement) {
+    try {
+      // Get the version from Electron app
+      const { app } = require('@electron/remote');
+      versionElement.textContent = `v${app.getVersion()}`;
+    } catch (error) {
+      // Fallback: try to get version directly from package.json
+      try {
+        const packageInfo = require('../package.json');
+        versionElement.textContent = `v${packageInfo.version}`;
+      } catch (packageError) {
+        // If both methods fail, show nothing
+        versionElement.textContent = '';
+      }
+    }
+  }
 }
 
 // Set up Firestore listener for user settings

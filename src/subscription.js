@@ -174,9 +174,10 @@ async function subscriptionUpdateUI(data) {
       }
       // Only if individual subscription is not active, check for team subscription
       else if (data.source === 'team') {
-        // Check if the team is active
-        if (data.status === 'ACTIVE') {
-          statusText = `Part of ${data.teamName || 'a team'}`;
+        
+        if (data.status === 'active') {
+          // Simple team subscription text
+          statusText = 'Part of a team';
           
           // Disable only the subscription action button if team subscription exists
           if (subscriptionActionBtn) {

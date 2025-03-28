@@ -77,7 +77,8 @@ function updateScreenCapturePermission(hasPermission) {
 function updateSubscriptionState(subscriptionStatus, teamStatus) {
   state.subscriptionStatus = subscriptionStatus;
   state.teamStatus = teamStatus;
-  state.hasValidAccess = teamStatus === 'ACTIVE' || 
+  
+  state.hasValidAccess = teamStatus === 'active' || 
                         subscriptionStatus === 'trialing' || 
                         subscriptionStatus === 'active';
 }
