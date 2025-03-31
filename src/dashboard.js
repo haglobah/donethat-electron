@@ -132,7 +132,7 @@ if (submitSummaryBtn) {
   
   // Update the event listener for the generate summary button
   if (generateSummaryBtn) {
-    generateSummaryBtn.addEventListener('click', () => {
+    generateSummaryBtn.addEventListener('click', async () => {
       summaryLoadingSpinner.classList.remove('hidden');
   
       // Call the actual Cloud Function instead of using dummy data
@@ -144,6 +144,35 @@ if (submitSummaryBtn) {
           const bulletPoints = result.data.bulletPoints || [];
           currentSummaryId = result.data.summaryId;
           const period = result.data.period;
+  
+          // Check if this is the same period as the last summary
+          const oneHourInMs = 60 * 60 * 1000; // 1 hour in milliseconds
+          const newStart = new Date(period.start).getTime();
+          const newEnd = new Date(period.end).getTime();
+  
+          // Check if the new period overlaps with the last period within 1 hour
+          if (Math.abs(newStart - period.start) < oneHourInMs && 
+              Math.abs(newEnd - period.end) < oneHourInMs) {
+            const existingWarning = document.querySelector('summary-warning-message');
+            console.log(existingWarning);
+            if (existingWarning==null) {
+              // Show warning message
+              const warningMessage = document.createElement('p');
+              warningMessage.className = 'summary-warning-message text-gray-500 text-xs text-center mt-2';
+              warningMessage.textContent = 'This summary is older than one hour. Please submit or discard it to generate a summary for what happened since this one.';
+              
+              // Insert warning after the button container
+              const buttonContainer = document.querySelector('.flex.justify-between.mt-4');
+              if (buttonContainer) {
+                buttonContainer.parentNode.insertBefore(warningMessage, buttonContainer.nextSibling);
+              }
+              
+              // Remove warning after 10 seconds
+              setTimeout(() => {
+                warningMessage.remove();
+              }, 10000);
+            }
+          }
   
           if (bulletPoints.length === 0) {
             summaryContainer.innerHTML = '<p class="empty-state-text">No activities found for today.</p>';
