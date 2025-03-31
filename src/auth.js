@@ -43,8 +43,53 @@ function initializeAuth(onSettingsUpdate, showBlockingSpinner, hideBlockingSpinn
 
 // Listen for logout event from tray menu at module level
 ipcRenderer.on('logout', async () => {
-    await performFullLogout();
-  });
+  await performFullLogout();
+});
+
+// Listen for token refresh requests from main process
+ipcRenderer.on('refresh-token', async () => {
+  await refreshAuthToken();
+});
+
+// Listen for auth errors from main process
+ipcRenderer.on('auth-error', () => {
+  handleAuthError();
+});
+
+// Function to refresh Firebase auth token
+async function refreshAuthToken() {
+  try {
+    if (auth.currentUser) {
+      // Force refresh the token
+      const newToken = await auth.currentUser.getIdToken(true);
+      
+      // Update app state with new token
+      updateAuthState(true, newToken);
+      
+      // Send new token back to main process
+      ipcRenderer.send('token-refreshed', newToken);
+      return newToken;
+    } else {
+      ipcRenderer.send('token-refreshed', null);
+      return null;
+    }
+  } catch (error) {
+    ipcRenderer.send('token-refreshed', null);
+    return null;
+  }
+}
+
+// Function to handle auth errors
+function handleAuthError() {
+  // For severe auth errors, do a proper logout
+  if (auth.currentUser) {
+    // Perform full logout rather than just updating state
+    performFullLogout();
+  } else {
+    // If no current user, just navigate to sign in
+    navigateToView('signin');
+  }
+}
 
 // Update the auth state listener
 onAuthStateChanged(auth, async (user) => {
@@ -82,16 +127,11 @@ onAuthStateChanged(auth, async (user) => {
       email_verified: user.emailVerified
     });
 
-    // Set up a token refresh listener
+    // Set up a token refresh interval using the same refreshAuthToken function
     const refreshInterval = setInterval(async () => {
       if (auth.currentUser) {
-        try {
-          const freshToken = await auth.currentUser.getIdToken(true);
-          updateAuthState(true, freshToken);
-          ipcRenderer.send("login", freshToken);
-        } catch (error) {
-          console.error("Token refresh failed:", error);
-        }
+        // Use the same refreshAuthToken function for consistency
+        await refreshAuthToken();
       } else {
         clearInterval(refreshInterval);
       }

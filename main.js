@@ -902,6 +902,40 @@ async function captureAndSendScreenshot() {
       mainWindow.webContents.send('auth-error');
     }
   }
+  
+  // Handle token expired error
+  if (result && result.tokenExpired) {
+    log.info('Token expired detected, requesting refresh');
+    
+    // Request token refresh from renderer process
+    if (mainWindow) {
+      mainWindow.webContents.send('refresh-token');
+      
+      // Set up one-time listener for the refreshed token
+      ipcMain.once('token-refreshed', async (event, newToken) => {
+        if (newToken) {
+          log.info('Token refreshed, retrying screenshot capture');
+          idToken = newToken;
+          
+          // Retry the screenshot capture with new token
+          const retryResult = await moduleCapture(idToken, FIREBASE_CAPTURE_URL);
+          if (retryResult && retryResult.authError) {
+            // If still failing after refresh, signal auth error
+            idToken = null;
+            mainWindow.webContents.send('auth-error');
+          } else if (!retryResult) {
+            // Log other errors from retry
+            console.error('Screenshot retry failed after token refresh');
+          }
+        } else {
+          log.error('Failed to refresh token');
+          // Handle as auth error since refresh failed
+          idToken = null;
+          mainWindow.webContents.send('auth-error');
+        }
+      });
+    }
+  }
 
   return result;
 }

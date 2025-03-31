@@ -195,6 +195,22 @@ async function captureAndSendScreenshot(idToken, FIREBASE_CAPTURE_URL) {
     })
     
     if (!response.ok) {
+      // If response is not ok, check the detailed error
+      const errorData = await response.json().catch(() => ({}))
+      
+      // Check specifically for token expiration
+      if (response.status === 401 && errorData.error === 'token_expired') {
+        log.warn('Token expired, requesting refresh')
+        return { tokenExpired: true }
+      }
+      
+      // Log other error details
+      log.error('Screenshot upload error:', errorData)
+      // For unauthorized errors (not token expired), return auth error
+      if (response.status === 401 || response.status === 403) {
+        return { authError: true }
+      }
+      
       throw new Error(`Server error: ${response.status}`)
     }
     
@@ -202,10 +218,8 @@ async function captureAndSendScreenshot(idToken, FIREBASE_CAPTURE_URL) {
   } catch (error) {
     log.error('Screenshot error:', error.message, error.stack)
     
-    // If it's an auth error, return special value to indicate token issue
-    if (error.message.includes('401') || error.message.includes('403')) {
-      return { authError: true }
-    }
+    // Any other error
+    console.error('Screenshot upload failed:', error)
     return false
   }
 }
