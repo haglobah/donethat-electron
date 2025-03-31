@@ -1,6 +1,6 @@
 {
   "name": "donethat",
-  "version": "0.1.6",
+  "version": "0.0.6",
   "description": "Make your work visible, on your terms.",
   "main": "main.js",
   "scripts": {
@@ -9,14 +9,14 @@
     "build:prepare": "npm run build:css && npm run build:webpack",
     "dev": "npm run build:prepare && electron .",
     "build": "npm run build:prepare && electron-builder",
-    "build:linux": "npm run build:prepare && electron-builder --linux",
-    "build:win": "npm run build:prepare && electron-builder --win",
-    "build:all:arm64": "npm run build:prepare && electron-builder -mwl",
-    "build:all:x64": "npm run build:prepare && electron-builder -mwl --x64",
-    "build:all": "npm run build:all:arm64 && npm run build:all:x64",
-    "release:arm64": "dotenv -- npm run build:prepare && dotenv -- electron-builder -mwl --publish always",
-    "release:x64": "dotenv -- npm run build:prepare && dotenv -- electron-builder -mwl --x64 --publish always",
-    "release": "npm run release:arm64 && npm run release:x64"
+    "build:mac:x64": "npm run build:prepare && electron-builder --mac --x64",
+    "build:mac:arm64": "npm run build:prepare && electron-builder --mac --arm64",
+    "build:win:x64": "npm run build:prepare && electron-builder --win --x64",
+    "build:win:arm64": "npm run build:prepare && electron-builder --win --arm64",
+    "build:linux:x64": "npm run build:prepare && electron-builder --linux --x64",
+    "build:linux:arm64": "npm run build:prepare && electron-builder --linux --arm64",
+    "build:all": "npm run build:mac:x64 && npm run build:mac:arm64 && npm run build:win:x64 && npm run build:win:arm64 && npm run build:linux:x64 && npm run build:linux:arm64",
+    "release": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --x64 --publish always && electron-builder --mac --arm64 --publish always && electron-builder --win --x64 --publish always && electron-builder --win --arm64 --publish always && electron-builder --linux --x64 --publish always && electron-builder --linux --arm64 --publish always"
   },
   "repository": {
     "type": "git",
@@ -34,6 +34,7 @@
   "devDependencies": {
     "@babel/preset-env": "^7.26.9",
     "babel-loader": "^10.0.0",
+    "cross-env": "^7.0.3",
     "dotenv": "^16.4.7",
     "dotenv-cli": "^8.0.0",
     "electron": "^34.2.0",
@@ -58,7 +59,7 @@
     "productName": "DoneThat",
     "afterSign": "scripts/notarize.js",
     "icon": "resources/icon_inverse.png",
-    "artifactName": "${productName} ${arch}.${ext}",
+    "artifactName": "${productName}-${arch}.${ext}",
     "files": [
       "main.js",
       "firebase-config.js",
@@ -87,18 +88,13 @@
       "gatekeeperAssess": false,
       "entitlements": "resources/entitlements.mac.plist",
       "entitlementsInherit": "resources/entitlements.mac.plist",
-      "target": [
-        "dmg",
-        "zip"
-      ],
+      "target": ["dmg", "zip"],
       "extendInfo": {
         "LSUIElement": 1
       }
     },
     "win": {
-      "target": [
-        "nsis"
-      ],
+      "target": "nsis",
       "icon": "resources/icon.png",
       "requestedExecutionLevel": "asInvoker",
       "extraResources": [
@@ -109,15 +105,17 @@
       ]
     },
     "nsis": {
-      "runAfterFinish": true
+      "runAfterFinish": true,
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "multiLanguageInstaller": true
     },
     "linux": {
-      "target": [
-        "AppImage"
-      ],
+      "target": "AppImage",
       "category": "Utility",
       "desktop": {
-        "StartupWMClass": "done-that",
+        "StartupWMClass": "donethat",
         "NoDisplay": true,
         "Type": "Application"
       }

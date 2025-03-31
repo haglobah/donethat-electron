@@ -200,7 +200,6 @@ async function captureAndSendScreenshot(idToken, FIREBASE_CAPTURE_URL) {
       
       // Check specifically for token expiration
       if (response.status === 401 && errorData.error === 'token_expired') {
-        log.warn('Token expired, requesting refresh')
         return { tokenExpired: true }
       }
       

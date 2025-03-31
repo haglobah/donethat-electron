@@ -1,4 +1,4 @@
-const { getAnalytics, logEvent, setUserProperties } = require("firebase/analytics");
+const { getAnalytics, logEvent, setUserProperties, setAnalyticsCollectionEnabled } = require("firebase/analytics");
 const { ipcRenderer } = require('electron');
 const { firebaseApp } = require('./firebase.js');
 
@@ -9,6 +9,17 @@ let appVersion = null;
 async function initializeAnalytics() {
   if (!analytics) {
     analytics = getAnalytics(firebaseApp);
+
+    // TODO fix
+    window.localStorage.setItem('debug_mode', 'true');
+
+
+    setAnalyticsCollectionEnabled(analytics, true);
+
+    console.log('Analytics initialized');
+    logEvent(analytics, 'test_event', {
+      test_time: new Date().toISOString()
+    });
     
     // Get app version from main process
     try {

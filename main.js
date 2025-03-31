@@ -21,7 +21,32 @@ if (!gotTheLock) {
 
 // Set up second-instance handler
 app.on('second-instance', (event, commandLine, workingDirectory) => {
-  // Someone tried to run a second instance, show the context menu
+  // Event won't work for mac
+  const { dialog } = require('electron');
+  
+  // Define platform-specific messages
+  let message = 'The app is already running in the tray. Please open it there.';
+  
+  if (process.platform === 'win32') {
+    message += ' (bottom right of the screen next to the time)';
+  } else {
+    message += ' (You might have to enable your system tray)';
+  }
+  
+  // Show platform-specific alert
+  dialog.showMessageBoxSync({
+    type: 'info',
+    title: 'DoneThat',
+    message: 'DoneThat is Already Running',
+    detail: message,
+    buttons: ['OK']
+  });
+});
+
+// Handle macOS reactivation (when user clicks dock icon or reopens app)
+app.on('activate', () => {
+  log.info('App activated');
+  // Show the tray menu on reactivation if tray exists
   if (tray) {
     const contextMenu = buildContextMenu();
     tray.popUpContextMenu(contextMenu);
@@ -29,7 +54,7 @@ app.on('second-instance', (event, commandLine, workingDirectory) => {
 });
 
 // To show dev tools next to main window
-let DEBUG = false
+let DEBUG = true
 // Add your Firebase function URL here
 const FIREBASE_CAPTURE_URL = 'https://europe-west1-donethat.cloudfunctions.net/captureScreenshot'
 
@@ -985,9 +1010,7 @@ async function captureAndSendScreenshot() {
   }
   
   // Handle token expired error
-  if (result && result.tokenExpired) {
-    log.info('Token expired detected, requesting refresh');
-    
+  if (result && result.tokenExpired) {    
     // Request token refresh from renderer process
     if (mainWindow) {
       mainWindow.webContents.send('refresh-token');
@@ -995,7 +1018,6 @@ async function captureAndSendScreenshot() {
       // Set up one-time listener for the refreshed token
       ipcMain.once('token-refreshed', async (event, newToken) => {
         if (newToken) {
-          log.info('Token refreshed, retrying screenshot capture');
           idToken = newToken;
           
           // Retry the screenshot capture with new token
