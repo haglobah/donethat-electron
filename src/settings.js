@@ -54,6 +54,20 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   setupVersionClickHandler();
 }
 
+// Helper function to update screenshots container visibility
+function updateScreenshotsContainerVisibility(show) {
+  const screenshotsContainer = document.getElementById('screenshotsContainer');
+  if (screenshotsContainer) {
+    if (show) {
+      screenshotsContainer.classList.remove('hidden');
+      screenshotsContainer.classList.add('flex');
+    } else {
+      screenshotsContainer.classList.add('hidden');
+      screenshotsContainer.classList.remove('flex');
+    }
+  }
+}
+
 // Set up version click handler
 function setupVersionClickHandler() {
   const versionElement = document.querySelector('#appVersion');
@@ -67,11 +81,11 @@ function setupVersionClickHandler() {
       // Add click handler for version number
       versionElement.style.cursor = 'pointer'; // Make it look clickable
       versionElement.addEventListener('click', (e) => {
-        const screenshotsContainer = document.getElementById('screenshotsContainer');
         const screenshotsCheckbox = document.getElementById('screenshotsCheckbox');
-        if (screenshotsContainer && screenshotsCheckbox && !screenshotsCheckbox.checked) {
+        if (screenshotsCheckbox && !screenshotsCheckbox.checked) {
           // Only toggle if checkbox is unchecked
-          screenshotsContainer.classList.toggle('hidden');
+          const isHidden = document.getElementById('screenshotsContainer').classList.contains('hidden');
+          updateScreenshotsContainerVisibility(isHidden);
         }
       });
     } catch (error) {
@@ -213,13 +227,10 @@ async function updateSettingsUI(result) {
   // Handle screenshots setting
   if (result.data && typeof result.data.storeScreenshots === 'boolean') {
     const screenshotsCheckbox = document.getElementById('screenshotsCheckbox');
-    const screenshotsContainer = document.getElementById('screenshotsContainer');
     if (screenshotsCheckbox) {
       screenshotsCheckbox.checked = result.data.storeScreenshots;
       // Show container if screenshots are enabled
-      if (screenshotsContainer) {
-        screenshotsContainer.classList.toggle('hidden', !result.data.storeScreenshots);
-      }
+      updateScreenshotsContainerVisibility(result.data.storeScreenshots);
     }
   }
 
@@ -410,10 +421,7 @@ if (screenshotsCheckbox) {
     try {
       await saveUserSettings('screenshots', e.target.checked);
       // Show/hide container based on checkbox state
-      const screenshotsContainer = document.getElementById('screenshotsContainer');
-      if (screenshotsContainer) {
-        screenshotsContainer.classList.toggle('hidden', !e.target.checked);
-      }
+      updateScreenshotsContainerVisibility(e.target.checked);
     } catch (error) {
       // If error occurs, revert to previous value
       e.target.checked = isStoreScreenshots();
