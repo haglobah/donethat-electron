@@ -39,13 +39,38 @@ async function checkScreenCapturePermission() {
   }
 }
 
+// Helper function to handle gnome-screenshot with animations disabled
+async function takeGnomeScreenshot(outputPath) {
+  // Save original animation and sound settings to restore later
+  const getOriginalAnimationSetting = execSync('gsettings get org.gnome.desktop.interface enable-animations').toString().trim()
+  const getOriginalSoundSetting = execSync('gsettings get org.gnome.desktop.sound event-sounds').toString().trim()
+
+  try {
+    // Disable animations and sounds
+    execSync('gsettings set org.gnome.desktop.interface enable-animations false')
+    execSync('gsettings set org.gnome.desktop.sound event-sounds false')
+    
+    // Take screenshot with gnome-screenshot
+    execSync(`gnome-screenshot -f "${outputPath}"`, { timeout: 5000 })
+  } finally {
+    // Restore original settings (even if screenshot fails)
+    execSync(`gsettings set org.gnome.desktop.interface enable-animations ${getOriginalAnimationSetting}`)
+    execSync(`gsettings set org.gnome.desktop.sound event-sounds ${getOriginalSoundSetting}`)
+  }
+}
+
 // Linux-specific permission checking and tool detection
 async function checkLinuxScreenCapturePermission() {
   _checkSessionType() // Use the renamed internal function
   // Session type already checked by parent function
   try {
     log.info(`Checking Linux screenshot permission (Wayland: ${isWaylandSession})`)
-    
+
+    const fs = require('fs')
+    const os = require('os')
+    const tempDir = os.tmpdir()
+    const testPath = path.join(tempDir, `test-screenshot-${Date.now()}.png`)
+        
     // Check available tools based on the environment
     if (isWaylandSession) {
       // For Wayland, check if gnome-screenshot is available
@@ -53,14 +78,8 @@ async function checkLinuxScreenCapturePermission() {
         execSync('which gnome-screenshot', { stdio: 'ignore' })
         log.info('gnome-screenshot is available for Wayland')
         
-        // Test if it actually works
-        const fs = require('fs')
-        const os = require('os')
-        const tempDir = os.tmpdir()
-        const testPath = path.join(tempDir, `test-screenshot-${Date.now()}.png`)
-        
-        // Try to take a test screenshot 
-        execSync(`gnome-screenshot -f "${testPath}"`, { timeout: 3000 })
+        // Try to take a test screenshot with animations disabled
+        await takeGnomeScreenshot(testPath)
         
         if (fs.existsSync(testPath)) {
           fs.unlinkSync(testPath)
@@ -81,12 +100,6 @@ async function checkLinuxScreenCapturePermission() {
         execSync('which scrot', { stdio: 'ignore' })
         log.info('scrot is available for X11')
         
-        // Test if it works
-        const fs = require('fs')
-        const os = require('os')
-        const tempDir = os.tmpdir()
-        const testPath = path.join(tempDir, `test-screenshot-${Date.now()}.png`)
-        
         execSync(`scrot -z "${testPath}"`, { timeout: 3000 })
         
         if (fs.existsSync(testPath)) {
@@ -103,13 +116,7 @@ async function checkLinuxScreenCapturePermission() {
       try {
         execSync('which maim', { stdio: 'ignore' })
         log.info('maim is available for X11')
-        
-        // Test if it works
-        const fs = require('fs')
-        const os = require('os')
-        const tempDir = os.tmpdir()
-        const testPath = path.join(tempDir, `test-screenshot-${Date.now()}.png`)
-        
+
         execSync(`maim "${testPath}"`, { timeout: 3000 })
         
         if (fs.existsSync(testPath)) {
@@ -221,22 +228,7 @@ async function captureScreenshotsLinux() {
     if (linuxScreenshotTool === 'gnome-screenshot') {
       // For Wayland with gnome-screenshot
       try {
-        // Save original animation and sound settings to restore later
-        const getOriginalAnimationSetting = execSync('gsettings get org.gnome.desktop.interface enable-animations').toString().trim()
-        const getOriginalSoundSetting = execSync('gsettings get org.gnome.desktop.sound event-sounds').toString().trim()
-        
-        try {
-          // Disable animations and sounds
-          execSync('gsettings set org.gnome.desktop.interface enable-animations false')
-          execSync('gsettings set org.gnome.desktop.sound event-sounds false')
-          
-          // Take screenshot with gnome-screenshot
-          execSync(`gnome-screenshot -f "${screenshotPath}"`, { timeout: 5000 })
-        } finally {
-          // Restore original settings (even if screenshot fails)
-          execSync(`gsettings set org.gnome.desktop.interface enable-animations ${getOriginalAnimationSetting}`)
-          execSync(`gsettings set org.gnome.desktop.sound event-sounds ${getOriginalSoundSetting}`)
-        }
+        await takeGnomeScreenshot(screenshotPath)
       } catch (e) {
         log.error(`gnome-screenshot failed: ${e.message}`)
         return []
