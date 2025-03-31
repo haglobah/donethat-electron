@@ -181,26 +181,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Function to create an overlay that blocks interactions
 function showBlockingSpinner() {
-  const loadingSpinner = document.getElementById("loadingSpinner");
-  if (loadingSpinner) {
-    // Add classes to ensure it blocks interaction
-    loadingSpinner.classList.remove("hidden");
-    loadingSpinner.classList.add("fixed", "inset-0", "z-50", "bg-white", "bg-opacity-70");
-
-    // Prevent scrolling while spinner is active
-    document.body.style.overflow = "hidden";
+  const globalSpinner = document.getElementById("globalSpinner");
+  if (globalSpinner) {
+    // Show the spinner without affecting layout
+    globalSpinner.classList.remove("hidden");
+    // Ensure content remains visible
+    globalSpinner.style.opacity = "1";
+    globalSpinner.style.transition = "opacity 0.2s ease-in-out";
   }
 }
 
 // Function to hide the blocking spinner
 function hideBlockingSpinner() {
-  const loadingSpinner = document.getElementById("loadingSpinner");
-  if (loadingSpinner) {
-    loadingSpinner.classList.add("hidden");
-    loadingSpinner.classList.remove("fixed", "inset-0", "z-50", "bg-white", "bg-opacity-70");
-
-    // Re-enable scrolling
-    document.body.style.overflow = "";
+  const globalSpinner = document.getElementById("globalSpinner");
+  if (globalSpinner) {
+    // Hide the spinner
+    globalSpinner.classList.add("hidden");
+    // Reset opacity
+    globalSpinner.style.opacity = "0";
   }
 }
 

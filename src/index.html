@@ -28,6 +28,14 @@
     <link href="../build/output.css" rel="stylesheet" />
   </head>
   <body class="bg-white h-full w-full overflow-y-auto">
+    <!-- Global Spinner -->
+    <div id="globalSpinner" class="fixed inset-0 z-50 hidden">
+      <div class="absolute inset-0 bg-white/30 backdrop-blur-[2px]"></div>
+      <div class="absolute inset-0 flex items-center justify-center">
+        <div class="spinner"></div>
+      </div>
+    </div>
+
     <!-- Sign In View -->
     <div id="signInView" class="view-container">
       <div class="form-container">
@@ -278,11 +286,6 @@
               <div id="emailTagsContainer" class="email-list-container max-h-40 overflow-y-auto">
                 <!-- Email tags will be added here dynamically -->
               </div>
-              
-              <!-- Loading spinner overlay for emails -->
-              <div id="loadingSpinner" class="spinner-overlay hidden">
-                <div class="spinner"></div>
-              </div>
             </div>
             
             <!-- Email input with internal plus button - fixed positioning -->
@@ -345,10 +348,6 @@
                 class="form-input cursor-pointer"
                 value="17:00"
               />
-              <!-- Loading spinner overlay for time setting -->
-              <div id="timeLoadingSpinner" class="spinner-overlay hidden">
-                <div class="spinner"></div>
-              </div>
             </div>
             <!-- Button to enable notifications (hidden by default) -->
             <div id="notificationPermissionContainer" class="hidden">
@@ -440,10 +439,6 @@
           <button id="subscribeButton" type="submit" class="btn-primary w-full">
             Start Free Trial
           </button>
-        </div>
-        
-        <div id="subscriptionLoading" class="spinner-overlay hidden">
-          <div class="spinner"></div>
         </div>
         
         <div class="mt-4 text-center text-xs text-gray-500">

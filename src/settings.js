@@ -145,15 +145,8 @@ async function loadUserSettings() {
 async function saveUserSettings(type, value) {
   if (!getAuth().currentUser) return;
 
-  // Use the appropriate spinner based on the setting type
-  if (type === 'emails' || type === 'name') {
-    showSpinner();
-  } else if (type === 'notificationTime') {
-    const timeLoadingSpinner = document.getElementById("timeLoadingSpinner");
-    if (timeLoadingSpinner) {
-      timeLoadingSpinner.classList.remove("hidden");
-    }
-  }
+  // Show spinner for all settings updates
+  showSpinner();
 
   try {
     let settingsData = {};
@@ -196,15 +189,8 @@ async function saveUserSettings(type, value) {
     alert(`Error saving settings: ${error.message}`);
     throw error;
   } finally {
-    // Hide the appropriate spinner
-    if (type === 'emails' || type === 'name') {
-      hideSpinner();
-    } else if (type === 'notificationTime') {
-      const timeLoadingSpinner = document.getElementById("timeLoadingSpinner");
-      if (timeLoadingSpinner) {
-        timeLoadingSpinner.classList.add("hidden");
-      }
-    }
+    // Hide spinner
+    hideSpinner();
   }
 }
 
@@ -407,10 +393,13 @@ if (nameInput) {
   nameInput.addEventListener('change', async (e) => {
     const newName = e.target.value.trim();
     try {
+      showSpinner();
       await saveUserSettings('name', newName || null);
     } catch (error) {
       // If error occurs, revert to previous value
       e.target.value = getName();
+    } finally {
+      hideSpinner();
     }
   });
 }
@@ -419,12 +408,15 @@ const screenshotsCheckbox = document.getElementById('screenshotsCheckbox');
 if (screenshotsCheckbox) {
   screenshotsCheckbox.addEventListener('change', async (e) => {
     try {
+      showSpinner();
       await saveUserSettings('screenshots', e.target.checked);
       // Show/hide container based on checkbox state
       updateScreenshotsContainerVisibility(e.target.checked);
     } catch (error) {
       // If error occurs, revert to previous value
       e.target.checked = isStoreScreenshots();
+    } finally {
+      hideSpinner();
     }
   });
 }
@@ -449,6 +441,7 @@ if (notificationTimeInput) {
   notificationTimeInput.addEventListener('blur', async (e) => {
     const newTime = e.target.value;
     try {
+      showSpinner();
       await saveUserSettings('notificationTime', newTime);
       // Update local state
       summaryNotificationTime = newTime;
@@ -457,6 +450,8 @@ if (notificationTimeInput) {
     } catch (error) {
       // If error occurs, revert to previous value
       e.target.value = summaryNotificationTime;
+    } finally {
+      hideSpinner();
     }
   });
 
@@ -465,6 +460,7 @@ if (notificationTimeInput) {
       e.preventDefault();
       const newTime = e.target.value;
       try {
+        showSpinner();
         await saveUserSettings('notificationTime', newTime);
         // Update local state
         summaryNotificationTime = newTime;
@@ -473,6 +469,8 @@ if (notificationTimeInput) {
       } catch (error) {
         // If error occurs, revert to previous value
         e.target.value = summaryNotificationTime;
+      } finally {
+        hideSpinner();
       }
     }
   });
