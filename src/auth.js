@@ -12,7 +12,7 @@ const { ipcRenderer } = require("electron");
 // Import auth instance from firebase.js and analytics functions directly
 const { auth } = require('./firebase.js');
 const { logAnalyticsEvent, setAnalyticsUserProperties } = require('./analytics.js');
-const { updateAuthState, resetState } = require('./app-state.js');
+const { updateAuthState } = require('./app-state.js');
 const { resetSummaryState } = require('./dashboard.js');
 
 const signInForm = document.getElementById("signInForm");
@@ -259,15 +259,15 @@ signInForm.addEventListener("submit", (e) => {
   
       // Reset the UI state
       resetSummaryState();
-      resetState();
   
-      // Update UI
-      ipcRenderer.send("logout");
-  
-      // Navigate back to sign-in view
+      // Notify main process
+      ipcRenderer.send('logout');
+
       navigateToView('signin');
+  
     } catch (error) {
       console.error('Error during logout:', error);
+      alert(`Error signing out: ${error.message}`);
     }
   }
 
