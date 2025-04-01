@@ -1,6 +1,6 @@
 {
   "name": "donethat",
-  "version": "0.0.6",
+  "version": "1.0.0",
   "description": "Make your work visible, on your terms.",
   "main": "main.js",
   "scripts": {
@@ -15,8 +15,7 @@
     "build:win:arm64": "npm run build:prepare && electron-builder --win --arm64",
     "build:linux:x64": "npm run build:prepare && electron-builder --linux --x64",
     "build:linux:arm64": "npm run build:prepare && electron-builder --linux --arm64",
-    "build:all": "npm run build:mac:x64 && npm run build:mac:arm64 && npm run build:win:x64 && npm run build:win:arm64 && npm run build:linux:x64 && npm run build:linux:arm64",
-    "release": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --x64 --publish always && electron-builder --mac --arm64 --publish always && electron-builder --win --x64 --publish always && electron-builder --win --arm64 --publish always && electron-builder --linux --x64 --publish always && electron-builder --linux --arm64 --publish always"
+    "release": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --x64 --arm64 --publish always && electron-builder --win --x64 --arm64 --publish always && electron-builder --linux --x64 --arm64 --publish always"
   },
   "repository": {
     "type": "git",

@@ -54,7 +54,7 @@ app.on('activate', () => {
 });
 
 // To show dev tools next to main window
-let DEBUG = true
+let DEBUG = false
 // Add your Firebase function URL here
 const FIREBASE_CAPTURE_URL = 'https://europe-west1-donethat.cloudfunctions.net/captureScreenshot'
 
