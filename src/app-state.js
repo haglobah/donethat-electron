@@ -7,6 +7,9 @@ const state = {
   // Permission state
   hasScreenCapturePermission: false,
 
+  // Loading state
+  isInitialDataLoaded: false,
+
   // Subscription state
   hasValidAccess: false,
   subscriptionStatus: null,
@@ -83,6 +86,10 @@ function getCurrentView() {
   return state.currentView;
 }
 
+function isInitialDataLoaded() {
+  return state.isInitialDataLoaded;
+}
+
 // Setters
 function updateAuthState(isAuthenticated, userIdToken) {
   state.isAuthenticated = isAuthenticated;
@@ -128,6 +135,10 @@ function updateCurrentView(view) {
   state.currentView = view;
 }
 
+function setInitialDataLoaded(loaded) {
+  state.isInitialDataLoaded = loaded;
+}
+
 // Reset state (useful for logout)
 function resetState() {
   Object.keys(state).forEach(key => {
@@ -158,6 +169,7 @@ module.exports = {
   getSlackChannel,
   getSummaryNotificationTime,
   getCurrentView,
+  isInitialDataLoaded,
   updateAuthState,
   updateScreenCapturePermission,
   updateSubscriptionState,
@@ -167,5 +179,6 @@ module.exports = {
   updateSlackSettings,
   updateNotificationTime,
   updateCurrentView,
+  setInitialDataLoaded,
   resetState
 }; 

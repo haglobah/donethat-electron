@@ -27,7 +27,9 @@ const {
   hasSlack,
   hasSlackToken,
   hasName,
-  isAuthenticated
+  isAuthenticated,
+  isInitialDataLoaded,
+  setInitialDataLoaded
 } = require('./app-state.js');
 
 const coreViews = ['settings', 'dashboard'];
@@ -73,6 +75,11 @@ function navigateToView(viewName) {
 
   // Handle 'signup-next' parameter
   if (viewName === 'signup-next') {
+    // During initial load, don't navigate until data is fully loaded
+    if (viewName === 'signup-next' && !isInitialDataLoaded()) {
+      return; // Skip navigation during initial load
+    }
+    
     // If not authenticated, always go to signin
     if (!isAuthenticated()) {
       viewName = 'signin';
@@ -170,6 +177,9 @@ async function loadUserSettingsCallback() {
     currentPeriodEnd: result.data?.subscription?.currentPeriodEnd
   });
 
+  // Mark initial data as loaded after first successful load
+  setInitialDataLoaded(true);
+  
   // Now that everything is loaded, navigate
   navigateToView('signup-next');
 }
