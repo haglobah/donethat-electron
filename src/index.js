@@ -155,8 +155,8 @@ async function loadUserSettingsCallback() {
   updateName(result.data?.name || '');
   updateStoreScreenshots(result.data?.storeScreenshots || false);
 
-  // Update subscription UI with current data
-  subscriptionUpdateUI({
+  // Update subscription UI with current data and wait for it to complete
+  await subscriptionUpdateUI({
     active: hasActiveSubscription || hasActiveTeam,
     source: hasActiveTeam ? 'team' : 'individual',
     status: hasActiveTeam ? 'active' : result.data?.subscription?.status || null,
@@ -166,7 +166,7 @@ async function loadUserSettingsCallback() {
     currentPeriodEnd: result.data?.subscription?.currentPeriodEnd
   });
 
-  // Navigate to signup-next which will handle all navigation logic
+  // Now that everything is loaded, navigate
   navigateToView('signup-next');
 }
 
