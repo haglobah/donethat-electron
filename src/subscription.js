@@ -157,55 +157,73 @@ async function loadAndDisplayPlan() {
  * Update UI elements based on subscription status
  */
 async function subscriptionUpdateUI(data) {
-  // If we need to show the subscription view or there's no active subscription
-  if (data.shouldPromptForSubscription || !data.active) {
-    await loadAndDisplayPlan();
-  } else {
-    // Update subscription text
-    const subscriptionInput = document.getElementById('subscriptionInput');
-    if (subscriptionInput) {
-      let statusText = '';
-      const subscriptionActionBtn = document.getElementById('subscriptionActionBtn');
+  // Update subscription text first regardless of status
+  const subscriptionInput = document.getElementById('subscriptionInput');
+  const subscriptionActionBtn = document.getElementById('subscriptionActionBtn');
+  
+  if (subscriptionInput) {
+    let statusText = '';
+    
+    // First check if individual subscription is active or trialing
+    if ((data.trialActive || data.paidActive) && data.source !== 'team') {
+      if (data.trialActive && data.trialEndsAt) {
+        const trialEndDate = new Date(data.trialEndsAt);
+        const formattedDate = trialEndDate.toLocaleDateString();
+        statusText = `Trial ends on ${formattedDate}`;
+      } else if (data.paidActive && data.currentPeriodEnd) {
+        const renewalDate = new Date(data.currentPeriodEnd);
+        const formattedDate = renewalDate.toLocaleDateString();
+        statusText = `Renews on ${formattedDate}`;
+      }
       
-      // First check if individual subscription is active or trialing
-      if ((data.trialActive || data.paidActive) && data.source !== 'team') {
-        if (data.trialActive && data.trialEndsAt) {
-          const trialEndDate = new Date(data.trialEndsAt);
-          const formattedDate = trialEndDate.toLocaleDateString();
-          statusText = `Trial ends on ${formattedDate}`;
-        } else if (data.paidActive && data.currentPeriodEnd) {
-          const renewalDate = new Date(data.currentPeriodEnd);
-          const formattedDate = renewalDate.toLocaleDateString();
-          statusText = `Renews on ${formattedDate}`;
-        }
-
-        // Ensure subscription action button is enabled for individual subscriptions
+      // Show subscription button for individual subscribers
+      if (subscriptionActionBtn) {
+        subscriptionActionBtn.style.display = 'flex';
+        subscriptionActionBtn.disabled = false;
+        subscriptionActionBtn.classList.remove('disabled-btn');
+      }
+    }
+    // Only if individual subscription is not active, check for team subscription
+    else if (data.source === 'team') {
+      if (data.status === 'active') {
+        // Simple team subscription text
+        statusText = 'Part of a team';
+        
+        // Hide button for team members
         if (subscriptionActionBtn) {
+          subscriptionActionBtn.style.display = 'none';
+        }
+      } else {
+        // Set text for inactive team status
+        statusText = 'No active subscription';
+        
+        // Show button for inactive team members
+        if (subscriptionActionBtn) {
+          subscriptionActionBtn.style.display = 'flex';
           subscriptionActionBtn.disabled = false;
           subscriptionActionBtn.classList.remove('disabled-btn');
         }
       }
-      // Only if individual subscription is not active, check for team subscription
-      else if (data.source === 'team') {
-        
-        if (data.status === 'active') {
-          // Simple team subscription text
-          statusText = 'Part of a team';
-          
-          // Disable only the subscription action button if team subscription exists
-          if (subscriptionActionBtn) {
-            subscriptionActionBtn.disabled = true;
-            subscriptionActionBtn.classList.add('disabled-btn');
-          }
-        } else {
-          // If team is not active, show subscription view
-          await loadAndDisplayPlan();
-          return;
-        }
+    } 
+    // No active subscription or team membership
+    else {
+      statusText = 'No active subscription';
+      
+      // Show button for users with no subscription
+      if (subscriptionActionBtn) {
+        subscriptionActionBtn.style.display = 'flex';
+        subscriptionActionBtn.disabled = false;
+        subscriptionActionBtn.classList.remove('disabled-btn');
       }
-
-      subscriptionInput.value = statusText;
     }
+
+    // Update the subscription input value
+    subscriptionInput.value = statusText;
+  }
+
+  // If we need to show the subscription view or there's no active subscription
+  if (data.shouldPromptForSubscription || !data.active) {
+    await loadAndDisplayPlan();
   }
 }
 

@@ -244,7 +244,7 @@ async function updateSettingsUI(result) {
 
     // Get team name from the first active team if available
     const teams = result.data.teams || {};
-    const activeTeam = Object.values(teams).find(team => team.status === 'ACTIVE');
+    const activeTeam = Object.values(teams).find(team => team.status === 'active');
     const teamName = activeTeam?.name || result.data.slack.teamName;
 
     // Update Slack UI with the active team's name

@@ -29,9 +29,6 @@ const {
   isAuthenticated
 } = require('./app-state.js');
 
-// Remove test analytics global exposure as we no longer have that function
-// window.testAnalytics = testAnalytics;
-
 const coreViews = ['settings', 'dashboard'];
 
 // Set persistence to browser local storage
@@ -80,11 +77,11 @@ function navigateToView(viewName) {
       viewName = 'signin';
     } else if (!hasScreenCapturePermission()) {
       viewName = 'permission';
-    } else if (!hasName() || (!hasEmails() && !hasSlack())) {
-      viewName = 'settings';
     } else if (!hasValidAccess()) {
       viewName = 'subscription';
-    } else {
+    } else if (!hasName() || (!hasEmails() && !hasSlack())) {
+      viewName = 'settings';
+    }  else {
       viewName = 'dashboard';
     }
   }
@@ -162,9 +159,8 @@ async function loadUserSettingsCallback() {
   subscriptionUpdateUI({
     active: hasActiveSubscription || hasActiveTeam,
     source: hasActiveTeam ? 'team' : 'individual',
-    status: 'active', // Use lowercase status
+    status: hasActiveTeam ? 'active' : result.data?.subscription?.status || null,
     trialActive: result.data?.subscription?.status === 'trialing',
-    trialEndsAt: result.data?.subscription?.trialEndsAt,
     trialDaysRemaining: result.data?.subscription?.trialDaysRemaining,
     paidActive: result.data?.subscription?.status === 'active',
     currentPeriodEnd: result.data?.subscription?.currentPeriodEnd

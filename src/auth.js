@@ -96,17 +96,15 @@ onAuthStateChanged(auth, async (user) => {
   if (user) {
     // Check if email is verified
     if (!user.emailVerified) {
-      // Ask if user wants to receive another verification email
-      if (confirm("Your email is not verified. Would you like us to send another verification email?")) {
-        try {
+      try{
           await sendEmailVerification(user);
           logAnalyticsEvent('verification_email_sent');
           alert("Verification email sent. Please check your inbox.");
         } catch (error) {
           alert("Error sending verification email: " + error.message);
         }
-      }
       await signOut(auth);
+      navigateToView('signin');
       return;
     }
     
@@ -179,22 +177,7 @@ signInForm.addEventListener("submit", (e) => {
   
     createUserWithEmailAndPassword(auth, email, password)
       .then((userCredential) => {
-        // Send email verification
-        sendEmailVerification(userCredential.user)
-          .then(() => {
-            logAnalyticsEvent('verification_email_sent');
-            alert("Verification email sent. Please check your inbox to verify your account before signing in.");
-            signOut(auth); // Sign out until email is verified
-            navigateToView('signin');
-          })
-          .catch((error) => {
-            logAnalyticsEvent('verification_email_error', {
-              error_code: error.code,
-              error_message: error.message
-            });
-            console.error("Error sending verification email:", error);
-            alert("Error sending verification email: " + error.message);
-          });
+        // Email verification is handled in the onAuthStateChanged listener
       })
       .catch((error) => {
         logAnalyticsEvent('sign_up_error', {
