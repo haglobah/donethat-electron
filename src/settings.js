@@ -27,6 +27,7 @@ let settingsUnsubscribe = null;
 // Settings state
 let recipientEmails = [];
 let summaryNotificationTime = "17:00"; // Default time (5:00 PM)
+let userTimezone = "UTC"; // Default timezone
 
 // Initialize settings management
 function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingSpinner, viewNavigator) {
@@ -187,7 +188,7 @@ async function saveUserSettings(type, value) {
     });
     console.error("Error saving settings:", error);
     alert(`Error saving settings: ${error.message}`);
-    throw error;
+    throw error; // Re-throw error so UI can react (e.g., revert input)
   } finally {
     // Hide spinner
     hideSpinner();
@@ -267,6 +268,30 @@ async function updateSettingsUI(result) {
   // Send the notification time to the main process
   ipcRenderer.send("updateSummaryNotificationTime", summaryNotificationTime);
   
+  // Handle timezone setting
+  let fetchedTimezone = "UTC"; // Default to UTC if not set
+  if (result.data && result.data.timezone) {
+    fetchedTimezone = result.data.timezone;
+  }
+  userTimezone = fetchedTimezone; // Store the fetched timezone
+
+  // Check system timezone and update if different
+  try {
+    const systemTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (systemTimezone && systemTimezone !== userTimezone) {
+      console.log(`System timezone (${systemTimezone}) differs from saved timezone (${userTimezone}). Logging mismatch.`);
+      // Log an analytics event for the mismatch instead of updating
+      // Don't update here because also updating in webApp and potential
+      // to cause a loop
+      logAnalyticsEvent('timezone_mismatch', {
+        system_timezone: systemTimezone,
+        user_timezone: userTimezone
+      });
+    }
+  } catch (error) {
+    console.error("Could not determine system timezone:", error);
+  }
+
   // Update notification UI based on permission
   await updateNotificationUI();
 }
