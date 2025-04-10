@@ -80,7 +80,8 @@ function navigateToView(viewName) {
       viewName = 'permission';
     } else if (!hasValidAccess()) {
       viewName = 'subscription';
-    } else if (!hasName() || (!hasEmails() && !hasSlack()) || (hasSlackToken() && !hasSlack())) {
+      // For the case that integration just set up but no channel yet
+    } else if (hasSlackToken() && !hasSlack()) {
       viewName = 'settings';
     } else {
       viewName = 'dashboard';

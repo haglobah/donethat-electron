@@ -55,10 +55,6 @@ function hasSlackToken() {
   return state.hasSlackToken;
 }
 
-function hasName() {
-  return  state.name.length > 0;
-}
-
 function getName() {
   return state.name;
 }
@@ -151,7 +147,6 @@ module.exports = {
   hasEmails,
   hasSlack,
   hasSlackToken,
-  hasName,
   getName,
   isStoreScreenshots,
   getEmailRecipients,

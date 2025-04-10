@@ -108,7 +108,7 @@ function updateSlackInputState(connected, teamName = '', channel = '') {
   
   if (connected) {
     slackInput.value = channel;
-    slackInput.placeholder = `Set channel for ${teamName}`;
+    slackInput.placeholder = `Type channel name for ${teamName}`;
     slackInput.disabled = false;
     slackChannel = channel;
     
