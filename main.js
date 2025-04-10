@@ -603,23 +603,28 @@ function pauseRecording(duration) {
   }
 }
 
-// Function to pause until tomorrow (next day at midnight)
+// Function to pause until tomorrow (next day at 4am)
 function pauseUntilTomorrow() {
   const now = new Date()
   const tomorrow = new Date(now)
   tomorrow.setDate(tomorrow.getDate() + 1)
-  tomorrow.setHours(0, 0, 0, 0)
+  // Change from midnight (0) to 4am (4)
+  tomorrow.setHours(4, 0, 0, 0)
 
   const duration = tomorrow - now
   pauseRecording(duration)
 }
 
-// Add new function to pause until next week
+// Add new function to pause until next week (next Monday at 4am)
 function pauseUntilNextWeek() {
   const now = new Date()
   const nextMonday = new Date(now)
-  nextMonday.setDate(now.getDate() + (8 - now.getDay()) % 7)
-  nextMonday.setHours(0, 0, 0, 0)
+  // Calculate days until next Monday (1 is Monday, 0 is Sunday)
+  const daysUntilMonday = (8 - now.getDay()) % 7;
+  // If today is Monday (day 1), add 7 days to get next Monday. Otherwise, add daysUntilMonday.
+  nextMonday.setDate(now.getDate() + (daysUntilMonday === 0 ? 7 : daysUntilMonday));
+  // Change from midnight (0) to 4am (4)
+  nextMonday.setHours(4, 0, 0, 0)
 
   const duration = nextMonday - now
   pauseRecording(duration)
