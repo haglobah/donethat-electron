@@ -6,7 +6,7 @@ const firebaseConfig = require("../firebase-config.js");
 const { updateSlackUI, updateSlackInputState } = require('./slack');
 const { logAnalyticsEvent } = require('./analytics.js');
 const { ipcRenderer } = require("electron");
-const { updateLastSummary } = require('./app-state.js');
+const { updateLastSummary, updateIsPublic } = require('./app-state.js');
 
 // Initialize Firebase
 const firebaseApp = initializeApp(firebaseConfig);
@@ -235,11 +235,9 @@ async function updateSettingsUI(result) {
   // Handle public summaries setting
   const publicSummariesCheckbox = document.getElementById('publicSummariesCheckbox');
   if (publicSummariesCheckbox) {
-    if (result.data && typeof result.data.public === 'boolean') {
-      publicSummariesCheckbox.checked = result.data.public;
-    } else {
-      publicSummariesCheckbox.checked = false; // Default to false if not set
-    }
+    const isPublicValue = result.data?.public || false; // Default to false if not set
+    publicSummariesCheckbox.checked = isPublicValue;
+    updateIsPublic(isPublicValue);
   }
 
   // Handle email recipients

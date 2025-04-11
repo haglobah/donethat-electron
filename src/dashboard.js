@@ -2,7 +2,7 @@ const { getFunctions, httpsCallable } = require("firebase/functions");
 const { firebaseApp } = require('./firebase.js');
 const { ipcRenderer } = require('electron');
 const { logAnalyticsEvent } = require('./analytics.js');
-const { hasSlack, hasSlackToken, getName, getLastSummary, getIsPaused, getDateCreated } = require('./app-state.js');
+const { hasSlack, hasSlackToken, getName, getLastSummary, getIsPaused, getDateCreated, getIsPublic, hasEmails } = require('./app-state.js');
 
 const functions = getFunctions(firebaseApp, "europe-west1");
 
@@ -14,7 +14,6 @@ const discardSummaryFunction = httpsCallable(functions, "summaryDiscard");
 // Reference to permission-related elements 
 const generateSummaryBtn = document.getElementById("generateSummaryBtn");
 const submitSummaryBtn = document.getElementById("submitSummaryBtn");
-const discardSummaryBtn = document.getElementById("discardSummaryBtn");
 const summaryContainer = document.getElementById("summaryContainer");
 let currentSummaryId = null;
 const summaryLoadingSpinner = document.getElementById("summaryLoadingSpinner");
@@ -24,11 +23,78 @@ let navigateToView;
 let showSpinner;
 let hideSpinner;
 
+// Helper function to format date for headline
+function formatHeadlineDate(timestamp) {
+  if (!timestamp) return "DoneThat";
+
+  const date = new Date(timestamp);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
+  let dateString = "";
+  const timeString = date.toLocaleTimeString('en-US', {
+    hour: 'numeric', 
+    minute: '2-digit',
+    hour12: false
+  });
+
+  // Create a copy for date comparison without time
+  const dateOnly = new Date(date);
+  dateOnly.setHours(0, 0, 0, 0);
+
+  // Reset time parts for today/yesterday comparison
+  today.setHours(0, 0, 0, 0);
+  yesterday.setHours(0, 0, 0, 0);
+
+  if (dateOnly.getTime() === today.getTime()) {
+    dateString = "Today";
+  } else if (dateOnly.getTime() === yesterday.getTime()) {
+    dateString = "Yesterday";
+  } else {
+    const day = date.getDate();
+    const month = date.toLocaleString('en-US', { month: 'short' });
+    let suffix = 'th';
+    if (day % 10 === 1 && day !== 11) suffix = 'st';
+    if (day % 10 === 2 && day !== 12) suffix = 'nd';
+    if (day % 10 === 3 && day !== 13) suffix = 'rd';
+    dateString = `${month} ${day}${suffix}`;
+  }
+
+  return `${dateString} ${timeString}`; // Combine date and time
+}
+
 // Update visibility when summary is generated
 function showSummaryGeneratedState() {
     document.getElementById('generateSummaryBtn').classList.add('hidden');
     document.getElementById('submitSummaryBtn').classList.remove('hidden');
-    document.getElementById('discardSummaryBtn').classList.remove('hidden');
+
+    // Show visibility note
+    const visibilityNoteContainer = document.getElementById('visibilityNoteContainer');
+    if (visibilityNoteContainer) {
+      const isPublic = getIsPublic();
+      const hasRecipients = hasEmails();
+      const hasSlackChannel = hasSlackToken(); // Check if Slack token exists (channel implies token)
+
+      let visibilityText = isPublic ? 'Posting to your public feed' : 'Posting to your private feed';
+      const destinations = [];
+      if (hasRecipients) destinations.push('email recipients');
+      if (hasSlackChannel) destinations.push('Slack channel');
+
+      if (destinations.length > 0) {
+        visibilityText += ` and ${destinations.join(' and ')}`;
+      }
+      visibilityText += `. <a href="#" class="settings-link">Change visibility in settings</a>.`;
+
+      visibilityNoteContainer.innerHTML = `<p class="text-xs text-gray-500 text-center">${visibilityText}</p>`;
+      visibilityNoteContainer.classList.remove('hidden');
+
+      // Re-add event listener for the link
+      visibilityNoteContainer.querySelector('.settings-link')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        navigateToView('settings');
+      });
+    }
   }
   
   // Function to handle all dashboard note operations
@@ -91,7 +157,11 @@ function showSummaryGeneratedState() {
     // Only add default note if no other notes exist
     if (notes.length === 0) {
       notes.push({
-        text: 'Generate a summary to see your activities.',
+        text: "Summaries always show work you did since the last summary.",
+        isWarning: false
+      });
+      notes.push({
+        text: "Generate one once you're done for the day.",
         isWarning: false
       });
     }
@@ -128,10 +198,16 @@ function showSummaryGeneratedState() {
   function resetSummaryState() {
     document.getElementById('generateSummaryBtn').classList.remove('hidden');
     document.getElementById('submitSummaryBtn').classList.add('hidden');
-    document.getElementById('discardSummaryBtn').classList.add('hidden');
+    document.getElementById('visibilityNoteContainer')?.classList.add('hidden'); // Hide note on reset
     currentSummaryId = null;
     selectedBulletPoints = [];
   
+    // Reset headline
+    const headlineElement = document.getElementById('dashboardHeadline');
+    if (headlineElement) {
+      headlineElement.textContent = "DoneThat";
+    }
+    
     dashboardNote();
   }
 
@@ -186,10 +262,6 @@ if (submitSummaryBtn) {
         submitSummaryBtn.disabled = true;
         submitSummaryBtn.classList.add('disabled-btn');
         submitSummaryBtn.classList.remove('hidden');
-        
-        // Also disable the discard button
-        discardSummaryBtn.disabled = true;
-        discardSummaryBtn.classList.add('disabled-btn');
   
         // Notify main process that summary was submitted
         ipcRenderer.send("summarySubmitted");
@@ -207,13 +279,9 @@ if (submitSummaryBtn) {
         // Reset summary state AFTER button update and ensure button stays visible
         setTimeout(() => {
           resetSummaryState();
-          submitSummaryBtn.textContent = "Submit";
+          submitSummaryBtn.textContent = "Done That";
           submitSummaryBtn.classList.remove('disabled-btn');
           submitSummaryBtn.disabled = false;
-          
-          // Also reset the discard button state
-          discardSummaryBtn.disabled = false;
-          discardSummaryBtn.classList.remove('disabled-btn');
         }, 10000);
       }).catch((error) => {
         summaryLoadingSpinner.classList.add('hidden');
@@ -244,7 +312,13 @@ if (submitSummaryBtn) {
           const bulletPoints = result.data.bulletPoints || [];
           currentSummaryId = result.data.summaryId;
           const period = result.data.period;
-  
+
+          // Update headline
+          const headlineElement = document.getElementById('dashboardHeadline');
+          if (headlineElement) {
+            headlineElement.textContent = formatHeadlineDate(period?.end);
+          }
+
           if (bulletPoints.length === 0) {
             dashboardNote([{
               text: 'No activities found for today. Check if DoneThat is paused and try again in a few minutes.',
@@ -338,47 +412,6 @@ if (submitSummaryBtn) {
   } else {
     console.error("Generate summary button not found");
   }
-
-// Add event listener for discard button
-if (discardSummaryBtn) {
-  discardSummaryBtn.addEventListener('click', () => {
-    if (!currentSummaryId) {
-      console.error("No summary ID to discard");
-      return;
-    }
-
-    summaryLoadingSpinner.classList.remove('hidden');
-
-
-    discardSummaryFunction({
-      summaryId: currentSummaryId
-    }).then(() => {
-      summaryLoadingSpinner.classList.add('hidden');
-      // Notify main process that summary was submitted
-      ipcRenderer.send("summarySubmitted");
-
-      // Pause recording until tomorrow
-      ipcRenderer.send("pauseUntilTomorrow");
-      resetSummaryState();
-      
-      // Log successful summary discard
-      logAnalyticsEvent('summary_discarded', {
-        status: 'success'
-      });
-    }).catch((error) => {
-      summaryLoadingSpinner.classList.add('hidden');
-      console.error("Error discarding summary:", error);
-      alert(`Error discarding summary: ${error.message}`);
-      
-      // Log error in summary discard
-      logAnalyticsEvent('summary_discarded', {
-        status: 'error',
-        error_code: error.code,
-        error_message: error.message
-      });
-    });
-  });
-}
 
 // Add resume function
 function resumeRecording() {

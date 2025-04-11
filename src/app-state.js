@@ -29,6 +29,7 @@ const state = {
 // Add pause state
 let isPaused = false;
 let userDateCreated = null;
+let isPublic = false;
 
 // Getters
 function getState() {
@@ -92,6 +93,10 @@ function getDateCreated() {
   return userDateCreated;
 }
 
+function getIsPublic() {
+  return isPublic;
+}
+
 // Setters
 function updateAuthState(isAuthenticated, userIdToken) {
   state.isAuthenticated = isAuthenticated;
@@ -145,6 +150,10 @@ function updateDateCreated(newDateCreated) {
   userDateCreated = newDateCreated;
 }
 
+function updateIsPublic(publicStatus) {
+  isPublic = !!publicStatus; // Ensure boolean
+}
+
 // Reset state (useful for logout)
 function resetState() {
   Object.keys(state).forEach(key => {
@@ -176,6 +185,7 @@ module.exports = {
   getLastSummary,
   getIsPaused,
   getDateCreated,
+  getIsPublic,
   updateAuthState,
   updateScreenCapturePermission,
   updateSubscriptionState,
@@ -187,5 +197,6 @@ module.exports = {
   updateLastSummary,
   updatePauseState,
   updateDateCreated,
+  updateIsPublic,
   resetState
 }; 

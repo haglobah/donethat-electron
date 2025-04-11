@@ -163,11 +163,11 @@
     <!-- Dashboard View -->
     <div id="dashboardView" class="view-container hidden">
       <div class="form-container">
-        <!-- Centered header -->
-        <h1 class="section-header">DoneThat</h1>
-        
-        <!-- Summary container with relative positioning for overlay -->
-        <div class="relative">
+        <div class="w-full">
+          <!-- Headline -->
+          <h2 id="dashboardHeadline" class="text-xl font-bold text-center mb-3">DoneThat</h2>
+
+          <!-- Summary content area -->
           <div id="summaryContainer" class="summary-container">
             <p class="text-gray-500 text-center text-sm">
               Generate a summary to see your activities.
@@ -180,31 +180,18 @@
           </div>
         </div>
         
-        <!-- Primary action button - now below the summary container -->
-        <button
-          id="generateSummaryBtn"
-          class="btn-primary"
-        >
-          Generate Summary
-        </button>
-        
-        <!-- Button container for side-by-side layout -->
-        <div class="flex justify-between mt-4 space-x-4">
-          <!-- Discard button with grey font/border on white -->
-          <button
-            id="discardSummaryBtn"
-            class="btn-secondary flex-1 hidden"
-          >
-            Discard
-          </button>
-          
-          <!-- Save button -->
-          <button
-            id="submitSummaryBtn"
-            class="btn-primary flex-1 hidden"
-          >
-            Submit
-          </button>
+        <!-- Button container -->
+        <div class="flex justify-between items-center space-x-2 mt-4">
+          <!-- Generate button -->
+          <button id="generateSummaryBtn" class="btn-primary">Generate Summary</button>
+
+          <!-- Submit button (initially hidden) -->
+          <button id="submitSummaryBtn" class="btn-primary hidden">Done That</button>
+        </div>
+
+        <!-- NEW: Container for visibility note -->
+        <div id="visibilityNoteContainer" class="mt-2 hidden">
+          <!-- Note text will be inserted here by dashboard.js -->
         </div>
       </div>
     </div>
@@ -259,7 +246,7 @@
     <div id="settingsView" class="view-container hidden">
       <div class="form-container">
         <!-- Change header text -->
-        <h1 class="section-header">Setup</h1>
+        <h1 class="section-header">Settings</h1>
         
         <!-- Settings content -->
         <div class="form-group">
