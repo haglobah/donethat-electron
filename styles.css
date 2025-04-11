@@ -446,6 +446,11 @@
   border-color: var(--color-primary);
 }
 
+/* Add text-primary utility */
+.text-primary {
+  color: var(--color-primary);
+}
+
 /* Dashboard notes */
 .dashboard-note {
   @apply mb-2;
@@ -454,4 +459,9 @@
 .dashboard-note a {
   text-decoration: underline;
   color: inherit;
+}
+
+/* Ensure settings links are always underlined */
+.settings-link {
+  text-decoration: underline;
 }

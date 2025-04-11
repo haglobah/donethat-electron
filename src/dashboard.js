@@ -79,13 +79,13 @@ function showSummaryGeneratedState() {
 
       let visibilityText = isPublic ? 'Posting to your public feed' : 'Posting to your private feed';
       const destinations = [];
-      if (hasRecipients) destinations.push('email recipients');
-      if (hasSlackChannel) destinations.push('Slack channel');
+      if (hasRecipients) destinations.push('email');
+      if (hasSlackChannel) destinations.push('Slack');
 
       if (destinations.length > 0) {
         visibilityText += ` and ${destinations.join(' and ')}`;
       }
-      visibilityText += `. <a href="#" class="settings-link">Change visibility in settings</a>.`;
+      visibilityText += `. <a href="#" class="settings-link">Change here</a>.`;
 
       visibilityNoteContainer.innerHTML = `<p class="text-xs text-gray-500 text-center">${visibilityText}</p>`;
       visibilityNoteContainer.classList.remove('hidden');
@@ -169,7 +169,7 @@ function showSummaryGeneratedState() {
 
     // Render the notes
     const notesHTML = notes.map(note => `
-      <p class="dashboard-note ${note.isWarning ? 'text-orange-400' : 'text-gray-500'} text-center text-sm">
+      <p class="dashboard-note ${note.isWarning ? 'text-primary' : 'text-gray-500'} text-center text-sm">
         ${note.text}
       </p>
     `).join('');
@@ -325,7 +325,7 @@ if (submitSummaryBtn) {
 
           if (bulletPoints.length === 0) {
             dashboardNote([{
-              text: 'No activities found for today. Check if DoneThat is paused and try again in a few minutes.',
+              text: 'No activities found for today. Check if DoneThat is paused and try again in an hour.',
               isWarning: true
             }]);
             logAnalyticsEvent('summary_generated', {

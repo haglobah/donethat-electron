@@ -266,9 +266,19 @@ app.whenReady().then(async () => {
     }
 
     // Load last summary timestamp from store into local variable
-    lastSummaryTimestamp = store.get('lastSummaryTimestamp');
-    if (lastSummaryTimestamp) {
-        log.info('Loaded lastSummaryTimestamp from store:', new Date(lastSummaryTimestamp).toISOString());
+    let loadedTimestamp = store.get('lastSummaryTimestamp');
+
+    // Directly try to use the loaded value, assuming it's milliseconds (number)
+    if (loadedTimestamp !== null && loadedTimestamp !== undefined) {
+      const dateObject = new Date(loadedTimestamp);
+      // Validate the date created from the loaded number
+      if (!isNaN(dateObject.getTime())) {
+        lastSummaryTimestamp = loadedTimestamp; // Store as milliseconds
+      } else {
+        // If the loaded number results in an invalid date, delete the stored value
+        store.delete('lastSummaryTimestamp');
+        lastSummaryTimestamp = null;
+      }
     }
 
     // --> Check for unreviewed work on startup <--
@@ -1148,26 +1158,22 @@ ipcMain.on('pauseStateChanged', (event, isPaused) => {
 function checkAndNotifyForUnreviewedWork() {
   try {
     if (!store) {
-      log.warn('Store not initialized, skipping unreviewed work check.');
-      return;
+      return; // Can't check if store isn't ready
     }
 
-    // Retrieve the stored timestamp
+    // Retrieve the stored timestamp (expecting milliseconds)
     const storedTimestamp = store.get('lastSummaryTimestamp');
-    if (storedTimestamp) {
+
+    if (typeof storedTimestamp === 'number') {
       const hoursSinceLastSummary = (Date.now() - storedTimestamp) / (1000 * 60 * 60);
-      log.info(`Hours since last summary: ${hoursSinceLastSummary.toFixed(2)}`);
 
       if (hoursSinceLastSummary > 12) {
-        log.info('Last summary is older than 12 hours, showing notification.');
         new Notification({
-          title: 'Review Yesterday\'s Work',
-          body: 'You haven\'t reviewed your last summary. Generate one in DoneThat to catch up!',
+          title: "Review Yesterday's Work", // Use double quotes for string with apostrophe
+          body: "You haven't reviewed your last summary. Generate one in DoneThat to catch up!",
           silent: false
         }).show();
       }
-    } else {
-        log.info('No lastSummaryTimestamp found in store, skipping unreviewed work check.');
     }
   } catch (error) {
     log.error('Error checking/notifying for unreviewed work:', error);
@@ -1177,12 +1183,19 @@ function checkAndNotifyForUnreviewedWork() {
 // Add IPC handler for receiving last summary timestamp
 ipcMain.on('updateLastSummaryTimestamp', (event, timestamp) => {
   try {
-    if (store && timestamp) {
-      lastSummaryTimestamp = timestamp; // Update local variable
-      store.set('lastSummaryTimestamp', timestamp);
-      log.info('Received and stored lastSummaryTimestamp:', new Date(timestamp).toISOString());
+    // Attempt to convert directly, assuming Firebase Timestamp object
+    const timestampInMillis = timestamp._seconds * 1000 + Math.floor(timestamp._nanoseconds / 1000000);
+
+    // Attempt to store the converted milliseconds
+    if (store) {
+      lastSummaryTimestamp = timestampInMillis; // Update local variable
+      store.set('lastSummaryTimestamp', timestampInMillis); // Store as milliseconds
+    } else {
+      // Log only if store isn't ready - potentially important
+      log.warn('Store not initialized, cannot save lastSummaryTimestamp.');
     }
   } catch (error) {
-    log.error('Failed to store lastSummaryTimestamp:', error);
+    // Log any errors during conversion or storage
+    log.error('Error processing/storing lastSummaryTimestamp:', error, 'Raw value:', timestamp);
   }
 });
