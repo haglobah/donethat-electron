@@ -266,7 +266,14 @@ async function updateSettingsUI(result) {
 
   // Handle lastSummary from activity data
   if (result.data?.activity?.lastSummary) {
-    updateLastSummary(result.data.activity.lastSummary);
+    const timestamp = result.data.activity.lastSummary; // Store timestamp
+    updateLastSummary(timestamp); // Update renderer state
+    // Send the timestamp to the main process
+    ipcRenderer.send('updateLastSummaryTimestamp', timestamp);
+  } else {
+     // Handle case where lastSummary might be explicitly null or undefined
+     // Optionally send null to main process to clear stored value if needed
+     ipcRenderer.send('updateLastSummaryTimestamp', null);
   }
   
   // Handle Slack settings

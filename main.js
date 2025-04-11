@@ -82,6 +82,7 @@ let hasScreenCapturePermission = false
 let isWaylandSession = null;
 let userWorkdays = [1, 2, 3, 4, 5]; // Default Mon-Fri (0=Sun, 6=Sat)
 let dailyWorkdayCheckTimeout = null;
+let lastSummaryTimestamp = null; // Added to store timestamp locally
 
 if (DEBUG) {
   // Add custom notification transport for warnings and errors
@@ -263,6 +264,15 @@ app.whenReady().then(async () => {
             store.set('userWorkdays', userWorkdays);
         }
     }
+
+    // Load last summary timestamp from store into local variable
+    lastSummaryTimestamp = store.get('lastSummaryTimestamp');
+    if (lastSummaryTimestamp) {
+        log.info('Loaded lastSummaryTimestamp from store:', new Date(lastSummaryTimestamp).toISOString());
+    }
+
+    // --> Check for unreviewed work on startup <--
+    checkAndNotifyForUnreviewedWork();
 
   } catch (error) {
     log.error('Failed to initialize electron-store or load settings:', error);
@@ -702,6 +712,9 @@ function resumeRecording() {
         eventParams: { status: 'resumed' } 
       });
   }
+  
+  // --> Check for unreviewed work when manually resuming <--
+  checkAndNotifyForUnreviewedWork();
 }
 
 // Function to save pause state using electron-store
@@ -975,6 +988,9 @@ ipcMain.on('summarySubmitted', (event) => {
 
 // Checks all conditions (login, permission, pause, workday) and starts interval if appropriate
 function startRecording() {
+  // --> Check for unreviewed work before starting/resuming recording <--
+  checkAndNotifyForUnreviewedWork();
+
   // Start the interval (caller ensures it doesn't already exist)
   screenshotInterval = setInterval(captureAndSendScreenshot, SCREENSHOT_INTERVAL_MINUTES * 60000);
   
@@ -1123,5 +1139,50 @@ ipcMain.on('requestScreenCapturePermission', async () => {
 ipcMain.on('pauseStateChanged', (event, isPaused) => {
   if (mainWindow) {
     mainWindow.webContents.send('pauseStateChanged', isPaused);
+  }
+});
+
+//// NOTIFICATIONS ////
+
+// Function to check for unreviewed work and notify
+function checkAndNotifyForUnreviewedWork() {
+  try {
+    if (!store) {
+      log.warn('Store not initialized, skipping unreviewed work check.');
+      return;
+    }
+
+    // Retrieve the stored timestamp
+    const storedTimestamp = store.get('lastSummaryTimestamp');
+    if (storedTimestamp) {
+      const hoursSinceLastSummary = (Date.now() - storedTimestamp) / (1000 * 60 * 60);
+      log.info(`Hours since last summary: ${hoursSinceLastSummary.toFixed(2)}`);
+
+      if (hoursSinceLastSummary > 12) {
+        log.info('Last summary is older than 12 hours, showing notification.');
+        new Notification({
+          title: 'Review Yesterday\'s Work',
+          body: 'You haven\'t reviewed your last summary. Generate one in DoneThat to catch up!',
+          silent: false
+        }).show();
+      }
+    } else {
+        log.info('No lastSummaryTimestamp found in store, skipping unreviewed work check.');
+    }
+  } catch (error) {
+    log.error('Error checking/notifying for unreviewed work:', error);
+  }
+}
+
+// Add IPC handler for receiving last summary timestamp
+ipcMain.on('updateLastSummaryTimestamp', (event, timestamp) => {
+  try {
+    if (store && timestamp) {
+      lastSummaryTimestamp = timestamp; // Update local variable
+      store.set('lastSummaryTimestamp', timestamp);
+      log.info('Received and stored lastSummaryTimestamp:', new Date(timestamp).toISOString());
+    }
+  } catch (error) {
+    log.error('Failed to store lastSummaryTimestamp:', error);
   }
 });
