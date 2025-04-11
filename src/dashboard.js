@@ -128,9 +128,6 @@ function showSummaryGeneratedState() {
     showSpinner = showBlockingSpinner;
     hideSpinner = hideBlockingSpinner;
     navigateToView = viewNavigator;
-    
-    // Show initial state
-    dashboardNote();
   }
 
   // Only add event listeners if elements exist
@@ -377,10 +374,15 @@ function resumeRecording() {
 
 // Add pause state change listener
 ipcRenderer.on('pauseStateChanged', () => {
-  // Add a small delay to ensure app state is updated first
+  // Add a small delay back to ensure app state is updated first
   setTimeout(() => {
     dashboardNote();
   }, 100);
 });
 
-module.exports = { initializeDashboard, resetSummaryState };
+// Add a function to explicitly refresh notes
+function refreshDashboardNotes() {
+  dashboardNote();
+}
+
+module.exports = { initializeDashboard, resetSummaryState, refreshDashboardNotes };

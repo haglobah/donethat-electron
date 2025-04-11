@@ -9,7 +9,7 @@ const { initializeSlack} = require('./slack');
 const { subscriptionInitialize, subscriptionUpdateUI } = require('./subscription.js');
 const { initializeSettings, loadUserSettings } = require('./settings.js');
 const { initializeAuth } = require('./auth.js');
-const { initializeDashboard, resetSummaryState } = require('./dashboard.js');
+const { initializeDashboard, resetSummaryState, refreshDashboardNotes } = require('./dashboard.js');
 const { initializeAutoUpdate } = require('./autoupdate.js');
 const { initializePermissions } = require('./permissions.js');
 const { initializeAnalytics, trackPageView } = require('./analytics.js');
@@ -165,6 +165,9 @@ async function loadUserSettingsCallback() {
     paidActive: result.data?.subscription?.status === 'active',
     currentPeriodEnd: result.data?.subscription?.currentPeriodEnd
   });
+
+  // Refresh dashboard notes now that state is loaded
+  refreshDashboardNotes();
 
   // Only navigate if we're not already in the settings view
   if (getCurrentView() !== 'settings') {
