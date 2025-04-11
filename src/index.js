@@ -78,9 +78,6 @@ function navigateToView(viewName) {
       viewName = 'permission';
     } else if (!hasValidAccess()) {
       viewName = 'subscription';
-      // For the case that integration just set up but no channel yet
-    } else if (hasSlackToken() && !hasSlack()) {
-      viewName = 'settings';
     } else {
       viewName = 'dashboard';
     }
@@ -170,8 +167,10 @@ async function loadUserSettingsCallback() {
     currentPeriodEnd: result.data?.subscription?.currentPeriodEnd
   });
 
-  // Now that everything is loaded, navigate
-  navigateToView('signup-next');
+  // Only navigate if we're not already in the settings view
+  if (getCurrentView() !== 'settings') {
+    navigateToView('signup-next');
+  }
 }
 
 // Update the document ready handler
