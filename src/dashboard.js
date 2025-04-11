@@ -169,7 +169,7 @@ function showSummaryGeneratedState() {
 
     // Render the notes
     const notesHTML = notes.map(note => `
-      <p class="dashboard-note ${note.isWarning ? 'text-primary' : 'text-gray-500'} text-center text-sm">
+      <p class="dashboard-note ${note.isWarning ? 'text-gray-900' : 'text-gray-500'} text-center text-sm">
         ${note.text}
       </p>
     `).join('');
