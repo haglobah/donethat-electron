@@ -22,6 +22,7 @@ let loadUserSettingsCallback;
 let navigateToView;
 let showSpinner;
 let hideSpinner;
+let currentPeriodEndTime = null;
 
 // Helper function to format date for headline
 function formatHeadlineDate(timestamp) {
@@ -201,6 +202,7 @@ function showSummaryGeneratedState() {
     document.getElementById('visibilityNoteContainer')?.classList.add('hidden'); // Hide note on reset
     currentSummaryId = null;
     selectedBulletPoints = [];
+    currentPeriodEndTime = null; // Reset the stored period end time
   
     // Reset headline
     const headlineElement = document.getElementById('dashboardHeadline');
@@ -249,40 +251,40 @@ if (submitSummaryBtn) {
         comment: commentText
       }).then(() => {
         summaryLoadingSpinner.classList.add('hidden');
-        // Clear summary content immediately before resetSummary later after delay
-        document.getElementById('summaryContainer').innerHTML =
-          '<p class="empty-state-text"></p>';
-  
-        // Reset internal state
-        currentSummaryId = null;
-        selectedBulletPoints = [];
-  
-        // Update button text and disable it
-        submitSummaryBtn.textContent = "Well done!";
-        submitSummaryBtn.disabled = true;
-        submitSummaryBtn.classList.add('disabled-btn');
-        submitSummaryBtn.classList.remove('hidden');
-  
-        // Notify main process that summary was submitted
+
+        const now = new Date();
+        const isPast3PM = now.getHours() >= 15;
+        const isRecentSummary = currentPeriodEndTime && (now.getTime() - currentPeriodEndTime < (60 * 60 * 1000));
+
+        const shouldPauseAndDelayReset = isPast3PM && isRecentSummary;
+
+        // Clear summary content immediately
+        document.getElementById('summaryContainer').innerHTML = '<p class="empty-state-text"></p>';
+
         ipcRenderer.send("summarySubmitted");
-  
-        // Pause recording until tomorrow
-        ipcRenderer.send("pauseUntilTomorrow");
-  
-        // Log successful summary submission
+
         logAnalyticsEvent('summary_submitted', {
-          status: 'success',
-          bullet_points_count: selectedBullets.length,
-          has_comment: !!commentText
+            status: 'success',
+            bullet_points_count: selectedBullets.length,
+            has_comment: !!commentText
         });
-  
-        // Reset summary state AFTER button update and ensure button stays visible
-        setTimeout(() => {
-          resetSummaryState();
-          submitSummaryBtn.textContent = "Done That";
-          submitSummaryBtn.classList.remove('disabled-btn');
-          submitSummaryBtn.disabled = false;
-        }, 10000);
+
+        if (shouldPauseAndDelayReset) {
+            ipcRenderer.send("pauseUntilTomorrow");
+
+            submitSummaryBtn.textContent = "Well done!";
+            submitSummaryBtn.disabled = true;
+            submitSummaryBtn.classList.add('disabled-btn');
+            submitSummaryBtn.classList.remove('hidden'); // Ensure it stays visible
+
+            setTimeout(() => {
+                resetSummaryState(); // Resets UI including button state
+            }, 2000);
+        } else {
+            // New behavior: No pause, reset immediately
+            resetSummaryState(); // Resets UI including button state
+        }
+
       }).catch((error) => {
         summaryLoadingSpinner.classList.add('hidden');
         console.error("Error submitting summary:", error);
@@ -312,6 +314,8 @@ if (submitSummaryBtn) {
           const bulletPoints = result.data.bulletPoints || [];
           currentSummaryId = result.data.summaryId;
           const period = result.data.period;
+          // Store the period end time (as a number/timestamp)
+          currentPeriodEndTime = period?.end;
 
           // Update headline
           const headlineElement = document.getElementById('dashboardHeadline');
