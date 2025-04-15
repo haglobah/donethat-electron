@@ -1021,6 +1021,7 @@ function stopRecording() {
         clearInterval(screenshotInterval);
         screenshotInterval = null;
     }
+
     updateTrayIcon(false); // Update icon to non-recording state
     
     // Send state updates

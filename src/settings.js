@@ -30,6 +30,11 @@ let settingsUnsubscribe = null;
 let recipientEmails = [];
 let userTimezone = "UTC"; // Default timezone
 let workdays = [1, 2, 3, 4, 5]; // Default Mon-Fri (0=Sun, 6=Sat)
+let inputData = {
+  windows: false,
+  keystrokes: false,
+  audio: false
+};
 
 // Initialize settings management
 function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingSpinner, viewNavigator) {
@@ -57,6 +62,8 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   setupVersionClickHandler();
   // Setup workday click handler
   setupWorkdayClickHandler();
+  // Set up event listeners for new checkboxes
+  setupInputDataCheckboxListeners();
 }
 
 // Helper function to update screenshots container visibility
@@ -135,7 +142,7 @@ async function loadUserSettings() {
 
   try {
     const result = await getUserSettingsFunction();
-    updateSettingsUI(result);
+    updateSettingsUI(result.data);
     return result;
 
   } catch (error) {
@@ -185,6 +192,14 @@ async function saveUserSettings(type, value) {
         type: 'publicSummaries',
         enabled: value
       });
+    } else if (type === 'inputData') { // Renamed type
+      settingsData.inputData = value; // Use inputData
+      logAnalyticsEvent('settings_updated', {
+        type: 'inputData',
+        windows: value.windows,
+        keystrokes: value.keystrokes,
+        audio: value.audio
+      });
     } else if (type === 'app') { // Add handling for 'app' type
       settingsData.app = value; // value should be { version: '...', osPlatform: '...', osRelease: '...' }
       logAnalyticsEvent('settings_updated', {
@@ -217,7 +232,7 @@ async function saveUserSettings(type, value) {
   }
 }
 
-async function updateSettingsUI(result) {
+async function updateSettingsUI(settings) {
   // Reset state
   recipientEmails = [];
   const emailTagsContainer = document.getElementById('emailTagsContainer');
@@ -228,34 +243,50 @@ async function updateSettingsUI(result) {
   // Handle name
   const nameInput = document.getElementById('nameInput');
   if (nameInput) {
-    nameInput.value = result.data?.name || '';
+    nameInput.value = settings?.name || '';
   }
 
   // Handle screenshots setting
-  if (result.data && typeof result.data.storeScreenshots === 'boolean') {
+  if (settings && typeof settings.storeScreenshots === 'boolean') {
     const screenshotsCheckbox = document.getElementById('screenshotsCheckbox');
     if (screenshotsCheckbox) {
-      screenshotsCheckbox.checked = result.data.storeScreenshots;
+      screenshotsCheckbox.checked = settings.storeScreenshots;
       // Show container if screenshots are enabled
-      updateScreenshotsContainerVisibility(result.data.storeScreenshots);
+      updateScreenshotsContainerVisibility(settings.storeScreenshots);
     }
   }
+
+  // Handle input data settings
+  const loadedInputData = settings?.inputData || {}; // Use inputData
+  inputData = {
+    windows: !!loadedInputData.windows,         // Use windows key
+    keystrokes: !!loadedInputData.keystrokes,
+    audio: !!loadedInputData.audio
+  };
+
+  const windowsCheckbox = document.getElementById('windowsCheckbox'); // Updated ID
+  const keystrokesCheckbox = document.getElementById('keystrokesCheckbox');
+  const audioCheckbox = document.getElementById('audioCheckbox');
+
+  if (windowsCheckbox) windowsCheckbox.checked = inputData.windows; // Use windows key
+  if (keystrokesCheckbox) keystrokesCheckbox.checked = inputData.keystrokes;
+  if (audioCheckbox) audioCheckbox.checked = inputData.audio; // Keep disabled state from HTML
 
   // Handle public summaries setting
   const publicSummariesCheckbox = document.getElementById('publicSummariesCheckbox');
   if (publicSummariesCheckbox) {
-    const isPublicValue = result.data?.public || false; // Default to false if not set
+    const isPublicValue = settings?.public || false; // Default to false if not set
     publicSummariesCheckbox.checked = isPublicValue;
     updateIsPublic(isPublicValue);
   }
 
   // Handle email recipients
-  if (result.data &&
-    result.data.emailRecipients &&
-    Array.isArray(result.data.emailRecipients) &&
-    result.data.emailRecipients.length > 0) {
+  if (settings &&
+    settings.emailRecipients &&
+    Array.isArray(settings.emailRecipients) &&
+    settings.emailRecipients.length > 0) {
     // Get unique emails from server response
-    const uniqueEmails = [...new Set(result.data.emailRecipients)];
+    const uniqueEmails = [...new Set(settings.emailRecipients)];
 
     // Set our internal state
     recipientEmails = uniqueEmails;
@@ -265,8 +296,8 @@ async function updateSettingsUI(result) {
   }
 
   // Handle lastSummary from activity data
-  if (result.data?.activity?.lastSummary) {
-    const timestamp = result.data.activity.lastSummary; // Store timestamp
+  if (settings?.activity?.lastSummary) {
+    const timestamp = settings.activity.lastSummary; // Store timestamp
     updateLastSummary(timestamp); // Update renderer state
     // Send the timestamp to the main process
     ipcRenderer.send('updateLastSummaryTimestamp', timestamp);
@@ -277,20 +308,20 @@ async function updateSettingsUI(result) {
   }
   
   // Handle Slack settings
-  if (result.data.slack?.accessToken) {
+  if (settings.slack?.accessToken) {
     const slackInput = document.getElementById('slackInput');
     if (slackInput) {
-      slackInput.value = result.data.slack.defaultChannel || '';
+      slackInput.value = settings.slack.defaultChannel || '';
     }
 
     // Get team name from the first active team if available
-    const teams = result.data.teams || {};
+    const teams = settings.teams || {};
     const activeTeam = Object.values(teams).find(team => team.status === 'active');
-    const teamName = activeTeam?.name || result.data.slack.teamName;
+    const teamName = activeTeam?.name || settings.slack.teamName;
 
     // Update Slack UI with the active team's name
     updateSlackUI(true, teamName);
-    updateSlackInputState(true, teamName, result.data.slack.defaultChannel || '');
+    updateSlackInputState(true, teamName, settings.slack.defaultChannel || '');
   } else {
     updateSlackUI(false);
     updateSlackInputState(false);
@@ -298,8 +329,8 @@ async function updateSettingsUI(result) {
   
   // Handle timezone setting
   let fetchedTimezone = "UTC"; // Default to UTC if not set
-  if (result.data && result.data.timezone) {
-    fetchedTimezone = result.data.timezone;
+  if (settings && settings.timezone) {
+    fetchedTimezone = settings.timezone;
   }
   userTimezone = fetchedTimezone; // Store the fetched timezone
 
@@ -323,9 +354,9 @@ async function updateSettingsUI(result) {
   // Handle workdays
   const defaultWorkdays = [1, 2, 3, 4, 5]; // Mon-Fri
   let loadedWorkdays = defaultWorkdays;
-  if (result.data && Array.isArray(result.data.workdays)) {
+  if (settings && Array.isArray(settings.workdays)) {
     // Validate days are numbers 0-6
-    const validWorkdays = result.data.workdays.filter(day =>
+    const validWorkdays = settings.workdays.filter(day =>
       typeof day === 'number' && day >= 0 && day <= 6
     );
     // Use Set to remove duplicates
@@ -348,9 +379,9 @@ async function updateSettingsUI(result) {
     const localVersion = packageInfo.version;
     const localOSPlatform = os.platform(); // Get platform
     const localOSRelease = os.release();   // Get release version
-    const storedVersion = result.data?.app?.version;
-    const storedOSPlatform = result.data?.app?.osPlatform; // Updated field name
-    const storedOSRelease = result.data?.app?.osRelease;   // Added field
+    const storedVersion = settings?.app?.version;
+    const storedOSPlatform = settings?.app?.osPlatform; // Updated field name
+    const storedOSRelease = settings?.app?.osRelease;   // Added field
 
     let needsUpdate = false;
     const appData = {
@@ -668,6 +699,43 @@ function setupWorkdayClickHandler() {
         }
       }
     });
+  }
+}
+
+function setupInputDataCheckboxListeners() {
+  const windowsCheckbox = document.getElementById('windowsCheckbox');
+  const keystrokesCheckbox = document.getElementById('keystrokesCheckbox');
+  const audioCheckbox = document.getElementById('audioCheckbox');
+
+  const handleCheckboxChange = async (checkboxId, fieldName) => {
+    const checkbox = document.getElementById(checkboxId);
+    if (!checkbox) return;
+
+    const isChecked = checkbox.checked;
+    const originalValue = inputData[fieldName]; // Use inputData
+
+    // Optimistically update state
+    inputData[fieldName] = isChecked; // Use inputData
+
+    try {
+      // Save the entire inputData object
+      await saveUserSettings('inputData', inputData); // Use inputData
+    } catch (error) { 
+      // Revert UI and state on error
+      inputData[fieldName] = originalValue; // Use inputData
+      checkbox.checked = originalValue;
+      // Error already alerted in saveUserSettings
+    }
+  };
+
+  if (windowsCheckbox) {
+    windowsCheckbox.addEventListener('change', () => handleCheckboxChange('windowsCheckbox', 'windows')); // Updated ID and fieldName
+  }
+  if (keystrokesCheckbox) {
+    keystrokesCheckbox.addEventListener('change', () => handleCheckboxChange('keystrokesCheckbox', 'keystrokes'));
+  }
+  if (audioCheckbox) {
+    audioCheckbox.addEventListener('change', () => handleCheckboxChange('audioCheckbox', 'audio'));
   }
 }
 
