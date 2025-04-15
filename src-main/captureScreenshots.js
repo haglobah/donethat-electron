@@ -142,84 +142,43 @@ async function checkLinuxScreenCapturePermission() {
 
 ///// MAIN /////
 
-// Use a single unified method for all platforms
-async function captureAndSendScreenshot(idToken, FIREBASE_CAPTURE_URL) {
-  if (!idToken) {
-    log.warn('Cannot send screenshots: User not authenticated')
-    return
-  }
-
+// Use a single unified method for all platforms - only captures screenshots
+async function captureScreenshot() {
   try {
-    let screenshots = []
+    let screenshots = [];
     
     // Use Linux-specific method on Linux platforms
     if (process.platform === 'linux') {
-      log.info('Using Linux-specific screenshot method')
-      screenshots = await captureScreenshotsLinux()
+      log.info('Using Linux-specific screenshot method');
+      screenshots = await captureScreenshotsLinux();
     } else {
       // Use the standard Electron approach for other platforms
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
         thumbnailSize: { width: 1920, height: 1080 }
-      })
+      });
       
       if (sources.length === 0) {
-        log.warn('No screen sources found')
-        return
+        log.warn('No screen sources found');
+        return [];
       }      
       // Process each source
       screenshots = await Promise.all(
         sources.map(async source => {
-          return await processScreenshotForUpload(source.thumbnail.toDataURL())
+          return await processScreenshotForUpload(source.thumbnail.toDataURL());
         })
-      )
+      );
     }
     
     if (screenshots.length === 0) {
-      log.warn('No screenshots captured')
-      return
+      log.warn('No screenshots captured');
+      return [];
     }
 
-    const fetch = await import('node-fetch').then(module => module.default)
-    
-    const response = await fetch(FIREBASE_CAPTURE_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${idToken}`
-      },
-      body: JSON.stringify({
-        timestamp: Date.now(),
-        screenshots: screenshots
-      })
-    })
-    
-    if (!response.ok) {
-      // If response is not ok, check the detailed error
-      const errorData = await response.json().catch(() => ({}))
-      
-      // Check specifically for token expiration
-      if (response.status === 401 && errorData.error === 'token_expired') {
-        return { tokenExpired: true }
-      }
-      
-      // Log other error details
-      log.error('Screenshot upload error:', errorData)
-      // For unauthorized errors (not token expired), return auth error
-      if (response.status === 401 || response.status === 403) {
-        return { authError: true }
-      }
-      
-      throw new Error(`Server error: ${response.status}`)
-    }
-    
-    return true
+    return screenshots;
   } catch (error) {
-    log.error('Screenshot error:', error.message, error.stack)
-    
-    // Any other error
-    console.error('Screenshot upload failed:', error)
-    return false
+    log.error('Screenshot capture error:', error.message, error.stack);
+    return [];
   }
 }
 
@@ -440,7 +399,7 @@ async function processScreenshotForUpload(dataUrl) {
 }
 
 module.exports = {
-  captureAndSendScreenshot,
+  captureScreenshot,
   checkScreenCapturePermission,
   getWaylandStatus: () => isWaylandSession
 } 

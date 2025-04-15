@@ -5,10 +5,17 @@ const log = require('electron-log')
 const { initializeApp } = require('firebase/app')
 const firebaseConfig = require('./firebase-config')
 const {
-  captureAndSendScreenshot: moduleCapture,
   checkScreenCapturePermission: moduleCheckPermission,
   getWaylandStatus
 } = require('./src-main/captureScreenshots')
+const { 
+  captureAndSend, 
+  startCaptureInterval, 
+  stopCaptureInterval, 
+  isCapturing,
+  setCaptureInterval,
+  initCapture
+} = require('./src-main/capture')
 
 // Prevent multiple instances of the app
 const gotTheLock = app.requestSingleInstanceLock();
@@ -55,8 +62,6 @@ app.on('activate', () => {
 
 // To show dev tools next to main window
 let DEBUG = false
-// Add your Firebase function URL here
-const FIREBASE_CAPTURE_URL = 'https://europe-west1-donethat.cloudfunctions.net/captureScreenshot'
 
 // Update screenshot interval logic
 let SCREENSHOT_INTERVAL_MINUTES = 5; // Default to 5 minutes for release
@@ -64,6 +69,8 @@ let SCREENSHOT_INTERVAL_MINUTES = 5; // Default to 5 minutes for release
 if (!app.isPackaged) {
   SCREENSHOT_INTERVAL_MINUTES = 5; // Every minute for development
 }
+// Set interval in the capture module
+setCaptureInterval(SCREENSHOT_INTERVAL_MINUTES);
 
 let iconRecordingPath = path.join(__dirname, 'resources', 'icon_recording.png')
 let iconPausedPath = path.join(__dirname, 'resources', 'icon_paused.png')
@@ -628,6 +635,53 @@ function isWorkday(date = new Date()) {
   return Array.isArray(userWorkdays) && userWorkdays.includes(dayOfWeek);
 }
 
+/**
+ * Handles authentication errors reported by the capture module
+ * @param {Object} result - Authentication error object
+ * @param {boolean} [result.authError] - True if there was a general authentication error
+ * @param {boolean} [result.tokenExpired] - True if the authentication token has expired
+ */
+function handleCaptureAuthErrors(result) {
+  // Handle auth error
+  if (result && result.authError) {
+    idToken = null;
+    if (mainWindow) {
+      mainWindow.webContents.send('auth-error');
+    }
+  }
+  
+  // Handle token expired error
+  if (result && result.tokenExpired) {    
+    // Request token refresh from renderer process
+    if (mainWindow) {
+      mainWindow.webContents.send('refresh-token');
+      
+      // Set up one-time listener for the refreshed token
+      ipcMain.once('token-refreshed', async (event, newToken) => {
+        if (newToken) {
+          idToken = newToken;
+          
+          // Retry the capture with new token
+          const retryResult = await captureAndSend(idToken, {});
+          if (retryResult && retryResult.authError) {
+            // If still failing after refresh, signal auth error
+            idToken = null;
+            mainWindow.webContents.send('auth-error');
+          } else if (!retryResult) {
+            // Log other errors from retry
+            console.error('Capture retry failed after token refresh');
+          }
+        } else {
+          log.error('Failed to refresh token');
+          // Handle as auth error since refresh failed
+          idToken = null;
+          mainWindow.webContents.send('auth-error');
+        }
+      });
+    }
+  }
+}
+
 // Function to pause recording for a specified duration
 function pauseRecording(duration) {
   // Stop recording first regardless of why
@@ -708,13 +762,14 @@ function resumeRecording() {
   pauseState = { endTime: null, timeoutId: null };
   if (store) store.delete('pauseState');
 
-  // Only start new interval if one doesn't exist
-  if (!screenshotInterval) {
-    screenshotInterval = setInterval(captureAndSendScreenshot, SCREENSHOT_INTERVAL_MINUTES * 60000);
+  // Check if we should begin recording
+  if (!isCapturing()) {
+    startRecording();
   }
+  // Just update the icon if we're already recording
+  updateTrayIcon(isCapturing());
 
   // Common operations for all resume cases
-  updateTrayIcon(true); // Show recording state
   if (mainWindow && wasPaused) {
     mainWindow.webContents.send('pauseStateChanged', false);
     mainWindow.webContents.send('analytics-event', { 
@@ -805,7 +860,7 @@ function scheduleDailyWorkdayCheck() {
 
 // Central function to evaluate and adjust recording state based on all factors
 function checkWorkdayAndAdjustRecording() {
-    const isCurrentlyRecording = !!screenshotInterval;
+    const isCurrentlyRecording = isCapturing();
     const canRecordEssentials = idToken && hasScreenCapturePermission && !isPaused();
     const todayIsWorkday = isWorkday();
 
@@ -828,11 +883,6 @@ function checkWorkdayAndAdjustRecording() {
     // Schedule the next check (important for the loop)
     scheduleDailyWorkdayCheck();
 }
-
-// From dashboard
-ipcMain.on('pauseUntilTomorrow', () => {
-  pauseUntilNextWorkday();
-});
 
 ////// WINDOWS /////
 
@@ -879,6 +929,9 @@ function createWindow() {
         hasPermission: hasScreenCapturePermission,
         isWaylandSession: isWaylandSession
       });
+      
+      // Initialize capture with auth error handler
+      initCapture(mainWindow, handleCaptureAuthErrors);
     })
 
     mainWindow.on('blur', () => {
@@ -1001,37 +1054,42 @@ function startRecording() {
   // --> Check for unreviewed work before starting/resuming recording <--
   checkAndNotifyForUnreviewedWork();
 
-  // Start the interval (caller ensures it doesn't already exist)
-  screenshotInterval = setInterval(captureAndSendScreenshot, SCREENSHOT_INTERVAL_MINUTES * 60000);
+  // Start the capture interval - auth errors are now handled by the callback passed to initCapture
+  startCaptureInterval(idToken);
   
   // Common operations
-  updateTrayIcon(true); // Show recording state
+  updateTrayIcon(true) // Show recording state
   if (mainWindow) {
-    mainWindow.webContents.send('pauseStateChanged', false);
+    mainWindow.webContents.send('pauseStateChanged', false)
     mainWindow.webContents.send('analytics-event', { 
       eventName: 'recording_state_changed',
       eventParams: { status: 'started' } 
-    });
+    })
   }
 }
 
 // Stops the interval and updates the icon
 function stopRecording() {
-    if (screenshotInterval) {
-        clearInterval(screenshotInterval);
-        screenshotInterval = null;
-    }
+  // Stop the capture interval and all captures
+  stopCaptureInterval();
 
-    updateTrayIcon(false); // Update icon to non-recording state
-    
-    // Send state updates
-    if (mainWindow) {
-      mainWindow.webContents.send('pauseStateChanged', true);
-      mainWindow.webContents.send('analytics-event', { 
-        eventName: 'recording_state_changed',
-        eventParams: { status: 'stopped' } 
-      });
-    }
+  updateTrayIcon(false) // Update icon to non-recording state
+  
+  // Send state updates
+  if (mainWindow) {
+    mainWindow.webContents.send('pauseStateChanged', true)
+    mainWindow.webContents.send('analytics-event', { 
+      eventName: 'recording_state_changed',
+      eventParams: { status: 'stopped' } 
+    })
+  }
+}
+
+// Function to check screen capture permission
+async function checkScreenCapturePermission() {
+  hasScreenCapturePermission = await moduleCheckPermission();
+  isWaylandSession = getWaylandStatus();
+  return hasScreenCapturePermission;
 }
 
 // Add IPC handler for resume action
@@ -1043,57 +1101,10 @@ ipcMain.handle('getInitialPauseState', () => {
   return isPaused(); // Return the current state determined by loadPauseState
 });
 
-// Function to check screen capture permission
-async function checkScreenCapturePermission() {
-  hasScreenCapturePermission = await moduleCheckPermission();
-  isWaylandSession = getWaylandStatus();
-  return hasScreenCapturePermission;
-}
-
-async function captureAndSendScreenshot() {
-  const result = await moduleCapture(idToken, FIREBASE_CAPTURE_URL);
-
-  // Handle auth error specially
-  if (result && result.authError) {
-    idToken = null;
-    if (mainWindow) {
-      mainWindow.webContents.send('auth-error');
-    }
-  }
-  
-  // Handle token expired error
-  if (result && result.tokenExpired) {    
-    // Request token refresh from renderer process
-    if (mainWindow) {
-      mainWindow.webContents.send('refresh-token');
-      
-      // Set up one-time listener for the refreshed token
-      ipcMain.once('token-refreshed', async (event, newToken) => {
-        if (newToken) {
-          idToken = newToken;
-          
-          // Retry the screenshot capture with new token
-          const retryResult = await moduleCapture(idToken, FIREBASE_CAPTURE_URL);
-          if (retryResult && retryResult.authError) {
-            // If still failing after refresh, signal auth error
-            idToken = null;
-            mainWindow.webContents.send('auth-error');
-          } else if (!retryResult) {
-            // Log other errors from retry
-            console.error('Screenshot retry failed after token refresh');
-          }
-        } else {
-          log.error('Failed to refresh token');
-          // Handle as auth error since refresh failed
-          idToken = null;
-          mainWindow.webContents.send('auth-error');
-        }
-      });
-    }
-  }
-
-  return result;
-}
+// From dashboard
+ipcMain.on('pauseUntilTomorrow', () => {
+  pauseUntilNextWorkday();
+});
 
 // Also update the explicit permission check handler
 ipcMain.on('checkScreenCapturePermission', async () => {
@@ -1153,141 +1164,6 @@ ipcMain.on('pauseStateChanged', (event, isPaused) => {
   }
 });
 
-// After openSettingsBtn)
-ipcMain.on('requestAudioPermission', async () => {
-  const { shell } = require('electron');
-  const { checkPermission } = require('./src-main/captureAudio');
-  
-  // First check if we already have permission
-  const hasPermission = await checkPermission();
-  
-  if (hasPermission) {
-    // Already have permission, inform renderer
-    if (mainWindow) {
-      mainWindow.webContents.send('audioPermission', true);
-    }
-    return;
-  }
-  
-  // Open relevant system settings based on platform
-  if (process.platform === 'darwin') {
-    // macOS - Open microphone privacy settings
-    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
-  } else if (process.platform === 'win32') {
-    // Windows - Open microphone privacy settings
-    shell.openExternal('ms-settings:privacy-microphone');
-  } else if (process.platform === 'linux') {
-    // Linux - No standard way to open settings, notify user to check manually
-    if (mainWindow) {
-      mainWindow.webContents.send('linux-audio-permission-notice');
-    }
-  }
-  
-  // After opening settings, check permission again when app regains focus
-  const focusListener = async () => {
-    // Remove listener immediately to prevent multiple triggers
-    app.removeListener('browser-window-focus', focusListener);
-    
-    const newHasPermission = await checkPermission();
-    
-    if (mainWindow) {
-      mainWindow.webContents.send('audioPermission', newHasPermission);
-    }
-  };
-  
-  app.on('browser-window-focus', focusListener);
-});
-
-ipcMain.on('requestKeystrokesPermission', async () => {
-  const { shell } = require('electron');
-  const { checkPermission } = require('./src-main/captureKeystrokes');
-  
-  // First check if we already have permission
-  const hasPermission = await checkPermission();
-  
-  if (hasPermission) {
-    // Already have permission, inform renderer
-    if (mainWindow) {
-      mainWindow.webContents.send('keystrokesPermission', true);
-    }
-    return;
-  }
-  
-  // Open relevant system settings based on platform
-  if (process.platform === 'darwin') {
-    // macOS - Open accessibility privacy settings
-    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
-  } else if (process.platform === 'win32') {
-    // Windows - No direct settings for keyboard access, open general privacy
-    shell.openExternal('ms-settings:privacy');
-  } else if (process.platform === 'linux') {
-    // Linux - No standard way to open settings
-    if (mainWindow) {
-      mainWindow.webContents.send('linux-keystrokes-permission-notice');
-    }
-  }
-  
-  // After opening settings, check permission again when app regains focus
-  const focusListener = async () => {
-    // Remove listener immediately to prevent multiple triggers
-    app.removeListener('browser-window-focus', focusListener);
-    
-    const newHasPermission = await checkPermission();
-    
-    if (mainWindow) {
-      mainWindow.webContents.send('keystrokesPermission', newHasPermission);
-    }
-  };
-  
-  app.on('browser-window-focus', focusListener);
-});
-
-ipcMain.on('requestWindowsPermission', async () => {
-  const { shell } = require('electron');
-  const { checkPermission } = require('./src-main/captureWindows');
-  
-  // First check if we already have permission
-  const hasPermission = await checkPermission();
-  
-  if (hasPermission) {
-    // Already have permission, inform renderer
-    if (mainWindow) {
-      mainWindow.webContents.send('windowsPermission', true);
-    }
-    return;
-  }
-  
-  // Open relevant system settings based on platform
-  if (process.platform === 'darwin') {
-    // On macOS, directly open System Settings to Accessibility permissions
-    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
-  } else if (process.platform === 'win32') {
-    // Windows - No direct settings for window access, open general privacy
-    shell.openExternal('ms-settings:privacy');
-  } else if (process.platform === 'linux') {
-    // Linux - No standard way to open settings
-    if (mainWindow) {
-      mainWindow.webContents.send('linux-windows-permission-notice');
-    }
-  }
-  
-  // After opening settings, check permission again when app regains focus
-  const focusListener = async () => {
-    // Remove listener immediately to prevent multiple triggers
-    app.removeListener('browser-window-focus', focusListener);
-    
-    const newHasPermission = await checkPermission();
-    
-    if (mainWindow) {
-      mainWindow.webContents.send('windowsPermission', newHasPermission);
-    }
-  };
-  
-  app.on('browser-window-focus', focusListener);
-});
-
-//// NOTIFICATIONS ////
-
 // Function to check for unreviewed work and notify
 function checkAndNotifyForUnreviewedWork() {
   try {
@@ -1333,4 +1209,3 @@ ipcMain.on('updateLastSummaryTimestamp', (event, timestamp) => {
     log.error('Error processing/storing lastSummaryTimestamp:', error, 'Raw value:', timestamp);
   }
 });
-

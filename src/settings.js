@@ -302,6 +302,9 @@ async function updateSettingsUI(settings) {
     audio: !!loadedInputData.audio
   };
 
+  // Send current input data settings to main process
+  ipcRenderer.send('updateInputDataSettings', inputData);
+
   const windowsCheckbox = document.getElementById('windowsCheckbox'); // Updated ID
   const keystrokesCheckbox = document.getElementById('keystrokesCheckbox');
   const audioCheckbox = document.getElementById('audioCheckbox');
@@ -762,6 +765,9 @@ function setupInputDataCheckboxListeners() {
       try {
         // Save the entire inputData object
         await saveUserSettings('inputData', inputData);
+        
+        // Send updated input data to main process
+        ipcRenderer.send('updateInputDataSettings', inputData);
       } catch (error) {
         // Revert UI and state on error with settings save
         inputData[fieldName] = originalValue;
@@ -773,6 +779,9 @@ function setupInputDataCheckboxListeners() {
       
       try {
         await saveUserSettings('inputData', inputData);
+        
+        // Send updated input data to main process
+        ipcRenderer.send('updateInputDataSettings', inputData);
       } catch (error) {
         // Revert UI and state on error
         inputData[fieldName] = originalValue;
