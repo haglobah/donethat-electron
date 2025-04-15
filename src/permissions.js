@@ -1,5 +1,5 @@
 const { ipcRenderer } = require("electron");
-const { isAuthenticated, updateScreenCapturePermission } = require('./app-state.js');
+const { updateScreenCapturePermission } = require('./app-state.js');
 const { logAnalyticsEvent } = require('./analytics.js');
 
 const openSettingsBtn = document.getElementById("openSettingsBtn");

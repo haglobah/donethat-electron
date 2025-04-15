@@ -8,7 +8,7 @@ const {
   captureAndSendScreenshot: moduleCapture,
   checkScreenCapturePermission: moduleCheckPermission,
   getWaylandStatus
-} = require('./src-main/screenshot-capture')
+} = require('./src-main/captureScreenshots')
 
 // Prevent multiple instances of the app
 const gotTheLock = app.requestSingleInstanceLock();
