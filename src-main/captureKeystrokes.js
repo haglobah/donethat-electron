@@ -334,10 +334,19 @@ function startTracking(options = {}) {
         const hasChanges = !areKeystrokesEqual(currentKeys, lastKeystrokes)
         
         if (hasChanges && currentKeys.length > 0) {
-          // Record the keystrokes
-          keystrokeTimeline.push({
-            timestamp: Date.now(),
-            keys: currentKeys
+          // Get the exact timestamp for this keystroke detection
+          const timestamp = Date.now()
+          
+          // For each new key that wasn't in lastKeystrokes, record a separate entry with precise timestamp
+          currentKeys.forEach(key => {
+            // Only add keys that weren't in the last set
+            if (!lastKeystrokes.some(lastKey => lastKey.keyCode === key.keyCode)) {
+              // Record individual keystroke with its own timestamp
+              keystrokeTimeline.push({
+                timestamp,
+                key: key.character || key.keyCode
+              })
+            }
           })
           
           // Update lastKeystrokes
@@ -346,6 +355,9 @@ function startTracking(options = {}) {
           // Clean up old data
           const cutoffTime = Date.now() - maxHistory
           keystrokeTimeline = keystrokeTimeline.filter(entry => entry.timestamp >= cutoffTime)
+        } else if (currentKeys.length === 0 && lastKeystrokes.length > 0) {
+          // All keys were released, update lastKeystrokes
+          lastKeystrokes = []
         }
       } catch (error) {
         log.error('Error in keystroke tracking interval:', error)
@@ -417,66 +429,16 @@ function areKeystrokesEqual(keys1, keys2) {
  * @param {Array} timeline Raw keystroke timeline (optional, uses stored timeline if not provided)
  * @param {Object} options Processing options
  * @param {number} options.timeSegmentMs Size of time segments in milliseconds (default: 1000)
- * @returns {Array} Processed timeline with keystroke data by time segment
+ * @returns {Array} Processed timeline with keystroke data
  */
 function processTimelineData(timeline = keystrokeTimeline, options = {}) {
   try {
-    const timeSegmentMs = options.timeSegmentMs || 1000 // Default: 1 second segments
-    
     if (!timeline || timeline.length === 0) {
-      return []
+      return [];
     }
     
-    // Group timeline data by time segments
-    const segments = []
-    const segmentMap = {}
-    
-    // Process all entries
-    for (let i = 0; i < timeline.length; i++) {
-      const entry = timeline[i]
-      const segmentTime = Math.floor(entry.timestamp / timeSegmentMs) * timeSegmentMs
-      
-      // Get or create segment
-      if (!segmentMap[segmentTime]) {
-        const segment = {
-          startTime: segmentTime,
-          endTime: segmentTime + timeSegmentMs - 1,
-          keystrokes: []
-        }
-        segmentMap[segmentTime] = segment
-        segments.push(segment)
-      }
-      
-      // Add keys to the segment
-      const segment = segmentMap[segmentTime]
-      
-      entry.keys.forEach(key => {
-        // Check if this key is already in the segment
-        const existingKey = segment.keystrokes.find(k => k.keyCode === key.keyCode)
-        
-        if (existingKey) {
-          // Increment count for existing key
-          existingKey.count += 1
-        } else {
-          // Add new key to segment
-          segment.keystrokes.push({
-            keyCode: key.keyCode,
-            character: key.character,
-            count: 1
-          })
-        }
-      })
-    }
-    
-    // Sort segments by time
-    segments.sort((a, b) => a.startTime - b.startTime)
-    
-    // Sort keystrokes by count (descending) within each segment
-    segments.forEach(segment => {
-      segment.keystrokes.sort((a, b) => b.count - a.count)
-    })
-    
-    return segments
+    // Return the raw timeline data with keystrokes and timestamps
+    return [...timeline];
   } catch (error) {
     log.error('Error processing keystroke timeline:', error)
     return []

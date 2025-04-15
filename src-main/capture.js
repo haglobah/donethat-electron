@@ -249,7 +249,8 @@ async function stopInputDataCapture() {
         const audioBuffer = fs.readFileSync(audioInfo.filePath);
         inputData.audio = {
           base64Data: `data:audio/wav;base64,${audioBuffer.toString('base64')}`,
-          duration: audioInfo.duration
+          mimeType: 'audio/wav',
+          timeMs: audioInfo.duration || 0
         };
         // Delete file after reading
         fs.unlinkSync(audioInfo.filePath);
@@ -259,15 +260,15 @@ async function stopInputDataCapture() {
     }
   }
   
+  // Get keystroke and window data for processing
+  let keystrokeData = [];
+  let windowData = [];
+  
   // Get keystroke data if enabled
   if (inputDataSettings.keystrokes) {
     try {
-      const keystrokeData = keystrokesCapture.processTimelineData();
+      keystrokeData = keystrokesCapture.processTimelineData();
       keystrokesCapture.stopTracking();
-      
-      if (keystrokeData && keystrokeData.length > 0) {
-        inputData.keystrokes = keystrokeData;
-      }
     } catch (error) {
       log.error('Error capturing keystroke data:', error);
     }
@@ -276,15 +277,109 @@ async function stopInputDataCapture() {
   // Get window data if enabled
   if (inputDataSettings.windows) {
     try {
-      const windowData = windowsCapture.processTimelineData(windowsCapture.getTimeline());
+      windowData = windowsCapture.processTimelineData(windowsCapture.getTimeline());
       windowsCapture.stopTracking();
-      
-      if (windowData && windowData.length > 0) {
-        inputData.windows = windowData;
-      }
     } catch (error) {
       log.error('Error capturing window data:', error);
     }
+  }
+  
+  // Process activity data (keystrokes or windows+keystrokes)
+  inputData.activity = [];
+  
+  // Process keystroke data based on window data
+  if (inputDataSettings.keystrokes && keystrokeData.length > 0) {
+    if (inputDataSettings.windows && windowData.length > 0) {
+      // Attach keystrokes to each window period
+      windowData.forEach(windowPeriod => {
+        // Find keystrokes that happened during this window period
+        const windowKeystrokes = keystrokeData.filter(ks => 
+          ks.timestamp >= windowPeriod.startTime && 
+          ks.timestamp <= windowPeriod.endTime
+        );
+        
+        // Convert to string of keystrokes
+        const keystrokeString = windowKeystrokes
+          .map(ks => ks.key)
+          .join('');
+        
+        // Add window activity with keystrokes
+        inputData.activity.push({
+          type: 'window',
+          name: windowPeriod.name,
+          title: windowPeriod.title,
+          startTime: windowPeriod.startTime,
+          endTime: windowPeriod.endTime,
+          duration: windowPeriod.duration,
+          keystrokes: keystrokeString
+        });
+      });
+    } else {
+      // Process keystrokes on their own with breaks for gaps > 5 seconds
+      let processedKeystrokes = '';
+      let lastTimestamp = 0;
+      let currentSegmentStart = 0;
+      
+      // Sort keystrokes by timestamp
+      const sortedKeystrokes = [...keystrokeData].sort((a, b) => a.timestamp - b.timestamp);
+      
+      if (sortedKeystrokes.length > 0) {
+        currentSegmentStart = sortedKeystrokes[0].timestamp;
+      }
+      
+      for (let i = 0; i < sortedKeystrokes.length; i++) {
+        const ks = sortedKeystrokes[i];
+        
+        // If this is the first keystroke or there's been a gap > 5 seconds
+        if (lastTimestamp === 0 || (ks.timestamp - lastTimestamp > 5000)) {
+          // Add the previous segment if not the first keystroke
+          if (lastTimestamp > 0) {
+            // Add the previous segment
+            inputData.activity.push({
+              type: 'keystrokes',
+              startTime: currentSegmentStart,
+              endTime: lastTimestamp,
+              duration: lastTimestamp - currentSegmentStart,
+              keystrokes: processedKeystrokes
+            });
+            
+            // Reset for new segment
+            processedKeystrokes = '';
+            currentSegmentStart = ks.timestamp;
+          }
+        }
+        
+        // Add the key
+        processedKeystrokes += ks.key;
+        
+        // Update last timestamp
+        lastTimestamp = ks.timestamp;
+        
+        // Add the last segment if we've reached the end
+        if (i === sortedKeystrokes.length - 1 && processedKeystrokes.length > 0) {
+          inputData.activity.push({
+            type: 'keystrokes',
+            startTime: currentSegmentStart,
+            endTime: lastTimestamp,
+            duration: lastTimestamp - currentSegmentStart,
+            keystrokes: processedKeystrokes
+          });
+        }
+      }
+    }
+  } else if (inputDataSettings.windows && windowData.length > 0) {
+    // Just include window data without keystrokes
+    windowData.forEach(window => {
+      inputData.activity.push({
+        type: 'window',
+        name: window.name,
+        title: window.title,
+        startTime: window.startTime,
+        endTime: window.endTime,
+        duration: window.duration,
+        keystrokes: ''
+      });
+    });
   }
   
   return inputData;
@@ -329,14 +424,25 @@ async function captureAndSend(idToken, inputData = {}) {
         payload.audio = inputData.audio;
       }
       
-      if (inputData.keystrokes) {
-        payload.keystrokes = inputData.keystrokes;
-      }
-      
-      if (inputData.windows) {
-        payload.windows = inputData.windows;
+      if (inputData.activity) {
+        payload.activity = inputData.activity;
       }
     }
+    
+    // Log what's being sent to API (excluding large binary data)
+    log.info('Sending data to API: ', {
+      timestamp: payload.timestamp,
+      screenshotsCount: screenshots.length,
+      hasAudio: !!payload.audio,
+      activity: payload.activity ? payload.activity.map(item => ({
+        type: item.type,
+        startTime: new Date(item.startTime).toISOString(),
+        endTime: new Date(item.endTime).toISOString(),
+        duration: item.duration,
+        keystrokesLength: item.keystrokes ? item.keystrokes.length : 0,
+        ...(item.type === 'window' ? { name: item.name, title: item.title } : {})
+      })) : null
+    });
     
     // Send data to Firebase
     const response = await fetch(FIREBASE_CAPTURE_URL, {
@@ -376,6 +482,7 @@ async function captureAndSend(idToken, inputData = {}) {
       throw new Error(`Server error: ${response.status}`);
     }
     
+    log.info('API response status:', response.status);
     return true;
   } catch (error) {
     log.error('Data capture and send error:', error.message, error.stack);
