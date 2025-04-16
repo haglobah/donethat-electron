@@ -37,8 +37,8 @@ async function checkPermissions() {
 function normalizeKeyName(e, down) {
   // We only want to keep backspace, enter, and space from special keys
   const allowedSpecialKeys = {
-    'backspace': '⌫ ', // Backspace symbol with space
-    'enter': '↵',      // Return symbol
+    'backspace': null, // We'll handle backspace specially in processKeystroke
+    'enter': '[ENTER]', // Clear enter representation
     'space': ' '       // Actual space character
   };
 
@@ -158,6 +158,15 @@ function processKeystroke(e, down) {
         alt: false,
         meta: false
       };
+    }
+    
+    // Special handling for backspace
+    if (e.name.toLowerCase() === 'backspace') {
+      // Remove the last keystroke from the timeline
+      if (keystrokeTimeline.length > 0) {
+        keystrokeTimeline.pop();
+      }
+      return;
     }
     
     // Get normalized key name
