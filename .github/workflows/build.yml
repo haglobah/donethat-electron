@@ -47,8 +47,12 @@ jobs:
         
       - name: Create config files from secrets
         run: |
-          echo "${{ secrets.FIREBASE_CONFIG }}" > firebase-config.js
-          echo "${{ secrets.SLACK_CONFIG }}" > slack-config.js
+          cat > firebase-config.js << 'EOL'
+          ${{ secrets.FIREBASE_CONFIG }}
+          EOL
+          cat > slack-config.js << 'EOL'
+          ${{ secrets.SLACK_CONFIG }}
+          EOL
         
       # Setup keychain for macOS code signing (if needed)
       - name: Setup macOS code signing
