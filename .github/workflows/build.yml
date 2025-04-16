@@ -26,11 +26,6 @@ jobs:
             platform: linux
             arch: x64
             command: upload:linux:x64
-          # Note: ARM64 Linux runner is still in beta
-          - os: ubuntu-latest-arm64
-            platform: linux
-            arch: arm64
-            command: upload:linux:arm64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
