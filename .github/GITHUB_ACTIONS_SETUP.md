@@ -19,10 +19,12 @@ For the GitHub Actions workflow to work properly, you need to set up several sec
 - `MAC_CERTIFICATE`: Base64-encoded developer certificate (p12 file)
 - `MAC_CERTIFICATE_PASSWORD`: Password for the certificate
 
-### For Windows Builds
+### For Windows Builds (Optional - Only if you want to sign Windows builds)
 
 - `WINDOWS_CERTIFICATE`: Base64-encoded code signing certificate
 - `WINDOWS_CERTIFICATE_PASSWORD`: Password for the certificate
+
+Note: Windows builds will work without code signing, but users may see security warnings.
 
 ## How to Run the Workflow
 

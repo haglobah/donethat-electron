@@ -59,20 +59,20 @@ jobs:
           # Additional setup code if needed
           
       # Set up Windows code signing (if needed)
-      - name: Setup Windows code signing
-        if: matrix.platform == 'win'
-        env:
-          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          echo "Setting up Windows code signing..."
-          # Additional setup code if needed
+      # - name: Setup Windows code signing
+      #   if: matrix.platform == 'win'
+      #   env:
+      #     CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+      #     CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      #   run: |
+      #     echo "Setting up Windows code signing..."
+      #     # Additional setup code if needed
           
       - name: Build and upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_LINK: ${{ secrets.MAC_CERTIFICATE || secrets.WINDOWS_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD || secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
