@@ -310,6 +310,38 @@ async function saveUserSettings(type, value) {
       });
     }
 
+    // Check if we need to include app version and OS info (only when saving other settings, not app)
+    if (type !== 'app') {
+      try {
+        // Get the latest settings to have the current stored values
+        const result = await getUserSettingsFunction();
+        const settings = result.data;
+        
+        const localVersion = packageInfo.version;
+        const localOSPlatform = os.platform();
+        const localOSRelease = os.release();
+        const storedVersion = settings?.app?.version;
+        const storedOSPlatform = settings?.app?.osPlatform;
+        const storedOSRelease = settings?.app?.osRelease;
+        
+        // Check if any values are different
+        if ((localVersion && localVersion !== storedVersion) ||
+            (localOSPlatform && localOSPlatform !== storedOSPlatform) ||
+            (localOSRelease && localOSRelease !== storedOSRelease)) {
+          
+          // Include app data in this settings update
+          settingsData.app = {
+            version: localVersion || storedVersion,
+            osPlatform: localOSPlatform || storedOSPlatform,
+            osRelease: localOSRelease || storedOSRelease
+          };
+        }
+      } catch (error) {
+        // Non-critical error, just log it
+        console.warn('Could not check app/OS info during settings update:', error);
+      }
+    }
+
     await updateUserSettingsFunction(settingsData);
 
     // If save was successful, *now* send the update to main process for workdays
@@ -501,52 +533,9 @@ async function updateSettingsUI(settings) {
   // Send initial workdays to main process
   ipcRenderer.send('updateWorkdays', workdays);
 
-  // --- Check and update App Version and OS ---
-  try {
-    const localVersion = packageInfo.version;
-    const localOSPlatform = os.platform(); // Get platform
-    const localOSRelease = os.release();   // Get release version
-    const storedVersion = settings?.app?.version;
-    const storedOSPlatform = settings?.app?.osPlatform; // Updated field name
-    const storedOSRelease = settings?.app?.osRelease;   // Added field
-
-    let needsUpdate = false;
-    const appData = {
-      version: storedVersion || localVersion,
-      osPlatform: storedOSPlatform || localOSPlatform, // Use stored value as base if exists
-      osRelease: storedOSRelease || localOSRelease    // Use stored value as base if exists
-    };
-
-    if (localVersion && localVersion !== storedVersion) {
-      console.log(`Local app version (${localVersion}) differs from stored version (${storedVersion}). Updating.`);
-      appData.version = localVersion;
-      needsUpdate = true;
-    }
-
-    if (localOSPlatform && localOSPlatform !== storedOSPlatform) {
-      console.log(`Local OS Platform (${localOSPlatform}) differs from stored OS Platform (${storedOSPlatform}). Updating.`);
-      appData.osPlatform = localOSPlatform;
-      needsUpdate = true;
-    }
-
-    if (localOSRelease && localOSRelease !== storedOSRelease) {
-      console.log(`Local OS Release (${localOSRelease}) differs from stored OS Release (${storedOSRelease}). Updating.`);
-      appData.osRelease = localOSRelease;
-      needsUpdate = true;
-    }
-
-    if (needsUpdate) {
-      // Call saveUserSettings without await to avoid blocking UI update
-      // Spinner is already handled within saveUserSettings
-      saveUserSettings('app', appData).catch(error => {
-        // Log error if the background update fails, but don't block UI
-        console.error("Background update of app version/OS failed:", error);
-      });
-    }
-  } catch (error) {
-    console.error("Error checking/updating app version and OS:", error);
-  }
-  // --- End Check and update App Version and OS ---
+  // Note: We intentionally don't check and update app version/OS here to prevent update loops
+  // when the app is running on multiple systems. App/OS info will only be updated when other
+  // settings are being saved.
 }
 
 /**
