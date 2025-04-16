@@ -75,11 +75,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # Create Firebase config using a temporary file approach
-          [System.IO.File]::WriteAllText("firebase-config.js", '${{ secrets.FIREBASE_CONFIG }}')
-          
-          # Create Slack config using a temporary file approach
-          [System.IO.File]::WriteAllText("slack-config.js", '${{ secrets.SLACK_CONFIG }}')
+          # Create simple JS file that just requires the config files
+          Set-Content -Path firebase-config.js -Value "module.exports = JSON.parse('${{ secrets.FIREBASE_CONFIG_JSON }}');"
+          Set-Content -Path slack-config.js -Value "module.exports = JSON.parse('${{ secrets.SLACK_CONFIG_JSON }}');"
         
       # Setup keychain for macOS code signing (if needed)
       - name: Setup macOS code signing
