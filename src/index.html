@@ -329,12 +329,27 @@
             <label class="form-label mb-1">
               Workdays
             </label>
-            <div id="workdaysContainer" class="flex justify-between items-center space-x-1">
+            <div id="workdaysContainer" class="flex justify-between items-center space-x-1 mb-2">
               <!-- Day selectors will be dynamically added here -->
               <!-- Example structure for one day (repeat 7 times) -->
               <!--
               <button class="workday-selector" data-day="1">M</button>
               -->
+            </div>
+            <div class="flex items-center space-x-2 mt-2">
+              <input 
+                type="time" 
+                id="workhoursStart" 
+                class="form-input text-xs py-1.5 flex-1" 
+                aria-label="Work hours start time"
+              />
+              <span class="text-gray-600">-</span>
+              <input 
+                type="time" 
+                id="workhoursEnd" 
+                class="form-input text-xs py-1.5 flex-1" 
+                aria-label="Work hours end time"
+              />
             </div>
           </div>
 

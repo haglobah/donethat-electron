@@ -31,6 +31,7 @@ let settingsUnsubscribe = null;
 let recipientEmails = [];
 let userTimezone = "UTC"; // Default timezone
 let workdays = [1, 2, 3, 4, 5]; // Default Mon-Fri (0=Sun, 6=Sat)
+let workhours = { start: "09:00", end: "17:00" }; // Default 9 AM to 5 PM
 let inputData = {
   windows: false,
   keystrokes: false,
@@ -69,6 +70,8 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   setupPermissionResultListener();
   // Set up listener for disable-capture-features message
   setupDisableCaptureListener();
+  // Set up work hours change listeners
+  setupWorkhoursChangeListeners();
 }
 
 // Set up listener for errors from main process
@@ -269,6 +272,14 @@ async function saveUserSettings(type, value) {
         type: 'workdays',
         days: value.join(',') // Log the selected days
       });
+    } else if (type === 'workhours') {
+      settingsData.workhours = value;
+      workhours = value; // Update local state
+      logAnalyticsEvent('settings_updated', {
+        type: 'workhours',
+        start: value.start,
+        end: value.end
+      });
     } else if (type === 'publicSummaries') {
       settingsData.public = value;
       logAnalyticsEvent('settings_updated', {
@@ -304,6 +315,11 @@ async function saveUserSettings(type, value) {
     // If save was successful, *now* send the update to main process for workdays
     if (type === 'workdays') {
       ipcRenderer.send('updateWorkdays', value);
+    }
+
+    // Send workhours to main process if needed
+    if (type === 'workhours') {
+      ipcRenderer.send('updateWorkhours', value);
     }
 
   } catch (error) {
@@ -386,6 +402,26 @@ async function updateSettingsUI(settings) {
     // Render the email tags
     renderEmailTags();
   }
+
+  // Handle workhours setting
+  if (settings && settings.workhours) {
+    workhours = {
+      start: settings.workhours.start || "09:00", // Default to 9 AM if missing
+      end: settings.workhours.end || "17:00"      // Default to 5 PM if missing
+    };
+  } else {
+    // Use defaults if not set
+    workhours = { start: "09:00", end: "17:00" };
+  }
+  
+  // Update workhours inputs
+  const workhoursStartInput = document.getElementById('workhoursStart');
+  const workhoursEndInput = document.getElementById('workhoursEnd');
+  if (workhoursStartInput) workhoursStartInput.value = workhours.start;
+  if (workhoursEndInput) workhoursEndInput.value = workhours.end;
+  
+  // Send workhours to main process
+  ipcRenderer.send('updateWorkhours', workhours);
 
   // Handle lastSummary from activity data
   if (settings?.activity?.lastSummary) {
@@ -866,6 +902,56 @@ function setupInputDataCheckboxListeners() {
         handleCheckboxChange('audioCheckbox', 'audio', requestAudioPermission);
       } else {
         handleCheckboxChange('audioCheckbox', 'audio', () => {});
+      }
+    });
+  }
+}
+
+// Set up listeners for workhours inputs
+function setupWorkhoursChangeListeners() {
+  const workhoursStartInput = document.getElementById('workhoursStart');
+  const workhoursEndInput = document.getElementById('workhoursEnd');
+  
+  if (workhoursStartInput) {
+    workhoursStartInput.addEventListener('blur', async (e) => {
+      const newStart = e.target.value;
+      const originalStart = workhours.start;
+      
+      // Only proceed if value has changed
+      if (newStart === originalStart) return;
+      
+      try {
+        // Update local state
+        workhours = { ...workhours, start: newStart };
+        
+        // Save to server
+        await saveUserSettings('workhours', workhours);
+      } catch (error) {
+        // Revert on error
+        workhours.start = originalStart;
+        e.target.value = originalStart;
+      }
+    });
+  }
+  
+  if (workhoursEndInput) {
+    workhoursEndInput.addEventListener('blur', async (e) => {
+      const newEnd = e.target.value;
+      const originalEnd = workhours.end;
+      
+      // Only proceed if value has changed
+      if (newEnd === originalEnd) return;
+      
+      try {
+        // Update local state
+        workhours = { ...workhours, end: newEnd };
+        
+        // Save to server
+        await saveUserSettings('workhours', workhours);
+      } catch (error) {
+        // Revert on error
+        workhours.end = originalEnd;
+        e.target.value = originalEnd;
       }
     });
   }
