@@ -277,15 +277,33 @@ app.whenReady().then(async () => {
 
     // Directly try to use the loaded value, assuming it's milliseconds (number)
     if (loadedTimestamp !== null && loadedTimestamp !== undefined) {
-      const dateObject = new Date(loadedTimestamp);
-      // Validate the date created from the loaded number
-      if (!isNaN(dateObject.getTime())) {
-        lastSummaryTimestamp = loadedTimestamp; // Store as milliseconds
-      } else {
-        // If the loaded number results in an invalid date, delete the stored value
+      try {
+        const dateObject = new Date(loadedTimestamp);
+        // Validate the date created from the loaded number
+        if (!isNaN(dateObject.getTime())) {
+          lastSummaryTimestamp = loadedTimestamp; // Store as milliseconds
+          log.info('Loaded valid timestamp:', new Date(lastSummaryTimestamp).toISOString());
+        } else {
+          // If the loaded number results in an invalid date, log error and delete the stored value
+          log.error('Invalid timestamp format received:', loadedTimestamp, 
+                    'Type:', typeof loadedTimestamp, 
+                    'Resulting date object:', dateObject);
+          store.delete('lastSummaryTimestamp');
+          lastSummaryTimestamp = null;
+        }
+      } catch (error) {
+        log.error('Error processing timestamp:', error, 
+                 'Raw timestamp value:', loadedTimestamp, 
+                 'Type:', typeof loadedTimestamp);
         store.delete('lastSummaryTimestamp');
         lastSummaryTimestamp = null;
       }
+    } else {
+      // For new users, initialize timestamp to current time
+      // This gives them time to use the app before showing notifications
+      lastSummaryTimestamp = Date.now();
+      store.set('lastSummaryTimestamp', lastSummaryTimestamp);
+      log.info('Initialized default timestamp for new user');
     }
 
     // --> Check for unreviewed work on startup <--
@@ -1044,7 +1062,16 @@ app.on('browser-window-focus', async () => {
 
 // Add listener for when summary is submitted
 ipcMain.on('summarySubmitted', (event) => {
-  summarySubmittedTimestamp = Date.now();
+  // Update the local timestamp variable
+  lastSummaryTimestamp = Date.now();
+  
+  // Also save to persistent store
+  if (store) {
+    store.set('lastSummaryTimestamp', lastSummaryTimestamp);
+    log.info('Summary timestamp updated:', new Date(lastSummaryTimestamp).toISOString());
+  } else {
+    log.warn('Store not initialized, cannot save lastSummaryTimestamp on summary submission');
+  }
 })
 
 ////// INPUT DATA ////
@@ -1173,27 +1200,35 @@ function checkAndNotifyForUnreviewedWork() {
 
     // Retrieve the stored timestamp (expecting milliseconds)
     const storedTimestamp = store.get('lastSummaryTimestamp');
-
-    if (typeof storedTimestamp === 'number') {
+    
+    // Only show notification if we have a valid timestamp and it's been more than 12 hours
+    if (typeof storedTimestamp === 'number' && !isNaN(storedTimestamp) && storedTimestamp > 0) {
       const hoursSinceLastSummary = (Date.now() - storedTimestamp) / (1000 * 60 * 60);
+      log.info('Hours since last summary:', hoursSinceLastSummary);
 
       if (hoursSinceLastSummary > 12) {
         // Add 2-minute delay before showing notification
         setTimeout(() => {
-          const notification = new Notification({
-            title: "Review Yesterday's Work", // Use double quotes for string with apostrophe
-            body: "You haven't reviewed your last summary. Generate one in DoneThat to catch up!",
-            silent: false
-          });
-          
-          // Make notification clickable to open the app
-          notification.on('click', () => {
-            navigateToView('signup-next');
-          });
-          
-          notification.show();
+          // Double-check the timestamp hasn't been updated during the delay
+          const currentTimestamp = store.get('lastSummaryTimestamp');
+          if (currentTimestamp === storedTimestamp) {
+            const notification = new Notification({
+              title: "Review Yesterday's Work", // Use double quotes for string with apostrophe
+              body: "You haven't reviewed your last summary. Generate one in DoneThat to catch up!",
+              silent: false
+            });
+            
+            // Make notification clickable to open the app
+            notification.on('click', () => {
+              navigateToView('signup-next');
+            });
+            
+            notification.show();
+          }
         }, 2 * 60 * 1000); // 2 minutes in milliseconds
       }
+    } else {
+      log.info('No valid lastSummaryTimestamp found or first run');
     }
   } catch (error) {
     log.error('Error checking/notifying for unreviewed work:', error);
