@@ -2,20 +2,18 @@ const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notificati
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
-const { initializeApp } = require('firebase/app')
-const firebaseConfig = require('./firebase-config')
 const {
   checkScreenCapturePermission: moduleCheckPermission,
   getWaylandStatus
 } = require('./src-main/captureScreenshots')
 const { 
-  captureAndSend, 
   startCaptureInterval, 
   stopCaptureInterval, 
   isCapturing,
   setCaptureInterval,
   initCapture
 } = require('./src-main/capture')
+const { initState } = require('./src-main/main-state')
 
 // Prevent multiple instances of the app
 const gotTheLock = app.requestSingleInstanceLock();
@@ -75,21 +73,11 @@ setCaptureInterval(SCREENSHOT_INTERVAL_MINUTES);
 let iconRecordingPath = path.join(__dirname, 'resources', 'icon_recording.png')
 let iconPausedPath = path.join(__dirname, 'resources', 'icon_paused.png')
 let iconErrorPath = path.join(__dirname, 'resources', 'icon_error.png')
-// Use let for store since we'll initialize it after imports
-let store = null;
+// State module and variables
+let stateManager = null
 let tray = null
 let mainWindow = null
-let idToken = null
 let screenshotInterval = null
-let pauseState = {
-  endTime: null,     // If non-null and in future, app is paused
-  timeoutId: null    // Reference to the auto-resume timer
-};
-let hasScreenCapturePermission = false
-let isWaylandSession = null;
-let userWorkdays = [1, 2, 3, 4, 5]; // Default Mon-Fri (0=Sun, 6=Sat)
-let dailyWorkdayCheckTimeout = null;
-let lastSummaryTimestamp = null; // Added to store timestamp locally
 
 if (DEBUG) {
   // Add custom notification transport for warnings and errors
@@ -143,9 +131,6 @@ if (app.isPackaged) {
   log.transports.file.level = 'silly'
 }
 
-// Initialize Firebase with the new config
-const firebaseApp = initializeApp(firebaseConfig)
-
 ////// AUTOUPDATER /////
 
 // Configure autoUpdater
@@ -183,7 +168,6 @@ function setupAutoUpdater() {
 
 // Add IPC handler to install update and restart
 ipcMain.on('install-update', () => {
-  console.log('Installing update and restarting...')
   autoUpdater.quitAndInstall(true, true)
 })
 
@@ -251,67 +235,24 @@ function setupAutoStart() {
 ////// MAIN /////
 
 app.whenReady().then(async () => {
-  // Import electron-store using dynamic import (ES Module)
-  try {
-    const Store = await import('electron-store');
-    store = new Store.default({
-      name: 'donethat-config'
-    });
-
-    // Load pause state only after store is initialized
-    loadPauseState();
-
-    // Load userWorkdays from store, with validation and default fallback
-    const savedWorkdays = store.get('userWorkdays');
-    if (Array.isArray(savedWorkdays) && savedWorkdays.every(d => typeof d === 'number' && d >= 0 && d <= 6)) {
-        userWorkdays = [...new Set(savedWorkdays)].sort((a, b) => a - b); // Ensure unique & sorted
-    } else {
-        // Default is already set, but save it initially if not present
-        if (!savedWorkdays) {
-            store.set('userWorkdays', userWorkdays);
-        }
-    }
-
-    // Load last summary timestamp from store into local variable
-    let loadedTimestamp = store.get('lastSummaryPeriodEnd');
-
-    // Directly try to use the loaded value, assuming it's milliseconds (number)
-    if (loadedTimestamp !== null && loadedTimestamp !== undefined) {
-      try {
-        const dateObject = new Date(loadedTimestamp);
-        // Validate the date created from the loaded number
-        if (!isNaN(dateObject.getTime())) {
-          lastSummaryTimestamp = loadedTimestamp; // Store as milliseconds
-          log.info('Loaded valid period end:', new Date(lastSummaryTimestamp).toISOString());
-        } else {
-          // If the loaded number results in an invalid date, log error and delete the stored value
-          log.error('Invalid period end format received:', loadedTimestamp, 
-                    'Type:', typeof loadedTimestamp, 
-                    'Resulting date object:', dateObject);
-          store.delete('lastSummaryPeriodEnd');
-          lastSummaryTimestamp = null;
-        }
-      } catch (error) {
-        log.error('Error processing period end:', error, 
-                 'Raw value:', loadedTimestamp, 
-                 'Type:', typeof loadedTimestamp);
-        store.delete('lastSummaryPeriodEnd');
-        lastSummaryTimestamp = null;
+  // Initialize the state manager with necessary callbacks
+  stateManager = await initState({
+    updateIcon: updateTrayIcon,
+    checkRecording: checkAndAdjustRecording,
+    resumeRecording: () => {
+      // Even if already capturing, update icon to show recording state
+      if (isCapturing()) {
+        updateTrayIcon(true);
+        return;
       }
-    } else {
-      // For new users, initialize timestamp to current time
-      // This gives them time to use the app before showing notifications
-      lastSummaryTimestamp = Date.now();
-      store.set('lastSummaryPeriodEnd', lastSummaryTimestamp);
-      log.info('Initialized default period end for new user');
-    }
-
-    // --> Check for unreviewed work on startup <--
-    checkAndNotifyForUnreviewedWork();
-
-  } catch (error) {
-    log.error('Failed to initialize electron-store or load settings:', error);
-  }
+      if (stateManager && stateManager.isAuthenticated()) {
+        startRecording();
+      }
+    },
+    navigate: navigateToView,
+    stopRecording: stopRecording,
+    showWindow: showWindowBelowTray
+  });
 
   // Create tray with initial error icon
   let trayIcon = nativeImage.createFromPath(iconErrorPath)
@@ -329,19 +270,19 @@ app.whenReady().then(async () => {
   setupAutoStart();
   
   // Check screen capture permission
-  hasScreenCapturePermission = await checkScreenCapturePermission()
-
+  await checkScreenCapturePermission()
+  
   // Initial state check and schedule daily check
-  checkWorkdayAndAdjustRecording();
+  checkAndAdjustRecording();
 
   // --- Add powerMonitor listener here ---
   powerMonitor.on('resume', () => {
     // Clear the potentially delayed timeout from before sleep
-    if (dailyWorkdayCheckTimeout) {
-        clearTimeout(dailyWorkdayCheckTimeout);
+    if (stateManager) {
+        stateManager.clearDailyWorkPeriodCheckTimeout();
     }
     // Immediately check the state and schedule the *next* check
-    checkWorkdayAndAdjustRecording();
+    checkAndAdjustRecording();
   });
   // --- End powerMonitor listener ---
 
@@ -375,13 +316,14 @@ app.whenReady().then(async () => {
 
   // Also check permissions when the app is activated
   app.on('activate', async () => {
-    hasScreenCapturePermission = await checkScreenCapturePermission();
-    log.warn(`A Sending permission check result: hasPermission=${hasScreenCapturePermission}, isWaylandSession=${isWaylandSession}`);
+    await checkScreenCapturePermission();
+
+    log.warn(`A Sending permission check result: hasPermission=${stateManager.hasScreenCapturePermission()}, isWaylandSession=${stateManager.isWaylandSession()}`);
 
     if (mainWindow) {
       mainWindow.webContents.send('screenCapturePermission', {
-        hasPermission: hasScreenCapturePermission,
-        isWaylandSession: isWaylandSession
+        hasPermission: stateManager.hasScreenCapturePermission(),
+        isWaylandSession: stateManager.isWaylandSession()
       });
     }
   });
@@ -404,80 +346,12 @@ app.on('before-quit', () => {
   if (screenshotInterval) {
     clearInterval(screenshotInterval);
   }
-
-  if (pauseState.timeoutId) {
-    clearTimeout(pauseState.timeoutId);
-  }
   
-  // Save pause state before quitting if we're paused
-  if (isPaused()) {
-    savePauseState()
-  }
-
-  if (dailyWorkdayCheckTimeout) {
-    clearTimeout(dailyWorkdayCheckTimeout);
+  // Clean up state (timeouts and save pause state if needed)
+  if (stateManager) {
+    stateManager.cleanupOnQuit();
   }
 })
-
-
-////// AUTH /////
-
-// Add new IPC handler for initial auth check
-ipcMain.on('initialAuthCheck', (event, isAuthenticated) => {
-  if (!isAuthenticated) {
-    // Only show window if user is not authenticated
-    showWindowBelowTray()
-  }
-})
-
-// Updated listener for login event to check if tray exists before updating
-ipcMain.on('login', (event, token) => {
-  idToken = token
-  // Check if we should start recording based on current conditions (including workday)
-  checkWorkdayAndAdjustRecording(); // Use the check function
-
-  // Update icon to show active state (only if we have permission and tray exists)
-  if (tray) {
-    updateTrayIcon(!isPaused() && hasScreenCapturePermission)
-  }
-
-  // Send permission status to renderer
-  if (mainWindow) {
-    mainWindow.webContents.send('screenCapturePermission', {
-      hasPermission: hasScreenCapturePermission,
-      isWaylandSession: isWaylandSession
-    });
-  }
-})
-
-// Update the logout handler to check if tray exists
-ipcMain.on('logout', (event) => {
-  idToken = null
-  // Stop recording regardless of workday status
-  stopRecording();
-})
-
-// Listen for workday updates from renderer
-ipcMain.on('updateWorkdays', (event, days) => {
-  if (Array.isArray(days) && days.every(d => typeof d === 'number' && d >= 0 && d <= 6)) {
-    userWorkdays = [...new Set(days)].sort((a, b) => a - b); // Update state, ensure unique & sorted
-    
-    // Save the updated workdays to the store
-    try {
-        if (store) {
-            store.set('userWorkdays', userWorkdays);
-        } else {
-            log.warn('Store not initialized, cannot save userWorkdays.');
-        }
-    } catch (error) {
-        log.error('Failed to save userWorkdays:', error);
-    }
-    
-    checkWorkdayAndAdjustRecording(); // Use the same logic as the daily check
-  } else {
-    log.error('Received invalid workdays data:', days);
-  }
-});
 
 ////// TRAY /////
 
@@ -491,9 +365,9 @@ function updateTrayIcon(isActuallyRecording) {
   let iconPath;
   let tooltip;
 
-  const loggedIn = Boolean(idToken);
-  const manuallyPaused = isPaused();
-  const todayIsWorkday = isWorkday(); // Check current day
+  const loggedIn = stateManager && stateManager.isAuthenticated();
+  const manuallyPaused = stateManager && stateManager.isPaused();
+  const todayIsWorkPeriod = stateManager && stateManager.isActiveWorkPeriod(); // Check current day
 
   if (isActuallyRecording) {
     iconPath = iconRecordingPath;
@@ -504,12 +378,12 @@ function updateTrayIcon(isActuallyRecording) {
   } else if (!loggedIn) {
     iconPath = iconErrorPath;
     tooltip = 'DoneThat - Not Logged In';
-  } else if (!hasScreenCapturePermission) {
+  } else if (!stateManager.hasScreenCapturePermission()) {
       iconPath = iconErrorPath;
       tooltip = 'DoneThat - Screen Permission Needed';
-  } else if (!todayIsWorkday) {
-    iconPath = iconPausedPath; // Use paused icon for non-workdays
-    tooltip = 'DoneThat - Not Recording (Non-Workday)';
+  } else if (!todayIsWorkPeriod) {
+    iconPath = iconPausedPath; // Use paused icon for non-work-period
+    tooltip = 'DoneThat - Not Recording (no working hours)';
   } else {
     // Default fallback (e.g., other error state?)
     iconPath = iconErrorPath;
@@ -549,8 +423,8 @@ function navigateToView(viewName) {
 
 // Function to build the context menu with pause options
 function buildContextMenu() {
-  const isLoggedIn = Boolean(idToken)
-  const currentlyPaused = isPaused()
+  const isLoggedIn = stateManager && stateManager.isAuthenticated();
+  const currentlyPaused = stateManager && stateManager.isPaused();
 
   // Start with basic template
   const template = []
@@ -582,32 +456,32 @@ function buildContextMenu() {
   template.push(
     {
       label: 'Pause for 5 minutes',
-      click: () => pauseRecording(5 * 60 * 1000),
+      click: () => stateManager.pauseRecording(5 * 60 * 1000, mainWindow),
       enabled: isLoggedIn && !currentlyPaused && screenshotInterval
     },
     {
       label: 'Pause for 15 minutes',
-      click: () => pauseRecording(15 * 60 * 1000),
+      click: () => stateManager.pauseRecording(15 * 60 * 1000, mainWindow),
       enabled: isLoggedIn && !currentlyPaused && screenshotInterval
     },
     {
       label: 'Pause for 30 minutes',
-      click: () => pauseRecording(30 * 60 * 1000),
+      click: () => stateManager.pauseRecording(30 * 60 * 1000, mainWindow),
       enabled: isLoggedIn && !currentlyPaused && screenshotInterval
     },
     {
       label: 'Pause for 1 hour',
-      click: () => pauseRecording(60 * 60 * 1000),
+      click: () => stateManager.pauseRecording(60 * 60 * 1000, mainWindow),
       enabled: isLoggedIn && !currentlyPaused && screenshotInterval
     },
     {
       label: 'Pause for today',
-      click: () => pauseUntilNextWorkday(),
+      click: () => stateManager.pauseUntilNextWorkPeriod(mainWindow),
       enabled: isLoggedIn && !currentlyPaused && screenshotInterval
     },
     {
       label: 'Resume',
-      click: () => resumeRecording(),
+      click: () => stateManager.resumeRecording(mainWindow),
       enabled: isLoggedIn && currentlyPaused
     }
   )
@@ -641,265 +515,65 @@ function buildContextMenu() {
   return Menu.buildFromTemplate(template)
 }
 
-// Helper function to check if currently paused (manual pause)
-function isPaused() {
-  return pauseState.endTime !== null && pauseState.endTime > new Date();
-}
-
-// Helper function to check if today is a configured workday
-function isWorkday(date = new Date()) {
-  const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
-  // Ensure userWorkdays is an array before checking
-  return Array.isArray(userWorkdays) && userWorkdays.includes(dayOfWeek);
-}
-
-/**
- * Handles authentication errors reported by the capture module
- * @param {Object} result - Authentication error object
- * @param {boolean} [result.authError] - True if there was a general authentication error
- * @param {boolean} [result.tokenExpired] - True if the authentication token has expired
- */
-function handleCaptureAuthErrors(result) {
-  // Handle auth error
-  if (result && result.authError) {
-    idToken = null;
-    if (mainWindow) {
-      mainWindow.webContents.send('auth-error');
-    }
-  }
-  
-  // Handle token expired error
-  if (result && result.tokenExpired) {    
-    // Request token refresh from renderer process
-    if (mainWindow) {
-      mainWindow.webContents.send('refresh-token');
-      
-      // Set up one-time listener for the refreshed token
-      ipcMain.once('token-refreshed', async (event, newToken) => {
-        if (newToken) {
-          idToken = newToken;
-          
-          // Retry the capture with new token
-          const retryResult = await captureAndSend(idToken, {});
-          if (retryResult && retryResult.authError) {
-            // If still failing after refresh, signal auth error
-            idToken = null;
-            mainWindow.webContents.send('auth-error');
-          } else if (!retryResult) {
-            // Log other errors from retry
-            console.error('Capture retry failed after token refresh');
-          }
-        } else {
-          log.error('Failed to refresh token');
-          // Handle as auth error since refresh failed
-          idToken = null;
-          mainWindow.webContents.send('auth-error');
-        }
-      });
-    }
-  }
-}
-
-// Function to pause recording for a specified duration
-function pauseRecording(duration) {
-  // Stop recording first regardless of why
-  stopRecording(); // Use the new helper
-
-  if (pauseState.timeoutId) {
-    clearTimeout(pauseState.timeoutId)
-    pauseState.timeoutId = null
-  }
-
-  // Calculate end time
-  const endTime = new Date(Date.now() + duration)
-  
-  // Set pause state
-  pauseState = {
-    endTime: endTime,
-    timeoutId: setTimeout(() => resumeRecording(), duration)
-  };
-  
-  // Save the pause state
-  savePauseState()
-  
-  updateTrayIcon(false)
-
-  // Send analytics event to renderer
-  if (mainWindow) {
-    mainWindow.webContents.send('analytics-event', {
-      eventName: 'recording_state_changed',
-      eventParams: {
-        status: 'paused',
-        duration_minutes: Math.round(duration / (60 * 1000))
-      }
-    });
-  }
-}
-
-// Function to pause until the start (4 AM) of the next configured workday
-function pauseUntilNextWorkday() {
-  const now = new Date();
-  let nextWorkdayDate = new Date(now);
-
-  // Start checking from tomorrow
-  nextWorkdayDate.setDate(nextWorkdayDate.getDate() + 1);
-
-  // Find the next date that is a workday
-  while (!isWorkday(nextWorkdayDate)) {
-    nextWorkdayDate.setDate(nextWorkdayDate.getDate() + 1);
-  }
-
-  // Set the time to 4:00 AM on that workday
-  nextWorkdayDate.setHours(4, 0, 0, 0);
-
-  const duration = nextWorkdayDate.getTime() - now.getTime();
-
-  // Ensure duration is positive (should always be, but safety check)
-  if (duration > 0) {
-    pauseRecording(duration);
-  } else {
-    log.error('Calculated pause duration until next workday was not positive.');
-    // Fallback: Pause for 1 hour just in case
-    pauseRecording(60 * 60 * 1000);
-  }
-}
-
-// Function to resume recording (called manually or by timer)
-function resumeRecording() {
-  if (!idToken || !hasScreenCapturePermission) {
-    updateTrayIcon(false); // Update icon if not logged in or no permission
-    return; // Can't resume if not logged in or no permission
-  }
-
-  if (pauseState.timeoutId) {
-    clearTimeout(pauseState.timeoutId);
-  }
-
-  // Reset pause state
-  const wasPaused = isPaused(); // Check if we were *manually* paused
-  pauseState = { endTime: null, timeoutId: null };
-  if (store) store.delete('pauseState');
-
-  // Check if we should begin recording
-  if (!isCapturing()) {
-    startRecording();
-  }
-  // Just update the icon if we're already recording
-  updateTrayIcon(isCapturing());
-
-  // Common operations for all resume cases
-  if (mainWindow && wasPaused) {
-    mainWindow.webContents.send('pauseStateChanged', false);
-    mainWindow.webContents.send('analytics-event', { 
-        eventName: 'recording_state_changed',
-        eventParams: { status: 'resumed' } 
-      });
-  }
-  
-  // --> Check for unreviewed work when manually resuming <--
-  checkAndNotifyForUnreviewedWork();
-}
-
-// Function to save pause state using electron-store
-function savePauseState() {
-  try {
-    // Skip if store is not initialized
-    if (!store) {
-      log.warn('Store not initialized');
-      return;
-    }
-
-    const stateToSave = {
-      endTime: pauseState.endTime ? pauseState.endTime.getTime() : null
-    }
-    store.set('pauseState', stateToSave)
-  } catch (error) {
-    log.error('Failed to save pause state:', error)
-  }
-}
-
-// Function to load pause state using electron-store
-function loadPauseState() {
-  try {
-    // Skip if store is not initialized
-    if (!store) {
-      log.warn('Store not initialized');
-      return false;
-    }
-
-    const savedState = store.get('pauseState')
-    
-    if (savedState && savedState.endTime) {
-      const endTime = new Date(savedState.endTime)
-      const now = new Date()
-      
-      // If pause end time is in the future, restore the pause
-      if (endTime > now) {
-        const remainingDuration = endTime.getTime() - now.getTime()
-        
-        pauseState = {
-          endTime: endTime,
-          timeoutId: setTimeout(() => resumeRecording(), remainingDuration)
-        };
-        
-        return true
-      } else {
-        // Pause period has already expired
-        store.delete('pauseState')
-      }
-    }
-  } catch (error) {
-    log.error('Failed to load pause state:', error)
-  }
-  return false
-}
-
-// Schedules a check for the next day at 4:01 AM
-function scheduleDailyWorkdayCheck() {
-    if (dailyWorkdayCheckTimeout) {
-        clearTimeout(dailyWorkdayCheckTimeout);
-    }
-
-    const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(now.getDate() + 1);
-    // Check at 4:01 AM local time the next day
-    tomorrow.setHours(4, 1, 0, 0);
-
-    const msUntilCheck = tomorrow.getTime() - now.getTime();
-    // Ensure msUntilCheck is positive (e.g., if check runs slightly after 4:01 AM)
-    const positiveMsUntilCheck = Math.max(msUntilCheck, 60000); // Minimum 1 minute wait
-
-    dailyWorkdayCheckTimeout = setTimeout(() => {
-        checkWorkdayAndAdjustRecording();
-        // Note: checkWorkdayAndAdjustRecording now calls scheduleDailyWorkdayCheck again
-    }, positiveMsUntilCheck);
-}
-
 // Central function to evaluate and adjust recording state based on all factors
-function checkWorkdayAndAdjustRecording() {
+function checkAndAdjustRecording() {
     const isCurrentlyRecording = isCapturing();
-    const canRecordEssentials = idToken && hasScreenCapturePermission && !isPaused();
-    const todayIsWorkday = isWorkday();
+    const isAuthenticated = stateManager && stateManager.isAuthenticated();
+    const hasPermission = stateManager && stateManager.hasScreenCapturePermission();
+    const isPaused = stateManager && stateManager.isPaused();
+    const isActivePeriodNow = stateManager ? stateManager.isActiveWorkPeriod() : false; // Check current work period status
+    const lastSummaryTimestamp = stateManager ? stateManager.getLastSummaryTimestamp() : null;
 
-    // Determine if recording *should* stop based on essential conditions
-    const shouldStop = isCurrentlyRecording && !canRecordEssentials;
-    // Determine if recording *should* start based on all conditions (including workday)
-    const shouldStart = !isCurrentlyRecording && canRecordEssentials && todayIsWorkday;
+    // Determine the *ideal* recording state based on current conditions
+    const shouldBeRecording = isAuthenticated && hasPermission && !isPaused && isActivePeriodNow;
 
-    if (shouldStop) {
-        stopRecording(); // Stop if logged out, permission lost, or paused
-    } else if (shouldStart) {
-        startRecording(); // Start automatically only if it's a workday and conditions met
+    // --- Notification Logic for Workday End ---
+    // Check if recording was active *before* this check AND it should stop *now* primarily because the work period ended
+    if (isCurrentlyRecording && !shouldBeRecording && !isActivePeriodNow) {
+        // This condition targets the moment the work period ends while recording was active.
+        // We assume the other essential conditions (auth, permission, not paused) were met just before this.
+
+        // Check the timestamp condition
+        const threeHoursInMillis = 3 * 60 * 60 * 1000;
+        if (lastSummaryTimestamp && (Date.now() - lastSummaryTimestamp > threeHoursInMillis)) {
+            // Show notification
+            const notification = new Notification({
+                title: "Workday Ended",
+                body: "Remember to generate your summary in DoneThat!",
+                silent: false // Make sure it's not silent
+            });
+
+            // Make notification clickable to open the app
+            notification.on('click', () => {
+                 navigateToView('signup-next'); // Navigate to the main view
+            });
+
+            notification.show();
+            log.info('Workday ended notification shown.'); // Log that we showed it
+        }
+    }
+    // --- End Notification Logic ---
+
+    // If authenticated, has permission, not manually paused, but outside work hours,
+    // auto-pause until next work period
+    if (isAuthenticated && hasPermission && !isPaused && !isActivePeriodNow) {
+        stateManager.pauseUntilNextWorkPeriod(mainWindow);
+    } 
+    // Regular start/stop logic
+    else if (isCurrentlyRecording && !shouldBeRecording) {
+        stopRecording();
+    } else if (!isCurrentlyRecording && shouldBeRecording) {
+        startRecording();
     } else {
-        // No change in start/stop needed, but ensure icon reflects current reality.
-        // For example, if manually resumed on non-workday, icon should stay 'recording'.
-        // If it's a non-workday and not recording, icon should reflect that.
+        // No change in start/stop needed, but update icon based on *actual* recording status
+        // This handles cases like being manually paused outside work hours, etc.
         updateTrayIcon(isCurrentlyRecording);
     }
 
     // Schedule the next check (important for the loop)
-    scheduleDailyWorkdayCheck();
+    if (stateManager) {
+        stateManager.scheduleNextCheck();
+    }
 }
 
 ////// WINDOWS /////
@@ -944,8 +618,8 @@ function createWindow() {
     // Position the window once it's ready.
     mainWindow.once('ready-to-show', () => {
       mainWindow.webContents.send('screenCapturePermission', {
-        hasPermission: hasScreenCapturePermission,
-        isWaylandSession: isWaylandSession
+        hasPermission: stateManager.hasScreenCapturePermission(),
+        isWaylandSession: stateManager.isWaylandSession()
       });
       
       // Initialize capture with auth error handler
@@ -1041,56 +715,37 @@ app.on('window-all-closed', (event) => {
   // Otherwise let the app quit normally
 });
 
-// Update the focus handler to use the global isWaylandSession variable
+// Update the focus handler to use state manager
 app.on('browser-window-focus', async () => {
-  const oldPermission = hasScreenCapturePermission;
-  hasScreenCapturePermission = await checkScreenCapturePermission();
+  const oldPermission = stateManager ? stateManager.hasScreenCapturePermission() : false;
+  await checkScreenCapturePermission();
 
   // Only send update if permission status actually changed
-  if (oldPermission !== hasScreenCapturePermission && mainWindow) {
-    // Use the global isWaylandSession variable
+  if (oldPermission !== stateManager.hasScreenCapturePermission() && mainWindow) {
+    // Use the state manager values
     mainWindow.webContents.send('screenCapturePermission', {
-      hasPermission: hasScreenCapturePermission,
-      isWaylandSession: isWaylandSession
+      hasPermission: stateManager.hasScreenCapturePermission(),
+      isWaylandSession: stateManager.isWaylandSession()
     });
 
     // Re-evaluate recording state based on permission change
-    checkWorkdayAndAdjustRecording();
+    checkAndAdjustRecording();
   }
 });
-
-
-// Add listener for when summary is submitted
-ipcMain.on('summarySubmitted', (event, data) => {
-  // Check if we received the period end time
-  if (data && data.lastSummaryPeriodEnd) {
-    // Store the period end time
-    const lastSummaryPeriodEnd = data.lastSummaryPeriodEnd;
-    
-    // Update the local timestamp variable with the period end time
-    lastSummaryTimestamp = lastSummaryPeriodEnd;
-    
-    // Save to persistent store
-    if (store) {
-      store.set('lastSummaryPeriodEnd', lastSummaryPeriodEnd);
-      log.info('Summary period end updated:', new Date(lastSummaryPeriodEnd).toISOString());
-    } else {
-      log.warn('Store not initialized, cannot save lastSummaryPeriodEnd on summary submission');
-    }
-  } else {
-    log.warn('No period end time received with summary submission');
-  }
-})
 
 ////// INPUT DATA ////
 
 // Checks all conditions (login, permission, pause, workday) and starts interval if appropriate
 function startRecording() {
-  // --> Check for unreviewed work before starting/resuming recording <--
-  checkAndNotifyForUnreviewedWork();
+  // Check for unreviewed work before starting/resuming recording
+  if (stateManager) {
+    stateManager.checkAndNotifyForUnreviewedWork(mainWindow);
+  }
 
   // Start the capture interval - auth errors are now handled by the callback passed to initCapture
-  startCaptureInterval(idToken);
+  if (stateManager && stateManager.isAuthenticated()) {
+    startCaptureInterval(stateManager.getIdToken());
+  }
   
   // Common operations
   updateTrayIcon(true) // Show recording state
@@ -1122,34 +777,30 @@ function stopRecording() {
 
 // Function to check screen capture permission
 async function checkScreenCapturePermission() {
-  hasScreenCapturePermission = await moduleCheckPermission();
-  isWaylandSession = getWaylandStatus();
-  return hasScreenCapturePermission;
+  // Get current permission status from OS-level APIs
+  const hasPermission = await moduleCheckPermission();
+  const waylandStatus = getWaylandStatus();
+  
+  // Update the state manager with current values
+  if (stateManager) {
+    stateManager.updateScreenCapturePermission(hasPermission);
+    stateManager.updateWaylandStatus(waylandStatus);
+  } else {
+    log.warn('State manager not initialized, cannot update screen capture permission');
+  }
+  
+  return hasPermission;
 }
-
-// Add IPC handler for resume action
-ipcMain.on('resumeRecording', () => {
-  resumeRecording();
-});
-
-ipcMain.handle('getInitialPauseState', () => {
-  return isPaused(); // Return the current state determined by loadPauseState
-});
-
-// From dashboard
-ipcMain.on('pauseUntilTomorrow', () => {
-  pauseUntilNextWorkday();
-});
 
 // Also update the explicit permission check handler
 ipcMain.on('checkScreenCapturePermission', async () => {
-  hasScreenCapturePermission = await checkScreenCapturePermission();
+  await checkScreenCapturePermission();
 
   if (mainWindow) {
-    // Send both permission status and session type
+    // Send both permission status and session type from state manager
     mainWindow.webContents.send('screenCapturePermission', {
-      hasPermission: hasScreenCapturePermission,
-      isWaylandSession: isWaylandSession
+      hasPermission: stateManager.hasScreenCapturePermission(),
+      isWaylandSession: stateManager.isWaylandSession()
     });
   }
 });
@@ -1175,90 +826,48 @@ ipcMain.on('requestScreenCapturePermission', async () => {
     // Remove listener immediately to prevent multiple triggers
     app.removeListener('browser-window-focus', focusListener);
 
-    const hasPermission = await checkScreenCapturePermission()
+    const oldPermission = stateManager.hasScreenCapturePermission();
+    await checkScreenCapturePermission();
 
-    if (hasPermission !== oldPermission && mainWindow) { // Check if permission *changed*
+    if (stateManager.hasScreenCapturePermission() !== oldPermission && mainWindow) { // Check if permission *changed*
       mainWindow.webContents.send('screenCapturePermission', {
-        hasPermission: hasPermission,
-        isWaylandSession: isWaylandSession
+        hasPermission: stateManager.hasScreenCapturePermission(),
+        isWaylandSession: stateManager.isWaylandSession()
       });
 
       // Re-evaluate recording state based on permission change
-      checkWorkdayAndAdjustRecording();
+      checkAndAdjustRecording();
     }
   };
-  // Store old permission state *before* adding listener
-  const oldPermission = hasScreenCapturePermission;
+  
   app.on('browser-window-focus', focusListener);
 })
 
-// Add IPC handler for pause state updates
-ipcMain.on('pauseStateChanged', (event, isPaused) => {
-  if (mainWindow) {
-    mainWindow.webContents.send('pauseStateChanged', isPaused);
-  }
-});
-
-// Function to check for unreviewed work and notify
-function checkAndNotifyForUnreviewedWork() {
-  try {
-    if (!store) {
-      return; // Can't check if store isn't ready
+/**
+ * Handles authentication errors reported by the capture module
+ * @param {Object} result - Authentication error object
+ * @param {boolean} [result.authError] - True if there was a general authentication error
+ * @param {boolean} [result.tokenExpired] - True if the authentication token has expired
+ */
+function handleCaptureAuthErrors(result) {
+  // Handle auth error
+  if (result && result.authError) {
+    if (stateManager) {
+      stateManager.clearIdToken();
     }
-
-    // Retrieve the stored period end time
-    const storedPeriodEnd = store.get('lastSummaryPeriodEnd');
     
-    // Only show notification if we have a valid period end time and it's been more than 12 hours
-    if (typeof storedPeriodEnd === 'number' && !isNaN(storedPeriodEnd) && storedPeriodEnd > 0) {
-      const hoursSinceLastSummary = (Date.now() - storedPeriodEnd) / (1000 * 60 * 60);
-      log.info('Hours since last summary period end:', hoursSinceLastSummary);
-
-      if (hoursSinceLastSummary > 12) {
-        // Add 2-minute delay before showing notification
-        setTimeout(() => {
-          // Double-check the period end hasn't been updated during the delay
-          const currentPeriodEnd = store.get('lastSummaryPeriodEnd');
-          if (currentPeriodEnd === storedPeriodEnd) {
-            const notification = new Notification({
-              title: "Review Yesterday's Work", // Use double quotes for string with apostrophe
-              body: "You haven't reviewed your last summary. Generate one in DoneThat to catch up!",
-              silent: false
-            });
-            
-            // Make notification clickable to open the app
-            notification.on('click', () => {
-              navigateToView('signup-next');
-            });
-            
-            notification.show();
-          }
-        }, 2 * 60 * 1000); // 2 minutes in milliseconds
-      }
-    } else {
-      log.info('No valid lastSummaryPeriodEnd found or first run');
+    if (mainWindow) {
+      mainWindow.webContents.send('auth-error');
     }
-  } catch (error) {
-    log.error('Error checking/notifying for unreviewed work:', error);
+  }
+  
+  // Handle token expired error
+  if (result && result.tokenExpired) {    
+    // Request token refresh from renderer process
+    if (mainWindow) {
+      mainWindow.webContents.send('refresh-token');
+      
+      // No need for ipcMain.once here as main-state now handles token-refreshed
+    }
   }
 }
-
-// Add IPC handler for receiving last summary timestamp
-ipcMain.on('updateLastSummaryTimestamp', (event, timestamp) => {
-  try {
-    // Attempt to convert directly, assuming Firebase Timestamp object
-    const timestampInMillis = timestamp._seconds * 1000 + Math.floor(timestamp._nanoseconds / 1000000);
-
-    // Attempt to store the converted milliseconds
-    if (store) {
-      lastSummaryTimestamp = timestampInMillis; // Update local variable
-      store.set('lastSummaryPeriodEnd', timestampInMillis); // Store as periodEnd
-    } else {
-      // Log only if store isn't ready - potentially important
-      log.warn('Store not initialized, cannot save lastSummaryPeriodEnd.');
-    }
-  } catch (error) {
-    // Log any errors during conversion or storage
-    log.error('Error processing/storing lastSummaryPeriodEnd:', error, 'Raw value:', timestamp);
-  }
-});

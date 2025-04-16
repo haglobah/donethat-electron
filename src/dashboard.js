@@ -208,8 +208,8 @@ function showSummaryGeneratedState() {
     submitBtn.classList.remove('disabled-btn'); // Remove disabled styling
     
     document.getElementById('visibilityNoteContainer')?.classList.add('hidden'); // Hide note on reset
+    document.getElementById('summaryLoadingSpinner').classList.add('hidden'); // Ensure spinner is hidden
     currentSummaryId = null;
-    selectedBulletPoints = [];
     customBullets = []; // Reset custom bullets
     currentPeriodEndTime = null; // Reset the stored period end time
   
