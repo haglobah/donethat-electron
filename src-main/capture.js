@@ -532,22 +532,12 @@ async function collectInputData(resetBuffers = true) {
 }
 
 /**
- * Formats a timestamp for display in the timeline
- * @param {number|string} timestamp The timestamp to format
- * @returns {string} Formatted time string
- */
-function formatTimeForDisplay(timestamp) {
-  const date = typeof timestamp === 'string' ? new Date(timestamp) : new Date(timestamp);
-  return date.toLocaleTimeString(); // Returns time in local format like "3:45:30 PM"
-}
-
-/**
  * Captures all input data and sends it to Firebase
  * @param {string} idToken The Firebase ID token
  * @param {Object} inputData Additional input data to send (audio, keystrokes, windows)
  * @returns {Promise<Object|boolean>} Response status
  */
-async function captureAndSend(idToken, inputData = {}) {
+async function _sendToServer(idToken, screenshots,inputData = {}) {
   if (!idToken) {
     log.warn('Cannot send data: User not authenticated');
     // Call the reauthenticate callback if available
@@ -558,14 +548,6 @@ async function captureAndSend(idToken, inputData = {}) {
   }
 
   try {
-    // Capture screenshots
-    const screenshots = await captureScreenshot();
-    
-    if (!screenshots || screenshots.length === 0) {
-      log.warn('No screenshots captured, skipping upload');
-      return false;
-    }
-
     const fetch = await import('node-fetch').then(module => module.default);
     
     // Create payload with screenshots and timestamp
@@ -663,13 +645,18 @@ async function captureAndSend(idToken, inputData = {}) {
  * @param {string} idToken The Firebase ID token
  * @returns {Promise<Object|boolean>} Response status
  */
-async function captureAndSendAllData(idToken) {
+async function captureAndSend(idToken) {
   try {
+    // Capture screenshots
+    const screenshots = await captureScreenshot();
+
+    if (!screenshots || screenshots.length === 0) {
+        log.warn('No screenshots captured, skipping upload');
+        return false;
+    }
+
     // Get input data while resetting buffers to avoid duplicate data in next capture
     const inputData = await collectInputData(true);
-    
-    // No need to start captures again as they're running continuously
-    // await startInputDataCapture();
     
     // Check if any capture errors occurred
     const captureErrors = inputData.captureErrors;
@@ -680,7 +667,7 @@ async function captureAndSendAllData(idToken) {
     }
     
     // Send all collected data to the server
-    return await captureAndSend(idToken, inputData);
+    return await _sendToServer(idToken, screenshots, inputData);
   } catch (error) {
     // If collectInputData threw an uncaught error or another part failed
     handleCaptureError(error, 'unknown');
@@ -763,7 +750,7 @@ function startCaptureInterval(idToken) {
           log.error('Error restarting window tracking:', err));
       }
       
-      await captureAndSendAllData(idToken);
+      await captureAndSend(idToken);
     } catch (error) {
       // The captureAndSendAllData function already calls handleCaptureError internally
       log.error('Unhandled error in scheduled capture:', error);
@@ -809,9 +796,6 @@ function isCapturing() {
 
 module.exports = {
   captureAndSend,
-  startInputDataCapture,
-  collectInputData,
-  captureAndSendAllData,
   startCaptureInterval,
   stopCaptureInterval,
   isCapturing,
