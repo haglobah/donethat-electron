@@ -15,12 +15,12 @@
     "build:win:arm64": "npm run build:prepare && electron-builder --win --arm64",
     "build:linux:x64": "npm run build:prepare && electron-builder --linux --x64",
     "build:linux:arm64": "npm run build:prepare && electron-builder --linux --arm64",
-    "upload:mac:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --x64 --publish onTagOrDraft",
-    "upload:mac:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --arm64 --publish onTagOrDraft",
-    "upload:win:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --x64 --publish onTagOrDraft",
-    "upload:win:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --arm64 --publish onTagOrDraft",
-    "upload:linux:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --linux --x64 --publish onTagOrDraft",
-    "upload:linux:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --linux --arm64 --publish onTagOrDraft",
+    "upload:mac:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --x64 --publish always",
+    "upload:mac:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --arm64 --publish always",
+    "upload:win:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --x64 --publish always",
+    "upload:win:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --arm64 --publish always",
+    "upload:linux:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --linux --x64 --publish always",
+    "upload:linux:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --linux --arm64 --publish always",
     "release": "echo 'Build strategy: Run the upload:PLATFORM:ARCH command matching your current system architecture'"
   },
   "repository": {

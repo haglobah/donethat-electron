@@ -73,11 +73,32 @@ jobs:
 
       - name: Create config files from secrets (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: cmd
+        env:
+          FIREBASE_APIKEY: ${{ secrets.FIREBASE_APIKEY }}
+          FIREBASE_APISECRET: ${{ secrets.FIREBASE_APISECRET }}
+          SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
         run: |
-          # Create simple JS file that just requires the config files
-          Set-Content -Path firebase-config.js -Value "module.exports = JSON.parse('${{ secrets.FIREBASE_CONFIG_JSON }}');"
-          Set-Content -Path slack-config.js -Value "module.exports = JSON.parse('${{ secrets.SLACK_CONFIG_JSON }}');"
+          (
+          echo module.exports = {
+          echo   apiKey: "%FIREBASE_APIKEY%",
+          echo   authDomain: "donethat.firebaseapp.com",
+          echo   projectId: "donethat",
+          echo   storageBucket: "donethat.firebasestorage.app",
+          echo   messagingSenderId: "1025033172374",
+          echo   appId: "1:1025033172374:web:9f983b7bcbd02c9c2e19b7",
+          echo   measurementId: "G-Q80YWJ3BM4",
+          echo   apiSecret: "%FIREBASE_APISECRET%"
+          echo };
+          ) > firebase-config.js
+          
+          (
+          echo module.exports = {
+          echo   clientId: '%SLACK_CLIENT_ID%',
+          echo   clientSecret: '%SLACK_CLIENT_SECRET%'
+          echo };
+          ) > slack-config.js
         
       # Setup keychain for macOS code signing (if needed)
       - name: Setup macOS code signing
