@@ -9,6 +9,16 @@ export default async function notarizing(context) {
         return;
     }
 
+    // Skip notarization if required variables are missing
+    const teamId = process.env.APPLETEAMID || process.env.APPLE_TEAM_ID;
+    const appleId = process.env.APPLEID || process.env.APPLE_ID;
+    const appleIdPassword = process.env.APPLEIDPASS || process.env.APPLE_ID_PASSWORD;
+
+    if (!teamId || !appleId || !appleIdPassword) {
+        console.log('Skipping notarization: missing required environment variables');
+        return;
+    }
+
     const appName = context.packager.appInfo.productFilename;
     console.log('Notarizing app', appName);
     
@@ -16,15 +26,19 @@ export default async function notarizing(context) {
         await notarize({
             tool: 'notarytool',
             verbose: true,
-            teamId: process.env.APPLETEAMID,
+            teamId: teamId,
             appBundleId: 'com.donethat.app',
             appPath: `${appOutDir}/${appName}.app`,
-            appleId: process.env.APPLEID,
-            appleIdPassword: process.env.APPLEIDPASS,
+            appleId: appleId,
+            appleIdPassword: appleIdPassword,
         });
         console.log('Notarization completed successfully');
     } catch (error) {
         console.error('Notarization failed:', error);
-        throw error;
+        // Don't throw error to allow builds to continue in CI environment
+        // unless we explicitly want to enforce notarization
+        if (process.env.ENFORCE_NOTARIZATION === 'true') {
+            throw error;
+        }
     }
 }

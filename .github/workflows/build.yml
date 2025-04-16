@@ -1,0 +1,122 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (leave empty to use package.json version)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            arch: x64
+            command: upload:mac:x64
+          - os: windows-latest
+            platform: win
+            arch: x64
+            command: upload:win:x64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            command: upload:linux:x64
+          # Note: ARM64 Linux runner is still in beta
+          - os: ubuntu-latest-arm64
+            platform: linux
+            arch: arm64
+            command: upload:linux:arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          
+      - name: Setup Python for node-gyp
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools wheel
+          
+      # Fix for active-win on macOS GitHub runners
+      - name: Fix macOS active-win dependencies
+        if: matrix.platform == 'mac'
+        run: |
+          pip install macholib
+          
+      - name: Install dependencies
+        run: npm install
+        
+      - name: Create config files from secrets (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cat > firebase-config.js << 'EOL'
+          ${{ secrets.FIREBASE_CONFIG }}
+          EOL
+          cat > slack-config.js << 'EOL'
+          ${{ secrets.SLACK_CONFIG }}
+          EOL
+
+      - name: Create config files from secrets (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $firebaseConfig = '${{ secrets.FIREBASE_CONFIG }}'
+          $slackConfig = '${{ secrets.SLACK_CONFIG }}'
+          Set-Content -Path firebase-config.js -Value $firebaseConfig
+          Set-Content -Path slack-config.js -Value $slackConfig
+        
+      # Setup keychain for macOS code signing (if needed)
+      - name: Setup macOS code signing
+        if: matrix.platform == 'mac'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "Setting up macOS code signing..."
+          # Additional setup code if needed
+          
+      # Set up Windows code signing (if needed)
+      # - name: Setup Windows code signing
+      #   if: matrix.platform == 'win'
+      #   env:
+      #     CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+      #     CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      #   run: |
+      #     echo "Setting up Windows code signing..."
+      #     # Additional setup code if needed
+          
+      - name: Build and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CI: true
+        run: npm run ${{ matrix.command }}
+        
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-${{ matrix.arch }}-build
+          path: release/
+          if-no-files-found: ignore 
