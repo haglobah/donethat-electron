@@ -43,7 +43,7 @@ jobs:
           cache: 'npm'
           
       - name: Install dependencies
-        run: npm ci
+        run: npm install
         
       # Setup keychain for macOS code signing (if needed)
       - name: Setup macOS code signing
