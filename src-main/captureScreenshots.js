@@ -13,7 +13,6 @@ let isWaylandSession = null
 function _checkSessionType() {
   // Check if running on Wayland
   isWaylandSession = process.env.XDG_SESSION_TYPE === 'wayland'
-  log.info(`Session type: ${isWaylandSession ? 'Wayland' : 'X11'}`)
   return isWaylandSession
 }
 
@@ -64,7 +63,6 @@ async function checkLinuxScreenCapturePermission() {
   _checkSessionType() // Use the renamed internal function
   // Session type already checked by parent function
   try {
-    log.info(`Checking Linux screenshot permission (Wayland: ${isWaylandSession})`)
 
     const fs = require('fs')
     const os = require('os')
@@ -76,7 +74,6 @@ async function checkLinuxScreenCapturePermission() {
       // For Wayland, check if gnome-screenshot is available
       try {
         execSync('which gnome-screenshot', { stdio: 'ignore' })
-        log.info('gnome-screenshot is available for Wayland')
         
         // Try to take a test screenshot with animations disabled
         await takeGnomeScreenshot(testPath)
@@ -84,52 +81,42 @@ async function checkLinuxScreenCapturePermission() {
         if (fs.existsSync(testPath)) {
           fs.unlinkSync(testPath)
           linuxScreenshotTool = 'gnome-screenshot'
-          log.info('gnome-screenshot permission test successful')
           return true
         }
       } catch (e) {
-        log.info(`gnome-screenshot not available or failed: ${e.message}`)
       }
       
-      log.info('No working screenshot tool found for Wayland')
       linuxScreenshotTool = null
       return false
     } else {
       // For X11, try scrot first, then maim
       try {
         execSync('which scrot', { stdio: 'ignore' })
-        log.info('scrot is available for X11')
         
         execSync(`scrot -z "${testPath}"`, { timeout: 3000 })
         
         if (fs.existsSync(testPath)) {
           fs.unlinkSync(testPath)
           linuxScreenshotTool = 'scrot'
-          log.info('scrot permission test successful')
           return true
         }
       } catch (e) {
-        log.info(`scrot not available or failed: ${e.message}`)
       }
       
       // Try maim as alternative
       try {
         execSync('which maim', { stdio: 'ignore' })
-        log.info('maim is available for X11')
 
         execSync(`maim "${testPath}"`, { timeout: 3000 })
         
         if (fs.existsSync(testPath)) {
           fs.unlinkSync(testPath)
           linuxScreenshotTool = 'maim'
-          log.info('maim permission test successful')
           return true
         }
       } catch (e) {
-        log.info(`maim not available or failed: ${e.message}`)
       }
       
-      log.info('No working screenshot tool found for X11')
       linuxScreenshotTool = null
       return false
     }
@@ -149,7 +136,6 @@ async function captureScreenshot() {
     
     // Use Linux-specific method on Linux platforms
     if (process.platform === 'linux') {
-      log.info('Using Linux-specific screenshot method');
       screenshots = await captureScreenshotsLinux();
     } else {
       // Use the standard Electron approach for other platforms
@@ -290,7 +276,6 @@ async function getLinuxDisplays() {
       }
       
       if (displays.length > 0) {
-        log.info(`Found ${displays.length} displays using xrandr`)
         return displays
       }
     }
@@ -301,7 +286,6 @@ async function getLinuxDisplays() {
       bounds: display.bounds
     }))
     
-    log.info(`Found ${displays.length} displays using Electron screen API`)
     return displays
   } catch (error) {
     log.error('Failed to get Linux displays:', error)

@@ -67,6 +67,51 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   setupInputDataCheckboxListeners();
   // Set up permission result listener
   setupPermissionResultListener();
+  // Set up listener for disable-capture-features message
+  setupDisableCaptureListener();
+}
+
+// Set up listener for errors from main process
+function setupDisableCaptureListener() {
+  ipcRenderer.on('disable-capture-features', async (event, disabledSettings) => {
+    
+    // Update checkbox UI based on the settings
+    if (disabledSettings.audio === false) {
+      const audioCheckbox = document.getElementById('audioCheckbox');
+      if (audioCheckbox && audioCheckbox.checked) {
+        audioCheckbox.checked = false;
+        // Update local state
+        inputData.audio = false;
+      }
+    }
+    
+    if (disabledSettings.keystrokes === false) {
+      const keystrokesCheckbox = document.getElementById('keystrokesCheckbox');
+      if (keystrokesCheckbox && keystrokesCheckbox.checked) {
+        keystrokesCheckbox.checked = false;
+        // Update local state
+        inputData.keystrokes = false;
+      }
+    }
+    
+    if (disabledSettings.windows === false) {
+      const windowsCheckbox = document.getElementById('windowsCheckbox');
+      if (windowsCheckbox && windowsCheckbox.checked) {
+        windowsCheckbox.checked = false;
+        // Update local state
+        inputData.windows = false;
+      }
+    }
+    
+    // Save the updated settings - only if changes were made
+    if (disabledSettings.audio === false || disabledSettings.keystrokes === false || disabledSettings.windows === false) {
+      try {
+        await saveUserSettings('inputData', inputData);
+      } catch (error) {
+        console.error('Error updating settings after feature disabled:', error);
+      }
+    }
+  });
 }
 
 // Set up listener for permission check results

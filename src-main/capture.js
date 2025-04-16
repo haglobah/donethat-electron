@@ -12,8 +12,9 @@ const windowsCapture = require('./captureWindows');
 
 // Variable to track the capture interval
 let screenshotInterval = null;
-let captureIntervalMinutes = 5; // Default interval
+let captureIntervalMinutes; // Set in main
 let reauthenticateCallback = null; // Store reauthenticate callback function
+let mainWindowRef = null; // Store mainWindow reference
 
 // Track input data settings
 let inputDataSettings = {
@@ -23,26 +24,47 @@ let inputDataSettings = {
 };
 
 /**
- * Sets the interval for captures in minutes
- * @param {number} minutes The interval in minutes
+ * Sets capture interval in minutes
+ * @param {number} minutes Interval in minutes
+ * @throws {Error} If invalid
  */
 function setCaptureInterval(minutes) {
+  if (!minutes || typeof minutes !== 'number' || minutes <= 0) {
+    throw new Error('Capture interval must be a positive number of minutes');
+  }
+  
   captureIntervalMinutes = minutes;
+  
+  // Update audio buffer duration if mainWindow exists
+  if (mainWindowRef) {
+    const bufferDurationMs = captureIntervalMinutes * 60 * 1000;
+    mainWindowRef.webContents.executeJavaScript(
+      `window.initAudioRecorder && window.initAudioRecorder({
+        bufferDurationMs: ${bufferDurationMs}
+      });`
+    ).catch(error => {
+      log.error('Error updating audio recorder buffer duration:', error);
+      // Don't throw here as this is a post-initialization update
+    });
+  }
+  
   return captureIntervalMinutes;
 }
 
 /**
  * Updates input data settings
- * @param {Object} settings Settings object with audio, keystrokes, windows flags
+ * @param {Object} settings Settings with audio, keystrokes, windows flags
  * @returns {Object} Updated settings
  */
 function updateInputDataSettings(settings) {
   if (settings && typeof settings === 'object') {
+    // Merge with existing settings rather than replacing completely
     inputDataSettings = {
-      audio: !!settings.audio,
-      keystrokes: !!settings.keystrokes,
-      windows: !!settings.windows
-    };
+      ...inputDataSettings,
+      ...(settings.audio !== undefined ? { audio: !!settings.audio } : {}),
+      ...(settings.keystrokes !== undefined ? { keystrokes: !!settings.keystrokes } : {}),
+      ...(settings.windows !== undefined ? { windows: !!settings.windows } : {})
+    };    
   }
   return inputDataSettings;
 }
@@ -53,10 +75,26 @@ function updateInputDataSettings(settings) {
  * @param {Function} onAuthError Callback for when authentication errors are detected
  *                               Called with either {authError: true} for general auth failures
  *                               or {tokenExpired: true} for token expiration
+ * @throws {Error} If mainWindow is not provided or capture interval is not set
  */
 function initCapture(mainWindow, onAuthError) {
+  if (!mainWindow) {
+    throw new Error('Main window must be provided to initialize capture');
+  }
+  
+  if (!captureIntervalMinutes || captureIntervalMinutes <= 0) {
+    throw new Error('Capture interval must be set before initializing capture');
+  }
+  
   // Store the reauthenticate callback
   reauthenticateCallback = onAuthError;
+  // Store mainWindow reference
+  mainWindowRef = mainWindow;
+  
+  // Initialize audio capture with main window and buffer duration matching the capture interval
+  audioCapture.initialize(mainWindow, {
+    bufferDurationMs: captureIntervalMinutes * 60 * 1000
+  });
   
   // Handler for updating input data settings
   ipcMain.on('updateInputDataSettings', (event, settings) => {
@@ -68,35 +106,29 @@ function initCapture(mainWindow, onAuthError) {
     const { shell } = require('electron');
     const { checkPermission } = require('./captureAudio');
     
-    // First check if we already have permission
     const hasPermission = await checkPermission();
     
     if (hasPermission) {
-      // Already have permission, inform renderer
       if (mainWindow) {
         mainWindow.webContents.send('audioPermission', true);
       }
       return;
     }
     
-    // Open relevant system settings based on platform
+    // Open system settings based on platform
     if (process.platform === 'darwin') {
-      // macOS - Open microphone privacy settings
       shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
     } else if (process.platform === 'win32') {
-      // Windows - Open microphone privacy settings
       shell.openExternal('ms-settings:privacy-microphone');
     } else if (process.platform === 'linux') {
-      // Linux - No standard way to open settings, notify user to check manually
       if (mainWindow) {
         mainWindow.webContents.send('linux-audio-permission-notice');
       }
     }
     
-    // After opening settings, check permission again when app regains focus
+    // Check permission on focus
     const app = require('electron').app;
     const focusListener = async () => {
-      // Remove listener immediately to prevent multiple triggers
       app.removeListener('browser-window-focus', focusListener);
       
       const newHasPermission = await checkPermission();
@@ -111,40 +143,34 @@ function initCapture(mainWindow, onAuthError) {
 
   ipcMain.on('requestKeystrokesPermission', async (event) => {
     const { shell } = require('electron');
-    const { checkPermission } = require('./captureKeystrokes');
+    const { checkPermissions } = require('./captureKeystrokes');
     
-    // First check if we already have permission
-    const hasPermission = await checkPermission();
+    const hasPermission = await checkPermissions();
     
     if (hasPermission) {
-      // Already have permission, inform renderer
       if (mainWindow) {
         mainWindow.webContents.send('keystrokesPermission', true);
       }
       return;
     }
     
-    // Open relevant system settings based on platform
+    // Open system settings based on platform
     if (process.platform === 'darwin') {
-      // macOS - Open accessibility privacy settings
       shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
     } else if (process.platform === 'win32') {
-      // Windows - No direct settings for keyboard access, open general privacy
       shell.openExternal('ms-settings:privacy');
     } else if (process.platform === 'linux') {
-      // Linux - No standard way to open settings
       if (mainWindow) {
         mainWindow.webContents.send('linux-keystrokes-permission-notice');
       }
     }
     
-    // After opening settings, check permission again when app regains focus
+    // Check permission on focus
     const app = require('electron').app;
     const focusListener = async () => {
-      // Remove listener immediately to prevent multiple triggers
       app.removeListener('browser-window-focus', focusListener);
       
-      const newHasPermission = await checkPermission();
+      const newHasPermission = await checkPermissions();
       
       if (mainWindow) {
         mainWindow.webContents.send('keystrokesPermission', newHasPermission);
@@ -156,40 +182,34 @@ function initCapture(mainWindow, onAuthError) {
 
   ipcMain.on('requestWindowsPermission', async (event) => {
     const { shell } = require('electron');
-    const { checkPermission } = require('./captureWindows');
+    const { checkPermissions } = require('./captureWindows');
     
-    // First check if we already have permission
-    const hasPermission = await checkPermission();
+    const hasPermission = await checkPermissions();
     
     if (hasPermission) {
-      // Already have permission, inform renderer
       if (mainWindow) {
         mainWindow.webContents.send('windowsPermission', true);
       }
       return;
     }
     
-    // Open relevant system settings based on platform
+    // Open system settings based on platform
     if (process.platform === 'darwin') {
-      // macOS - Open accessibility privacy settings (needed for window title access)
       shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
     } else if (process.platform === 'win32') {
-      // Windows - No direct settings for window access, open general privacy
       shell.openExternal('ms-settings:privacy');
     } else if (process.platform === 'linux') {
-      // Linux - No standard way to open settings
       if (mainWindow) {
         mainWindow.webContents.send('linux-windows-permission-notice');
       }
     }
     
-    // After opening settings, check permission again when app regains focus
+    // Check permission on focus
     const app = require('electron').app;
     const focusListener = async () => {
-      // Remove listener immediately to prevent multiple triggers
       app.removeListener('browser-window-focus', focusListener);
       
-      const newHasPermission = await checkPermission();
+      const newHasPermission = await checkPermissions();
       
       if (mainWindow) {
         mainWindow.webContents.send('windowsPermission', newHasPermission);
@@ -201,49 +221,179 @@ function initCapture(mainWindow, onAuthError) {
 }
 
 /**
- * Starts capturing all enabled input data types
- * @param {Object} options Options for capturing (maxDurationMs, etc.)
+ * Process keystroke data into segments
+ * @param {Array} keystrokeData Array of keystroke events
+ * @returns {Array} Processed keystroke segments
  */
-function startInputDataCapture() {
-  const maxDurationMs = captureIntervalMinutes * 60 * 1000;
+function processKeystrokeSegments(keystrokeData) {
+  const segments = [];
+  let processedKeystrokes = '';
+  let lastTimestamp = 0;
+  let currentSegmentStart = 0;
+  
+  // Sort by timestamp
+  const sortedKeystrokes = [...keystrokeData].sort((a, b) => {
+    const aTime = typeof a.timestamp === 'string' ? new Date(a.timestamp).getTime() : a.timestamp;
+    const bTime = typeof b.timestamp === 'string' ? new Date(b.timestamp).getTime() : b.timestamp;
+    return aTime - bTime;
+  });
+  
+  if (sortedKeystrokes.length === 0) {
+    return segments;
+  }
+  
+  // Set initial segment start time
+  const firstTime = typeof sortedKeystrokes[0].timestamp === 'string' 
+    ? new Date(sortedKeystrokes[0].timestamp).getTime() 
+    : sortedKeystrokes[0].timestamp;
+  currentSegmentStart = firstTime;
+  
+  // Process keystroke segments with gaps > 5 seconds
+  for (let i = 0; i < sortedKeystrokes.length; i++) {
+    const ks = sortedKeystrokes[i];
+    const ksTime = typeof ks.timestamp === 'string' 
+      ? new Date(ks.timestamp).getTime() 
+      : ks.timestamp;
+    
+    // Start a new segment if there's a significant gap
+    if (lastTimestamp === 0 || (ksTime - lastTimestamp > 5000)) {
+      if (lastTimestamp > 0 && processedKeystrokes.length > 0) {
+        // Add the completed segment
+        segments.push({
+          type: 'keystrokes',
+          startTime: currentSegmentStart,
+          endTime: lastTimestamp,
+          duration: lastTimestamp - currentSegmentStart,
+          keystrokes: processedKeystrokes
+        });
+        
+        // Reset for new segment
+        processedKeystrokes = '';
+        currentSegmentStart = ksTime;
+      }
+    }
+    
+    // Add the key to the current segment
+    processedKeystrokes += ks.key;
+    lastTimestamp = ksTime;
+  }
+  
+  // Add the final segment if there's data
+  if (processedKeystrokes.length > 0) {
+    segments.push({
+      type: 'keystrokes',
+      startTime: currentSegmentStart,
+      endTime: lastTimestamp,
+      duration: lastTimestamp - currentSegmentStart,
+      keystrokes: processedKeystrokes
+    });
+  }
+  
+  return segments;
+}
 
-  // Start audio recording if enabled
-  if (inputDataSettings.audio) {
-    audioCapture.startRecording({
-      maxDurationMs: maxDurationMs
-    }).catch(error => {
-      log.error('Error starting audio recording:', error);
-    });
-  }
-  
-  // Start keystroke tracking if enabled
-  if (inputDataSettings.keystrokes) {
-    keystrokesCapture.startTracking({
-      maxHistoryMs: maxDurationMs
-    });
-  }
-  
-  // Start window tracking if enabled
-  if (inputDataSettings.windows) {
-    windowsCapture.startTracking({
-      maxHistory: maxDurationMs
-    });
+/**
+ * Starts capturing input data including audio, keystrokes, and window information
+ * This function handles checking permissions and gracefully handles errors
+ * @returns {Promise<void>}
+ */
+async function startInputDataCapture() {
+  try {
+    // Handle audio capture
+    try {
+      if (inputDataSettings.audio) {
+        await audioCapture.startRecording();
+      }
+    } catch (audioError) {
+      log.error('Failed to start audio recording:', audioError);
+      // Don't rethrow - continue with other captures
+      updateInputDataSettings({ audio: false }); // Disable setting since it failed
+      
+      // Notify renderer about the permission issue
+      if (mainWindowRef) {
+        mainWindowRef.webContents.send('permission-error', { 
+          type: 'audio', 
+          message: 'Microphone access denied. Please check your system permissions.'
+        });
+      }
+    }
+    
+    // Handle keystroke capture
+    try {
+      if (inputDataSettings.keystrokes) {
+        await keystrokesCapture.startTracking();
+      }
+    } catch (keystrokesError) {
+      log.error('Failed to start keystroke tracking:', keystrokesError);
+      // Don't rethrow - continue with other captures
+      updateInputDataSettings({ keystrokes: false }); // Disable setting since it failed
+      
+      // Notify renderer about the permission issue
+      if (mainWindowRef) {
+        mainWindowRef.webContents.send('permission-error', { 
+          type: 'keystrokes', 
+          message: 'Unable to track keystrokes. Please check your system permissions.'
+        });
+      }
+    }
+    
+    // Handle window tracking
+    try {
+      if (inputDataSettings.windows) {
+        await windowsCapture.startTracking();
+      }
+    } catch (windowsError) {
+      log.error('Failed to start window tracking:', windowsError);
+      // Don't rethrow - continue with other captures
+      updateInputDataSettings({ windows: false }); // Disable setting since it failed
+      
+      // Notify renderer about the permission issue
+      if (mainWindowRef) {
+        mainWindowRef.webContents.send('permission-error', { 
+          type: 'windows', 
+          message: 'Window tracking permission denied. Please grant accessibility permissions in system settings.'
+        });
+      }
+    }
+    
+    // Notify renderer that capture components have been started
+    if (mainWindowRef) {
+      mainWindowRef.webContents.send('capture-status', { isCapturing: true });
+    }
+    
+  } catch (error) {
+    log.error('Failed to start input data capture:', error);
+    
+    // Notify renderer that capture failed
+    if (mainWindowRef) {
+      mainWindowRef.webContents.send('capture-status', { 
+        isCapturing: false,
+        error: error.message || 'Unknown error starting capture'
+      });
+    }
+    
+    throw error;
   }
 }
 
 /**
- * Stops capturing all input data types and returns the captured data
+ * Collects all input data from the active capture modules without stopping tracking
+ * @param {boolean} resetBuffers - Whether to reset data buffers after collection
  * @returns {Promise<Object>} The captured input data
  */
-async function stopInputDataCapture() {
+async function collectInputData(resetBuffers = true) {
   let inputData = {};
+  let captureErrors = {
+    audio: false,
+    keystrokes: false,
+    windows: false
+  };
   
-  // Get audio data if enabled
+  // Get audio data
   if (inputDataSettings.audio) {
     try {
       const audioInfo = await audioCapture.stopRecording();
       if (audioInfo && audioInfo.filePath) {
-        // Read audio file as base64
         const fs = require('fs');
         const audioBuffer = fs.readFileSync(audioInfo.filePath);
         inputData.audio = {
@@ -251,137 +401,144 @@ async function stopInputDataCapture() {
           mimeType: 'audio/wav',
           timeMs: audioInfo.duration || 0
         };
-        // Delete file after reading
         fs.unlinkSync(audioInfo.filePath);
       }
     } catch (error) {
+      captureErrors.audio = true;
       log.error('Error capturing audio data:', error);
     }
   }
   
-  // Get keystroke and window data for processing
+  // Get keystroke and window data
   let keystrokeData = [];
   let windowData = [];
   
-  // Get keystroke data if enabled
+  // Get keystroke data
   if (inputDataSettings.keystrokes) {
     try {
-      keystrokeData = keystrokesCapture.processTimelineData();
-      keystrokesCapture.stopTracking();
+      // Reset timeline after collection to avoid duplicate data in next capture
+      keystrokeData = keystrokesCapture.getKeystrokeTimeline(
+        captureIntervalMinutes * 60 * 1000, // Use capture interval as time window
+        resetBuffers // Reset timeline after collection if requested
+      );
+      
+      if (keystrokeData.length === 0 && keystrokesCapture.isTracking()) {
+        log.warn('Keystroke tracking is active but no data collected - possible issue with tracking');
+        
+        // Try to restart keystroke tracking
+        try {
+          await keystrokesCapture.stopTracking();
+          await keystrokesCapture.startTracking();
+        } catch (restartError) {
+          log.error('Failed to restart keystroke tracking:', restartError);
+        }
+      }
     } catch (error) {
+      captureErrors.keystrokes = true;
       log.error('Error capturing keystroke data:', error);
     }
   }
   
-  // Get window data if enabled
+  // Get window data
   if (inputDataSettings.windows) {
     try {
-      windowData = windowsCapture.processTimelineData(windowsCapture.getTimeline());
-      windowsCapture.stopTracking();
+      // Get window timeline data from buffer and process it
+      // Reset timeline after collection to avoid duplicate data in next capture
+      const windowTimelineBuffer = windowsCapture.getTimelineBuffer(
+        captureIntervalMinutes * 60 * 1000, // Use capture interval as time window
+        resetBuffers // Reset timeline after collection if requested
+      );
+      
+      windowData = windowsCapture.processTimelineData(windowTimelineBuffer);
+      
+      if (windowTimelineBuffer.length === 0 && windowsCapture.isTracking()) {
+        log.warn('Window tracking is active but no data collected - possible issue with tracking');
+        
+        // Try to restart window tracking
+        try {
+          await windowsCapture.stopTracking();
+          await windowsCapture.startTracking();
+        } catch (restartError) {
+          log.error('Failed to restart window tracking:', restartError);
+        }
+      }
     } catch (error) {
+      captureErrors.windows = true;
       log.error('Error capturing window data:', error);
     }
   }
   
-  // Process activity data (keystrokes or windows+keystrokes)
+  // Process activity data
   inputData.activity = [];
   
-  // Process keystroke data based on window data
-  if (inputDataSettings.keystrokes && keystrokeData.length > 0) {
-    if (inputDataSettings.windows && windowData.length > 0) {
-      // Attach keystrokes to each window period
-      windowData.forEach(windowPeriod => {
-        // Find keystrokes that happened during this window period
-        const windowKeystrokes = keystrokeData.filter(ks => 
-          ks.timestamp >= windowPeriod.startTime && 
-          ks.timestamp <= windowPeriod.endTime
-        );
-        
-        // Convert to string of keystrokes
-        const keystrokeString = windowKeystrokes
-          .map(ks => ks.key)
-          .join('');
-        
-        // Add window activity with keystrokes
+  try {
+    if (inputDataSettings.keystrokes && keystrokeData.length > 0) {
+      if (inputDataSettings.windows && windowData.length > 0) {
+        // Attach keystrokes to window periods
+        windowData.forEach(windowPeriod => {
+          const windowKeystrokes = keystrokeData.filter(ks => {
+            if (!ks.timestamp) return false;
+            const ksTime = typeof ks.timestamp === 'string' 
+              ? new Date(ks.timestamp).getTime() 
+              : ks.timestamp;
+            return ksTime >= windowPeriod.startTime && ksTime <= windowPeriod.endTime;
+          });
+          
+          const keystrokeString = windowKeystrokes
+            .map(ks => ks.key)
+            .join('');
+          
+          inputData.activity.push({
+            type: 'window',
+            name: windowPeriod.name,
+            title: windowPeriod.title,
+            startTime: windowPeriod.startTime,
+            endTime: windowPeriod.endTime,
+            duration: windowPeriod.duration,
+            keystrokes: keystrokeString
+          });
+        });
+      } else {
+        // Process keystrokes into segments
+        const keystrokeSegments = processKeystrokeSegments(keystrokeData);
+        inputData.activity = inputData.activity.concat(keystrokeSegments);
+      }
+    } else if (inputDataSettings.windows && windowData.length > 0) {
+      // Just include window data
+      windowData.forEach(window => {
         inputData.activity.push({
           type: 'window',
-          name: windowPeriod.name,
-          title: windowPeriod.title,
-          startTime: windowPeriod.startTime,
-          endTime: windowPeriod.endTime,
-          duration: windowPeriod.duration,
-          keystrokes: keystrokeString
+          name: window.name,
+          title: window.title,
+          startTime: window.startTime,
+          endTime: window.endTime,
+          duration: window.duration,
+          keystrokes: ''
         });
       });
-    } else {
-      // Process keystrokes on their own with breaks for gaps > 5 seconds
-      let processedKeystrokes = '';
-      let lastTimestamp = 0;
-      let currentSegmentStart = 0;
-      
-      // Sort keystrokes by timestamp
-      const sortedKeystrokes = [...keystrokeData].sort((a, b) => a.timestamp - b.timestamp);
-      
-      if (sortedKeystrokes.length > 0) {
-        currentSegmentStart = sortedKeystrokes[0].timestamp;
-      }
-      
-      for (let i = 0; i < sortedKeystrokes.length; i++) {
-        const ks = sortedKeystrokes[i];
-        
-        // If this is the first keystroke or there's been a gap > 5 seconds
-        if (lastTimestamp === 0 || (ks.timestamp - lastTimestamp > 5000)) {
-          // Add the previous segment if not the first keystroke
-          if (lastTimestamp > 0) {
-            // Add the previous segment
-            inputData.activity.push({
-              type: 'keystrokes',
-              startTime: currentSegmentStart,
-              endTime: lastTimestamp,
-              duration: lastTimestamp - currentSegmentStart,
-              keystrokes: processedKeystrokes
-            });
-            
-            // Reset for new segment
-            processedKeystrokes = '';
-            currentSegmentStart = ks.timestamp;
-          }
-        }
-        
-        // Add the key
-        processedKeystrokes += ks.key;
-        
-        // Update last timestamp
-        lastTimestamp = ks.timestamp;
-        
-        // Add the last segment if we've reached the end
-        if (i === sortedKeystrokes.length - 1 && processedKeystrokes.length > 0) {
-          inputData.activity.push({
-            type: 'keystrokes',
-            startTime: currentSegmentStart,
-            endTime: lastTimestamp,
-            duration: lastTimestamp - currentSegmentStart,
-            keystrokes: processedKeystrokes
-          });
-        }
-      }
     }
-  } else if (inputDataSettings.windows && windowData.length > 0) {
-    // Just include window data without keystrokes
-    windowData.forEach(window => {
-      inputData.activity.push({
-        type: 'window',
-        name: window.name,
-        title: window.title,
-        startTime: window.startTime,
-        endTime: window.endTime,
-        duration: window.duration,
-        keystrokes: ''
-      });
-    });
+    
+    if (inputData.activity.length === 0) {
+      log.warn('No activity data was generated despite tracking being active');
+    }
+  } catch (error) {
+    log.error('Error processing activity data:', error);
+    if (inputDataSettings.keystrokes) captureErrors.keystrokes = true;
+    if (inputDataSettings.windows) captureErrors.windows = true;
   }
   
+  inputData.captureErrors = captureErrors;
   return inputData;
+}
+
+/**
+ * Formats a timestamp for display in the timeline
+ * @param {number|string} timestamp The timestamp to format
+ * @returns {string} Formatted time string
+ */
+function formatTimeForDisplay(timestamp) {
+  const date = typeof timestamp === 'string' ? new Date(timestamp) : new Date(timestamp);
+  return date.toLocaleTimeString(); // Returns time in local format like "3:45:30 PM"
 }
 
 /**
@@ -424,21 +581,32 @@ async function captureAndSend(idToken, inputData = {}) {
       }
       
       if (inputData.activity && inputData.activity.length > 0) {
-        payload.activity = inputData.activity;
+        // Format all timestamps to local time in activity data
+        payload.activity = inputData.activity.map(item => {
+          // Create a new object without start/end times for the API
+          const apiItem = {
+            ...item,
+            formattedDuration: `${Math.round(item.duration / 1000)}s`  // Duration in seconds
+          };
+          
+          // Remove start/end times from the API payload
+          delete apiItem.startTime;
+          delete apiItem.endTime;
+          
+          return apiItem;
+        });
       }
     }
     
     // Log what's being sent to API (excluding large binary data)
     log.info('Sending data to API: ', {
-      timestamp: payload.timestamp,
+      timestamp: new Date(payload.timestamp).toLocaleString(),
       screenshotsCount: screenshots.length,
       hasAudio: !!payload.audio,
       activity: payload.activity ? payload.activity.map(item => ({
         type: item.type,
-        startTime: new Date(item.startTime).toISOString(),
-        endTime: new Date(item.endTime).toISOString(),
-        duration: item.duration,
-        keystrokesLength: item.keystrokes ? item.keystrokes.length : 0,
+        formattedDuration: item.formattedDuration,
+        keystrokes: item.keystrokes,
         ...(item.type === 'window' ? { name: item.name, title: item.title } : {})
       })) : null
     });
@@ -496,14 +664,58 @@ async function captureAndSend(idToken, inputData = {}) {
  * @returns {Promise<Object|boolean>} Response status
  */
 async function captureAndSendAllData(idToken) {
-  // Get input data from previously started captures
-  const inputData = await stopInputDataCapture();
+  try {
+    // Get input data while resetting buffers to avoid duplicate data in next capture
+    const inputData = await collectInputData(true);
+    
+    // No need to start captures again as they're running continuously
+    // await startInputDataCapture();
+    
+    // Check if any capture errors occurred
+    const captureErrors = inputData.captureErrors;
+    if (captureErrors && (captureErrors.audio || captureErrors.keystrokes || captureErrors.windows)) {
+      // Pass the specific errors to the handler
+      handleCaptureError(new Error('Capture module error detected'), 'module-specific', captureErrors);
+      delete inputData.captureErrors; // Remove this property before sending
+    }
+    
+    // Send all collected data to the server
+    return await captureAndSend(idToken, inputData);
+  } catch (error) {
+    // If collectInputData threw an uncaught error or another part failed
+    handleCaptureError(error, 'unknown');
+    return false;
+  }
+}
+
+// Helper function to handle errors during capture interval
+function handleCaptureError(error, context, captureErrors = null) {
+  log.error(`Error during ${context} capture:`, error);
+  stopCaptureInterval(); // Stop the interval first
+
+  // Default to disabling everything if we don't have specific error info
+  let updatedSettings = { ...inputDataSettings };
   
-  // Start new captures for the next interval
-  startInputDataCapture();
+  if (captureErrors) {
+    // Only disable the problematic features
+    if (captureErrors.audio) updatedSettings.audio = false;
+    if (captureErrors.keystrokes) updatedSettings.keystrokes = false;
+    if (captureErrors.windows) updatedSettings.windows = false;
+  } else {
+    // We don't know which one failed, so disable all optional captures
+    log.warn('Unknown capture error source - disabling all capture features');
+    updatedSettings = {
+      audio: false,
+      keystrokes: false,
+      windows: false
+    };
+  }
   
-  // Send all collected data to the server
-  return await captureAndSend(idToken, inputData);
+  // Update settings
+  inputDataSettings = updatedSettings;
+
+  // Notify the renderer to update UI and save settings
+  mainWindowRef.webContents.send('disable-capture-features', updatedSettings);
 }
 
 /**
@@ -512,23 +724,49 @@ async function captureAndSendAllData(idToken) {
  * @returns {number} The interval ID
  */
 function startCaptureInterval(idToken) {
-  // Clear any existing interval first
+  // Clear any existing interval and stop all tracking
   stopCaptureInterval();
   
-  // Start input data capture immediately
-  startInputDataCapture();
+  // Ensure clean state - explicitly stop tracking first
+  if (inputDataSettings.keystrokes) {
+    keystrokesCapture.stopTracking();
+  }
   
-  // Perform an immediate capture to validate authentication
-  captureAndSendAllData(idToken).catch(error => {
-    log.error('Error during initial capture:', error);
+  if (inputDataSettings.windows) {
+    windowsCapture.stopTracking();
+  }
+  
+  // Start input data capture from scratch
+  startInputDataCapture().catch(error => {
+    // The startInputDataCapture function already calls handleCaptureError internally
+    log.error('Unhandled error in initial capture:', error);
   });
   
   // Set up interval for regular captures
   screenshotInterval = setInterval(async () => {
     try {
+      // Make sure capture is started each time if it somehow stopped
+      if (inputDataSettings.audio && !audioCapture.getStatus().recording) {
+        await audioCapture.startRecording().catch(err => 
+          log.error('Error restarting audio recording:', err));
+      }
+      
+      // Check if keystroke tracking is still active
+      if (inputDataSettings.keystrokes && !keystrokesCapture.isTracking()) {
+        await keystrokesCapture.startTracking().catch(err => 
+          log.error('Error restarting keystroke tracking:', err));
+      }
+      
+      // Check if window tracking is still active
+      if (inputDataSettings.windows && !windowsCapture.isTracking()) {
+        await windowsCapture.startTracking().catch(err => 
+          log.error('Error restarting window tracking:', err));
+      }
+      
       await captureAndSendAllData(idToken);
     } catch (error) {
-      log.error('Error during scheduled capture:', error);
+      // The captureAndSendAllData function already calls handleCaptureError internally
+      log.error('Unhandled error in scheduled capture:', error);
     }
   }, captureIntervalMinutes * 60 * 1000);
   
@@ -536,9 +774,10 @@ function startCaptureInterval(idToken) {
 }
 
 /**
- * Stops the capture interval and any ongoing captures
+ * Stops the capture interval and all tracking completely.
+ * This is the MAIN function to call when you want to fully stop all capturing activities.
  */
-function stopCaptureInterval() {
+function stopCaptureInterval() {  
   if (screenshotInterval) {
     clearInterval(screenshotInterval);
     screenshotInterval = null;
@@ -546,8 +785,8 @@ function stopCaptureInterval() {
   
   // Stop ongoing captures
   if (inputDataSettings.audio) {
-    audioCapture.stopRecording().catch(error => {
-      log.error('Error stopping audio recording:', error);
+    audioCapture.shutdownRecording().catch(error => {
+      log.error('Error shutting down audio recording:', error);
     });
   }
   
@@ -571,7 +810,7 @@ function isCapturing() {
 module.exports = {
   captureAndSend,
   startInputDataCapture,
-  stopInputDataCapture,
+  collectInputData,
   captureAndSendAllData,
   startCaptureInterval,
   stopCaptureInterval,

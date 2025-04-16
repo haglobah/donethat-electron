@@ -1,510 +1,281 @@
-const { execSync } = require('child_process')
-const log = require('electron-log')
-const path = require('path')
+const log = require('electron-log');
+const { GlobalKeyboardListener } = require('node-global-key-listener');
 
-// Variables to track keystroke data
-let isTracking = false
-let keystrokeTimeline = []
-let pollInterval = null
-let lastKeystrokes = []
+// Module state
+let isTracking = false;
+let keystrokeTimeline = [];
+let keyboardListener = null;
+let lastKeyTime = {}; // Stores the last time each key was pressed for debouncing
+const DEBOUNCE_TIME = 150; // 150ms debounce time for keystrokes
+const MAX_KEYSTROKE_HISTORY = 1000; // Limit keystroke history to avoid memory issues
 
 /**
- * Check if we have permission to track keystrokes
- * @returns {Promise<boolean>} True if permission is granted
+ * Check if the application has permission to track keystrokes
+ * @returns {Promise<boolean>} True if permission is granted, false otherwise
  */
-async function checkPermission() {
+async function checkPermissions() {
   try {
-    if (process.platform === 'darwin') {
-      // macOS: Check for accessibility permissions with a simple test
-      try {
-        execSync('osascript -e "tell application \\"System Events\\" to key code 53"', { stdio: 'ignore' })
-        return true
-      } catch (error) {
-        log.error('Keystroke tracking permission check failed on macOS:', error)
-        return false
-      }
-    } else if (process.platform === 'win32') {
-      // Windows: Try to access keyboard state
-      try {
-        execSync(`powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Control]::IsKeyLocked([System.Windows.Forms.Keys]::CapsLock)"`, { stdio: 'ignore' })
-        return true
-      } catch (error) {
-        log.error('Keystroke tracking permission check failed on Windows:', error)
-        return false
-      }
-    } else if (process.platform === 'linux') {
-      // Linux: Check for input device access
-      try {
-        const hasWayland = process.env.XDG_SESSION_TYPE === 'wayland'
-        
-        if (hasWayland) {
-          // Wayland - check for evtest
-          execSync('which evtest', { stdio: 'ignore' })
-        } else {
-          // X11 - check for xdotool
-          execSync('which xdotool', { stdio: 'ignore' })
-        }
-        
-        return true
-      } catch (error) {
-        log.error('Keystroke tracking permission check failed on Linux:', error)
-        return false
-      }
-    }
+    // Attempt to create a keyboard listener - this will fail if permissions aren't granted
+    const testListener = new GlobalKeyboardListener();
     
-    return false
+    // If we get here, we likely have permissions
+    // Clean up test listener
+    testListener.kill();
+    return true;
   } catch (error) {
-    log.error('Error checking keystroke tracking permission:', error)
-    return false
+    log.error('Keystroke tracking permission check failed:', error);
+    return false;
   }
 }
 
 /**
- * Get currently pressed keys
- * @returns {Array<{keyCode: string, character: string}>} List of pressed keys
+ * Normalizes key names to more readable format
+ * @param {Object} e Key event
+ * @param {Object} down Down state
+ * @returns {string} Normalized key representation
  */
-function getPressedKeys() {
-  const keys = []
-  
-  try {
+function normalizeKeyName(e, down) {
+  // Handle special keys with Unicode characters and readable names
+  const specialKeys = {
+    'space': ' ',
+    'tab': '⇥',        // Tab arrow
+    'enter': '↵',      // Return symbol
+    'escape': 'Esc ',  // More readable escape
+    'backspace': '⌫ ', // Backspace symbol with space
+    'delete': 'Del ',  // More readable delete
+    'up': '↑ ',        // Up arrow
+    'down': '↓ ',      // Down arrow
+    'left': '← ',      // Left arrow
+    'right': '→ ',     // Right arrow
+    'home': 'Home ',   // Home
+    'end': 'End ',     // End
+    'page up': 'PgUp ', // More readable Page up
+    'page down': 'PgDn ', // More readable Page down
+    'insert': 'Ins ',  // More readable Insert
+    'capslock': 'Caps ', // More readable Caps lock
+    'numlock': 'Num ',  // More readable Num lock
+    'scrolllock': 'Scroll ', // More readable Scroll lock
+    'pause': 'Pause ', // Pause
+    'printscreen': 'PrtSc ', // More readable Print screen
+    'clear': 'Clear ', // Clear key
+    'menu': 'Menu ',   // Menu/options
+    'undo': 'Undo ',   // Undo
+    'redo': 'Redo '    // Redo
+  };
+
+  // Handle common modifiers with shorter symbols and proper spacing
+  let modifier = '';
+  if (e.state.ctrl) modifier += 'Ctrl+';
+  if (e.state.alt) modifier += 'Alt+';
+  if (e.state.shift) modifier += 'Shift+';
+  if (e.state.meta) {
+    // Use different symbols depending on OS for better readability
     if (process.platform === 'darwin') {
-      // macOS: Use AppleScript to check key states
-      const script = `
-        tell application "System Events"
-          set keyList to {}
-          
-          repeat with keyCode from 0 to 127
-            if key code keyCode is down then
-              set end of keyList to keyCode
-            end if
-          end repeat
-          
-          return keyList
-        end tell
-      `
-      
-      const result = execSync(`osascript -e '${script}'`).toString().trim()
-      
-      if (result && result !== '{}') {
-        // Parse result - format is like: {0, 15, 36}
-        const keyCodesStr = result.replace(/[{}]/g, '').split(', ')
-        
-        if (keyCodesStr[0] !== '') {
-          keyCodesStr.forEach(codeStr => {
-            const code = parseInt(codeStr, 10)
-            if (!isNaN(code)) {
-              // Convert key code to character when possible
-              let char = getMacKeyCharacter(code)
-              keys.push({
-                keyCode: `KC_${code}`,
-                character: char
-              })
-            }
-          })
-        }
-      }
+      modifier += '⌘+'; // Command symbol on macOS
     } else if (process.platform === 'win32') {
-      // Windows: Use PowerShell to check key states
-      const script = `
-        Add-Type @"
-        using System;
-        using System.Runtime.InteropServices;
-        using System.Collections.Generic;
-
-        public class KeyboardHelper {
-          [DllImport("user32.dll")]
-          public static extern short GetAsyncKeyState(int vKey);
-          
-          public static List<int> GetPressedKeys() {
-            List<int> pressedKeys = new List<int>();
-            
-            // Check all virtual key codes
-            for (int i = 8; i <= 190; i++) {
-              // Skip unused codes
-              if ((i >= 14 && i <= 15) || (i >= 21 && i <= 26) || (i >= 28 && i <= 31) ||
-                  (i >= 33 && i <= 35) || (i >= 41 && i <= 46) || (i >= 58 && i <= 64) ||
-                  (i >= 91 && i <= 95) || (i >= 106 && i <= 109) || (i >= 146 && i <= 159) ||
-                  (i >= 174 && i <= 177) || (i >= 181 && i <= 183)) {
-                continue;
-              }
-              
-              short state = GetAsyncKeyState(i);
-              if ((state & 0x8000) != 0) {
-                pressedKeys.Add(i);
-              }
-            }
-            
-            return pressedKeys;
-          }
-        }
-"@
-
-        $pressedKeys = [KeyboardHelper]::GetPressedKeys()
-        
-        $output = @()
-        foreach ($keyCode in $pressedKeys) {
-          $keyChar = ""
-          
-          # Try to convert key code to character
-          switch ($keyCode) {
-            8 { $keyChar = "Backspace" }
-            9 { $keyChar = "Tab" }
-            13 { $keyChar = "Enter" }
-            16 { $keyChar = "Shift" }
-            17 { $keyChar = "Ctrl" }
-            18 { $keyChar = "Alt" }
-            20 { $keyChar = "CapsLock" }
-            27 { $keyChar = "Esc" }
-            32 { $keyChar = "Space" }
-            37 { $keyChar = "Left" }
-            38 { $keyChar = "Up" }
-            39 { $keyChar = "Right" }
-            40 { $keyChar = "Down" }
-            48 { $keyChar = "0" }
-            49 { $keyChar = "1" }
-            50 { $keyChar = "2" }
-            51 { $keyChar = "3" }
-            52 { $keyChar = "4" }
-            53 { $keyChar = "5" }
-            54 { $keyChar = "6" }
-            55 { $keyChar = "7" }
-            56 { $keyChar = "8" }
-            57 { $keyChar = "9" }
-            65 { $keyChar = "a" }
-            66 { $keyChar = "b" }
-            67 { $keyChar = "c" }
-            68 { $keyChar = "d" }
-            69 { $keyChar = "e" }
-            70 { $keyChar = "f" }
-            71 { $keyChar = "g" }
-            72 { $keyChar = "h" }
-            73 { $keyChar = "i" }
-            74 { $keyChar = "j" }
-            75 { $keyChar = "k" }
-            76 { $keyChar = "l" }
-            77 { $keyChar = "m" }
-            78 { $keyChar = "n" }
-            79 { $keyChar = "o" }
-            80 { $keyChar = "p" }
-            81 { $keyChar = "q" }
-            82 { $keyChar = "r" }
-            83 { $keyChar = "s" }
-            84 { $keyChar = "t" }
-            85 { $keyChar = "u" }
-            86 { $keyChar = "v" }
-            87 { $keyChar = "w" }
-            88 { $keyChar = "x" }
-            89 { $keyChar = "y" }
-            90 { $keyChar = "z" }
-            default { $keyChar = "" }
-          }
-          
-          $output += @{
-            keyCode = "VK_$keyCode"
-            character = $keyChar
-          }
-        }
-        
-        ConvertTo-Json $output
-      `
-      
-      const result = execSync(`powershell -Command "${script.replace(/\$/g, '\$').replace(/"/g, '\\"')}"`).toString().trim()
-      
-      if (result && result !== '[]') {
-        try {
-          const parsedResult = JSON.parse(result)
-          parsedResult.forEach(key => {
-            keys.push({
-              keyCode: key.keyCode,
-              character: key.character
-            })
-          })
-        } catch (jsonError) {
-          log.error('Error parsing Windows key state JSON:', jsonError)
-        }
-      }
-    } else if (process.platform === 'linux') {
-      // Linux: Different approaches for Wayland vs X11
-      const hasWayland = process.env.XDG_SESSION_TYPE === 'wayland'
-      
-      if (hasWayland) {
-        // Wayland - access input devices directly
-        try {
-          // List input devices
-          const devicesOutput = execSync('ls /dev/input/by-path/ | grep -i kbd').toString().trim()
-          const devicePaths = devicesOutput.split('\n')
-          
-          if (devicePaths && devicePaths.length > 0 && devicePaths[0]) {
-            // Take the first keyboard device
-            const keyboardPath = path.join('/dev/input/by-path', devicePaths[0])
-            
-            // Use evtest to check key states (run very briefly)
-            const evtestOutput = execSync(`timeout 0.1s evtest ${keyboardPath} 2>&1 || true`).toString()
-            
-            // Parse events for key presses
-            const keyEvents = evtestOutput.match(/EV_KEY.*value 1/g)
-            
-            if (keyEvents && keyEvents.length > 0) {
-              keyEvents.forEach(eventLine => {
-                const keyMatch = eventLine.match(/KEY_(\w+)/)
-                if (keyMatch && keyMatch[1]) {
-                  const keyName = keyMatch[1]
-                  keys.push({
-                    keyCode: `KEY_${keyName}`,
-                    character: getLinuxKeyCharacter(keyName)
-                  })
-                }
-              })
-            }
-          }
-        } catch (error) {
-          log.error('Error getting Wayland key states:', error)
-        }
-      } else {
-        // X11 - use xdotool
-        try {
-          // Get modifier key states
-          const modifierOutput = execSync('xdotool getmouselocation --shell | grep WINDOW').toString().trim()
-          const activeWindow = modifierOutput.split('=')[1]
-          
-          if (activeWindow) {
-            // Get key states for the active window
-            const keyOutput = execSync(`xdotool key --window ${activeWindow} --delay 0 getactivewindow getwindowname 2>/dev/null || true`).toString().trim()
-            
-            // This is very limited - X11 doesn't easily allow checking key states
-            // For a real implementation, consider using a library like 'x11' for Node.js
-            
-            // For demonstration, we'll just check a few common keys
-            const keyCommands = [
-              'key shift', 'key ctrl', 'key alt', 'key super'
-            ]
-            
-            for (const cmd of keyCommands) {
-              try {
-                const test = execSync(`xdotool ${cmd} sleep 0.01 ${cmd} up`).toString()
-                const keyName = cmd.split(' ')[1]
-                
-                keys.push({
-                  keyCode: `X11_${keyName.toUpperCase()}`,
-                  character: keyName
-                })
-              } catch (error) {
-                // Key not pressed - skip
-              }
-            }
-          }
-        } catch (error) {
-          log.error('Error getting X11 key states:', error)
-        }
-      }
+      modifier += 'Win+'; // Windows key on Windows
+    } else {
+      modifier += 'Super+'; // Super key on Linux/others
     }
-  } catch (error) {
-    log.error('Error getting pressed keys:', error)
   }
   
-  return keys
+  // Get base key name
+  let keyName = e.name ? e.name.toLowerCase() : 'Unknown';
+  
+  // Special case for space - always return a space character, even with modifiers
+  if (keyName === 'space') {
+    return ' ';
+  }
+  
+  // Check if it's a special key
+  if (specialKeys[keyName]) {
+    return modifier + specialKeys[keyName];
+  }
+  
+  // For function keys (F1-F12)
+  if (/^f\d+$/.test(keyName)) {
+    return modifier + keyName.toUpperCase() + ' ';
+  }
+  
+  // For single character keys, handle case appropriately
+  if (keyName.length === 1) {
+    const char = e.state.shift ? keyName.toUpperCase() : keyName;
+    return modifier ? modifier + char + ' ' : char + ' ';
+  }
+  
+  // For other keys, keep the name with modifiers
+  return modifier + keyName + ' ';
+}
+
+/**
+ * Process a keystroke event and add it to the timeline
+ * @param {Object} e Key event
+ * @param {boolean} down Key state
+ */
+function processKeystroke(e, down) {
+  try {
+    // Get current time for debounce check
+    const now = Date.now();
+    
+    // Create a unique key combining key name and modifiers to prevent duplicates
+    // but still allow modifier combinations (e.g. "a" vs "Shift+a")
+    let modifierStr = '';
+    if (e.state.ctrl) modifierStr += 'c';
+    if (e.state.alt) modifierStr += 'a';
+    if (e.state.shift) modifierStr += 's';
+    if (e.state.meta) modifierStr += 'm';
+    
+    const uniqueKey = `${e.name}-${modifierStr}`;
+    
+    // Debounce check - ignore if the same key was pressed recently
+    if (lastKeyTime[uniqueKey] && now - lastKeyTime[uniqueKey] < DEBOUNCE_TIME) {
+      return;
+    }
+    
+    // Update last key time for debouncing
+    lastKeyTime[uniqueKey] = now;
+    
+    // Add to keystroke timeline - we'll correlate with window info later
+    keystrokeTimeline.push({
+      key: normalizeKeyName(e, down),
+      vkey: e.vkey,
+      state: down ? 'down' : 'up',
+      timestamp: new Date().toISOString()
+    });
+    
+    // Limit the size of keystroke history to avoid memory issues
+    if (keystrokeTimeline.length > MAX_KEYSTROKE_HISTORY) {
+      keystrokeTimeline = keystrokeTimeline.slice(-MAX_KEYSTROKE_HISTORY);
+    }
+  } catch (error) {
+    log.error('Error processing keystroke:', error);
+  }
 }
 
 /**
  * Start tracking keystrokes
- * @param {Object} options Configuration options
- * @param {number} options.pollInterval Milliseconds between polls (default: 100)
- * @param {number} options.maxHistoryMs Maximum history to keep in milliseconds (default: 5 minutes)
- * @returns {boolean} Success status
+ * @throws {Error} If permission is denied
+ * @returns {Promise<boolean>} Success status
  */
-function startTracking(options = {}) {
+async function startTracking() {
   if (isTracking) {
-    log.warn('Keystroke tracking already active')
-    return false
+    return true;
   }
-  
+
+  // Check if we have permission to track keystrokes
+  if (!await checkPermissions()) {
+    log.warn('Keystroke tracking permission not granted');
+    return false;
+  }
+
+  // Reset data before starting
+  keystrokeTimeline = [];
+  lastKeyTime = {};
+
   try {
-    // Initialize timeline and settings
-    keystrokeTimeline = []
-    const interval = options.pollInterval || 100
-    const maxHistory = options.maxHistoryMs || 5 * 60 * 1000 // 5 minutes default
+    // Initialize keystroke listener
+    keyboardListener = new GlobalKeyboardListener();
     
-    // Start polling for keystrokes
-    pollInterval = setInterval(() => {
-      try {
-        // Get currently pressed keys
-        const currentKeys = getPressedKeys()
-        
-        // Check if there are changes from the last check
-        const hasChanges = !areKeystrokesEqual(currentKeys, lastKeystrokes)
-        
-        if (hasChanges && currentKeys.length > 0) {
-          // Get the exact timestamp for this keystroke detection
-          const timestamp = Date.now()
-          
-          // For each new key that wasn't in lastKeystrokes, record a separate entry with precise timestamp
-          currentKeys.forEach(key => {
-            // Only add keys that weren't in the last set
-            if (!lastKeystrokes.some(lastKey => lastKey.keyCode === key.keyCode)) {
-              // Record individual keystroke with its own timestamp
-              keystrokeTimeline.push({
-                timestamp,
-                key: key.character || key.keyCode
-              })
-            }
-          })
-          
-          // Update lastKeystrokes
-          lastKeystrokes = JSON.parse(JSON.stringify(currentKeys))
-          
-          // Clean up old data
-          const cutoffTime = Date.now() - maxHistory
-          keystrokeTimeline = keystrokeTimeline.filter(entry => entry.timestamp >= cutoffTime)
-        } else if (currentKeys.length === 0 && lastKeystrokes.length > 0) {
-          // All keys were released, update lastKeystrokes
-          lastKeystrokes = []
-        }
-      } catch (error) {
-        log.error('Error in keystroke tracking interval:', error)
+    // Handle key events
+    keyboardListener.addListener(function (e, down) {
+      // Only care about keydown events to avoid duplicate keystrokes
+      if (!down) {
+        return; // Skip key up events
       }
-    }, interval)
+      
+      // Process the keystroke
+      processKeystroke(e, down);
+    });
     
-    isTracking = true
-    log.info('Started keystroke tracking')
-    return true
+    isTracking = true;
+    return true;
   } catch (error) {
-    log.error('Error starting keystroke tracking:', error)
-    return false
+    log.error('Failed to start keystroke tracking:', error);
+    return false;
   }
 }
 
 /**
  * Stop tracking keystrokes
- * @returns {boolean} Success status
  */
 function stopTracking() {
   if (!isTracking) {
-    return false
+    return;
   }
   
   try {
-    // Clear the polling interval
-    if (pollInterval) {
-      clearInterval(pollInterval)
-      pollInterval = null
+    if (keyboardListener) {
+      keyboardListener.kill();
+      keyboardListener = null;
     }
-    
-    isTracking = false
-    log.info('Stopped keystroke tracking')
-    return true
   } catch (error) {
-    log.error('Error stopping keystroke tracking:', error)
-    return false
+    log.error('Error stopping keystroke tracking:', error);
+  } finally {
+    isTracking = false;
+    // Clear the lastKeyTime object to ensure no stale data when restarting
+    lastKeyTime = {};
   }
 }
 
 /**
- * Compare two keystroke arrays for equality
- * @param {Array} keys1 First keystroke array
- * @param {Array} keys2 Second keystroke array
- * @returns {boolean} True if the arrays are equal
+ * Get the keystroke timeline collected so far
+ * @param {number} timeWindowMs - Time window in milliseconds to get data for, defaults to 5 minutes
+ * @param {boolean} resetAfterCollection - Whether to clear the timeline after collecting data
+ * @returns {Array} Keystroke timeline data for the specified time window
  */
-function areKeystrokesEqual(keys1, keys2) {
-  if (!keys1 || !keys2) return false
-  if (keys1.length !== keys2.length) return false
+function getKeystrokeTimeline(timeWindowMs = 5 * 60 * 1000, resetAfterCollection = true) {
+  if (!isTracking || keystrokeTimeline.length === 0) {
+    return [];
+  }
   
-  // Sort both arrays by keyCode for consistent comparison
-  const sortedKeys1 = [...keys1].sort((a, b) => a.keyCode.localeCompare(b.keyCode))
-  const sortedKeys2 = [...keys2].sort((a, b) => a.keyCode.localeCompare(b.keyCode))
-  
-  for (let i = 0; i < sortedKeys1.length; i++) {
-    const key1 = sortedKeys1[i]
-    const key2 = sortedKeys2[i]
+  // If no time window specified, return all keystrokes
+  if (!timeWindowMs) {
+    const result = [...keystrokeTimeline];
     
-    if (key1.keyCode !== key2.keyCode) {
-      return false
-    }
-  }
-  
-  return true
-}
-
-/**
- * Process the keystroke timeline into a more usable format
- * @param {Array} timeline Raw keystroke timeline (optional, uses stored timeline if not provided)
- * @param {Object} options Processing options
- * @param {number} options.timeSegmentMs Size of time segments in milliseconds (default: 1000)
- * @returns {Array} Processed timeline with keystroke data
- */
-function processTimelineData(timeline = keystrokeTimeline, options = {}) {
-  try {
-    if (!timeline || timeline.length === 0) {
-      return [];
+    if (resetAfterCollection) {
+      keystrokeTimeline = [];
     }
     
-    // Return the raw timeline data with keystrokes and timestamps
-    return [...timeline];
-  } catch (error) {
-    log.error('Error processing keystroke timeline:', error)
-    return []
+    return result;
   }
+  
+  // Filter keystrokes to only include those within the time window
+  const now = new Date().getTime();
+  const cutoffTime = now - timeWindowMs;
+  
+  const result = keystrokeTimeline.filter(entry => {
+    const entryTime = new Date(entry.timestamp).getTime();
+    return entryTime >= cutoffTime;
+  });
+  
+  // If requested, clear the timeline after collection to avoid duplicating data
+  if (resetAfterCollection) {
+    keystrokeTimeline = [];
+  }
+  
+  return result;
 }
 
 /**
- * Convert macOS key code to character
- * @param {number} keyCode The macOS key code
- * @returns {string} Character representation or empty string
+ * Clear the keystroke timeline data
  */
-function getMacKeyCharacter(keyCode) {
-  // Basic mapping of common key codes
-  const keyMap = {
-    0: 'a', 1: 's', 2: 'd', 3: 'f', 4: 'h', 5: 'g', 6: 'z', 7: 'x',
-    8: 'c', 9: 'v', 11: 'b', 12: 'q', 13: 'w', 14: 'e', 15: 'r',
-    16: 'y', 17: 't', 18: '1', 19: '2', 20: '3', 21: '4', 22: '6',
-    23: '5', 24: '=', 25: '9', 26: '7', 27: '-', 28: '8', 29: '0',
-    30: ']', 31: 'o', 32: 'u', 33: '[', 34: 'i', 35: 'p', 36: 'Return',
-    37: 'l', 38: 'j', 39: '\'', 40: 'k', 41: ';', 42: '\\', 43: ',',
-    44: '/', 45: 'n', 46: 'm', 47: '.', 48: 'Tab', 49: 'Space', 50: '`',
-    51: 'Delete', 53: 'Escape', 55: 'Command', 56: 'Shift', 57: 'CapsLock',
-    58: 'Option', 59: 'Control', 60: 'RShift', 61: 'ROption', 62: 'RControl',
-    65: '.', 67: '*', 69: '+', 71: 'Clear', 75: '/', 76: 'Return',
-    78: '-', 81: '=', 82: '0', 83: '1', 84: '2', 85: '3', 86: '4',
-    87: '5', 88: '6', 89: '7', 91: '8', 92: '9',
-    96: 'F5', 97: 'F6', 98: 'F7', 99: 'F3', 100: 'F8', 101: 'F9',
-    103: 'F11', 105: 'F13', 107: 'F14', 109: 'F10', 111: 'F12',
-    113: 'F15', 114: 'Help', 115: 'Home', 116: 'PageUp', 117: 'ForwardDelete',
-    118: 'F4', 119: 'End', 120: 'F2', 121: 'PageDown', 122: 'F1', 123: 'Left',
-    124: 'Right', 125: 'Down', 126: 'Up'
-  }
-  
-  return keyMap[keyCode] || ''
+function clearTimeline() {
+  keystrokeTimeline = [];
 }
 
 /**
- * Convert Linux key name to character
- * @param {string} keyName The Linux key name
- * @returns {string} Character representation or empty string
+ * Checks if keystroke tracking is currently active
+ * @returns {boolean} True if tracking is active
  */
-function getLinuxKeyCharacter(keyName) {
-  // Basic mapping of common key names
-  const keyMap = {
-    A: 'a', B: 'b', C: 'c', D: 'd', E: 'e', F: 'f', G: 'g', H: 'h',
-    I: 'i', J: 'j', K: 'k', L: 'l', M: 'm', N: 'n', O: 'o', P: 'p',
-    Q: 'q', R: 'r', S: 's', T: 't', U: 'u', V: 'v', W: 'w', X: 'x',
-    Y: 'y', Z: 'z',
-    1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 0: '0',
-    MINUS: '-', EQUAL: '=', BACKSPACE: 'Backspace', TAB: 'Tab', SPACE: 'Space',
-    LEFTBRACE: '[', RIGHTBRACE: ']', SEMICOLON: ';', APOSTROPHE: '\'',
-    GRAVE: '`', BACKSLASH: '\\', COMMA: ',', DOT: '.', SLASH: '/',
-    ENTER: 'Enter', LEFTSHIFT: 'Shift', RIGHTSHIFT: 'Shift',
-    LEFTCTRL: 'Ctrl', RIGHTCTRL: 'Ctrl', LEFTALT: 'Alt', RIGHTALT: 'Alt',
-    CAPSLOCK: 'CapsLock', NUMLOCK: 'NumLock', SCROLLLOCK: 'ScrollLock',
-    ESC: 'Esc', HOME: 'Home', END: 'End', PAGEUP: 'PageUp', PAGEDOWN: 'PageDown',
-    LEFT: 'Left', RIGHT: 'Right', UP: 'Up', DOWN: 'Down'
-  }
-  
-  return keyMap[keyName] || keyName
+function isTrackingActive() {
+  return isTracking;
 }
 
 module.exports = {
-  checkPermission,
-  getPressedKeys,
   startTracking,
   stopTracking,
-  processTimelineData
-} 
+  checkPermissions,
+  getKeystrokeTimeline,
+  clearTimeline,
+  isTracking: isTrackingActive
+}; 

@@ -1,461 +1,222 @@
-const { execSync, spawn } = require('child_process')
 const log = require('electron-log')
 const os = require('os')
 const fs = require('fs')
 const path = require('path')
+const { ipcMain } = require('electron')
 
 // Variables to track audio capture
 let isRecording = false
-let micRecordingProcess = null
-let sysAudioRecordingProcess = null
-let audioFilePath = null
-let sysAudioFilePath = null
-let startTime = null
-let recordingTimerId = null
+let mainWindow = null
 
 /**
- * Mix two audio files into one using ffmpeg
- * @param {string} micAudioPath Path to microphone audio file
- * @param {string} sysAudioPath Path to system audio file
- * @returns {Promise<string|null>} Path to mixed audio file or null if failed
+ * Initialize audio capture module
+ * @param {BrowserWindow} window Main window
+ * @param {Object} config Configuration
+ * @param {number} config.bufferDurationMs Buffer duration in ms
+ * @throws {Error} If parameters invalid
  */
-async function mixAudioFiles(micAudioPath, sysAudioPath) {
-  if (!micAudioPath && !sysAudioPath) {
-    return null
+function initialize(window, config = {}) {
+  if (!window) {
+    throw new Error('Audio capture initialization failed: window is required');
   }
   
-  // If we only have one file, just return that path
-  if (!micAudioPath) return sysAudioPath
-  if (!sysAudioPath) return micAudioPath
+  if (!config.bufferDurationMs || typeof config.bufferDurationMs !== 'number' || config.bufferDurationMs <= 0) {
+    throw new Error('Audio capture initialization failed: bufferDurationMs is required and must be a positive number');
+  }
   
+  mainWindow = window;
+  
+  // Set up IPC handlers
+  ipcMain.handle('audio-capture-result', (event, audioData) => {
+    return processAudioFromRenderer(audioData);
+  });
+  
+  // Initialize the renderer-side audio recorder with configuration
+  mainWindow.webContents.executeJavaScript(
+    `window.initAudioRecorder && window.initAudioRecorder({
+      bufferDurationMs: ${config.bufferDurationMs}
+    });`
+  ).catch(error => {
+    log.error('Error initializing audio recorder in renderer:', error);
+    throw error; // Re-throw to propagate the error
+  });
+}
+
+/**
+ * Process audio data from renderer
+ * @param {Object} audioData Audio data
+ * @returns {string} Path to saved file
+ */
+function processAudioFromRenderer(audioData) {
   try {
-    // Create output file path
-    const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '')
-    const outputDir = path.dirname(micAudioPath)
-    const outputPath = path.join(outputDir, `mixed_audio_${timestamp}.wav`)
+    // Create a temp file to store the audio
+    const outputDir = os.tmpdir();
+    const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '');
+    const filePath = path.join(outputDir, `mic_recording_${timestamp}.webm`);
     
-    // Mix audio files using ffmpeg
-    return new Promise((resolve, reject) => {
-      const ffmpegArgs = [
-        // Input files
-        '-i', micAudioPath,
-        '-i', sysAudioPath,
-        // Filter to mix both inputs with volume adjustment
-        '-filter_complex', '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=2',
-        // Output format
-        '-c:a', 'pcm_s16le',
-        // Overwrite existing file
-        '-y',
-        outputPath
-      ]
-      
-      log.info(`Mixing audio files: ${micAudioPath} and ${sysAudioPath}`)
-      
-      const ffmpegProcess = spawn('ffmpeg', ffmpegArgs)
-      
-      // Handle process completion
-      ffmpegProcess.on('close', (code) => {
-        if (code === 0) {
-          log.info(`Successfully mixed audio to: ${outputPath}`)
-          // Delete original files after successful mix
-          try {
-            fs.unlinkSync(micAudioPath)
-            fs.unlinkSync(sysAudioPath)
-          } catch (err) {
-            log.warn('Failed to delete original audio files after mixing:', err)
-          }
-          resolve(outputPath)
-        } else {
-          log.error(`Audio mixing failed with code: ${code}`)
-          // Return one of the original files if mixing fails
-          resolve(micAudioPath)
-        }
-      })
-      
-      ffmpegProcess.on('error', (err) => {
-        log.error('Error during audio mixing:', err)
-        // Return one of the original files if mixing fails
-        resolve(micAudioPath)
-      })
-    })
+    // Convert base64 to buffer and save
+    const audioBuffer = Buffer.from(audioData.base64Data.split(',')[1], 'base64');
+    fs.writeFileSync(filePath, audioBuffer);
+    
+    return filePath;
   } catch (error) {
-    log.error('Error mixing audio files:', error)
-    // Return one of the original files if an exception occurs
-    return micAudioPath
+    log.error('Error processing audio from renderer:', error);
+    return null;
   }
 }
 
 /**
- * Check if the application has permission to record audio
- * @returns {Promise<boolean>} True if permission is granted
+ * Check microphone permission
+ * @returns {Promise<boolean>} Permission status
  */
 async function checkPermission() {
+  // We'll use the renderer to check permissions
+  if (!mainWindow) return false;
+  
   try {
-    if (process.platform === 'darwin') {
-      // macOS: Check for microphone permissions
-      try {
-        // Attempt to get a list of audio devices - this will fail if no permission
-        execSync('osascript -e "set devs to input volume of (get volume settings)"', { stdio: 'ignore' })
-        return true
-      } catch (error) {
-        log.error('Audio capture permission check failed on macOS:', error)
-        return false
-      }
-    } else if (process.platform === 'win32') {
-      // Windows: No direct permission check available
-      // Best effort - check if we can access audio devices
-      try {
-        const script = `
-          Add-Type -AssemblyName System.Windows.Forms
-          [System.Windows.Forms.SystemInformation]::TerminalServerSession
-        `
-        execSync(`powershell -Command "${script}"`, { stdio: 'ignore' })
-        return true
-      } catch (error) {
-        log.error('Audio capture permission check failed on Windows:', error)
-        return false
-      }
-    } else if (process.platform === 'linux') {
-      // Linux: Check for audio device access
-      try {
-        execSync('arecord -L', { stdio: 'ignore' })
-        return true
-      } catch (error) {
-        log.error('Audio capture permission check failed on Linux:', error)
-        return false
-      }
-    }
-    
-    return false
+    return await mainWindow.webContents.executeJavaScript(
+      `new Promise(resolve => {
+        navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(stream => {
+            stream.getTracks().forEach(track => track.stop());
+            resolve(true);
+          })
+          .catch(err => {
+            console.error("Microphone permission denied:", err);
+            resolve(false);
+          });
+      })`
+    );
   } catch (error) {
-    log.error('Error checking audio capture permission:', error)
-    return false
+    log.error('Error checking audio permission:', error);
+    return false;
   }
 }
 
 /**
- * Start recording audio
- * @param {Object} options Recording options
- * @param {string} options.outputDir Directory to save recordings (default: os.tmpdir())
- * @param {number} options.maxDurationMs Maximum recording duration in ms (default: 5 minutes)
- * @param {number} options.sampleRate Sample rate in Hz (default: 44100)
- * @param {number} options.channels Number of channels (default: 1)
- * @returns {Promise<boolean>} True if recording started successfully
+ * Start continuous recording
+ * @returns {Promise<boolean>} Success status
  */
-async function startRecording(options = {}) {
+async function startRecording() {
   if (isRecording) {
-    log.warn('Audio recording already in progress')
-    return false
+    return true;
+  }
+  
+  if (!mainWindow) {
+    log.error('Cannot start audio recording: main window not initialized');
+    return false;
   }
   
   try {
-    // Set up recording parameters
-    const outputDir = options.outputDir || os.tmpdir()
-    const maxDuration = options.maxDurationMs || 5 * 60 * 1000 // 5 minutes default
-    const sampleRate = options.sampleRate || 44100
-    const channels = options.channels || 1
+    // Ask renderer to start continuous recording
+    const started = await mainWindow.webContents.executeJavaScript(
+      `window.startAudioRecording && window.startAudioRecording();`
+    );
     
-    // Create unique filenames
-    const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '')
-    audioFilePath = path.join(outputDir, `mic_recording_${timestamp}.wav`)
-    sysAudioFilePath = path.join(outputDir, `sys_recording_${timestamp}.wav`)
-    
-    // Start recording based on platform
-    if (process.platform === 'darwin') {
-      // macOS: Use ffmpeg
-      // For microphone on macOS
-      try {
-        micRecordingProcess = require('child_process').spawn('ffmpeg', [
-          '-f', 'avfoundation',
-          '-i', ':0', // Use default audio input device
-          '-c:a', 'pcm_s16le',
-          '-ar', sampleRate,
-          '-ac', channels,
-          audioFilePath
-        ], {
-          detached: true,
-          stdio: 'ignore'
-        })
-        micRecordingProcess.unref()
-      } catch (error) {
-        log.error('Failed to start microphone recording on macOS:', error)
-      }
-      
-      // For system audio on macOS using BlackHole or similar audio routing
-      try {
-        sysAudioRecordingProcess = require('child_process').spawn('ffmpeg', [
-          '-f', 'avfoundation',
-          '-i', '1:0', // This might need adjustment based on device numbering
-          '-c:a', 'pcm_s16le',
-          '-ar', sampleRate,
-          '-ac', channels,
-          sysAudioFilePath
-        ], {
-          detached: true,
-          stdio: 'ignore'
-        })
-        sysAudioRecordingProcess.unref()
-      } catch (error) {
-        log.error('Failed to start system audio recording on macOS:', error)
-      }
-    } else if (process.platform === 'win32') {
-      // Windows: Use PowerShell to execute ffmpeg
-      // For microphone on Windows
-      try {
-        const micCommand = `Start-Process -NoNewWindow -FilePath 'ffmpeg' -ArgumentList '-f dshow -i audio=\\"default\\" -c:a pcm_s16le -ar ${sampleRate} -ac ${channels} "${audioFilePath}"'`
-        
-        micRecordingProcess = require('child_process').spawn('powershell', [
-          '-Command',
-          micCommand
-        ], {
-          detached: true,
-          stdio: 'ignore'
-        })
-        micRecordingProcess.unref()
-      } catch (error) {
-        log.error('Failed to start microphone recording on Windows:', error)
-      }
-      
-      // For system audio on Windows using loopback capture
-      try {
-        const sysCommand = `Start-Process -NoNewWindow -FilePath 'ffmpeg' -ArgumentList '-f dshow -i audio=\\"virtual-audio-capturer\\" -c:a pcm_s16le -ar ${sampleRate} -ac ${channels} "${sysAudioFilePath}"'`
-        
-        sysAudioRecordingProcess = require('child_process').spawn('powershell', [
-          '-Command',
-          sysCommand
-        ], {
-          detached: true,
-          stdio: 'ignore'
-        })
-        sysAudioRecordingProcess.unref()
-      } catch (error) {
-        log.error('Failed to start system audio recording on Windows:', error)
-      }
-    } else if (process.platform === 'linux') {
-      // Linux: Use arecord for mic and pacat for system audio
-      // For microphone on Linux
-      try {
-        micRecordingProcess = require('child_process').spawn('arecord', [
-          '-f', 'S16_LE',
-          '-c', channels,
-          '-r', sampleRate,
-          '-d', Math.ceil(maxDuration / 1000), // Convert ms to seconds
-          audioFilePath
-        ], {
-          detached: true,
-          stdio: 'ignore'
-        })
-        micRecordingProcess.unref()
-      } catch (error) {
-        log.error('Failed to start microphone recording on Linux:', error)
-      }
-      
-      // For system audio on Linux using PulseAudio
-      try {
-        sysAudioRecordingProcess = require('child_process').spawn('bash', [
-          '-c',
-          `pacat --record --device=@DEFAULT_MONITOR@ | sox -t raw -r 44100 -e signed -b 16 -c 2 - "${sysAudioFilePath}" trim 0 ${Math.ceil(maxDuration / 1000)}`
-        ], {
-          detached: true,
-          stdio: 'ignore'
-        })
-        sysAudioRecordingProcess.unref()
-      } catch (error) {
-        log.error('Failed to start system audio recording on Linux:', error)
-      }
-    } else {
-      log.error('Unsupported platform for audio recording')
-      return false
+    if (!started) {
+      log.error('Failed to start audio recording in renderer');
+      return false;
     }
     
-    // Track recording state
-    startTime = Date.now()
-    isRecording = true
+    // Update recording state
+    isRecording = true;
     
-    // Set a timer to stop recording after maxDuration
-    recordingTimerId = setTimeout(() => {
-      stopRecording().catch(error => {
-        log.error('Error stopping recording after timeout:', error)
-      })
-    }, maxDuration)
-    
-    log.info(`Started audio recording (microphone and system)`)
-    return true
+    return true;
   } catch (error) {
-    log.error('Error starting audio recording:', error)
-    return false
+    log.error('Error starting audio recording:', error);
+    return false;
   }
 }
 
 /**
- * Stop the current audio recording
- * @returns {Promise<{filePath: string, duration: number} | null>} Recording info or null if failed
+ * Get current buffer without stopping recording
+ * @returns {Promise<{filePath: string, duration: number} | null>} Recording info
  */
 async function stopRecording() {
   if (!isRecording) {
-    return null
+    log.warn('No audio recording in progress');
+    return null;
   }
   
   try {
-    // Clear any existing timer
-    if (recordingTimerId) {
-      clearTimeout(recordingTimerId)
-      recordingTimerId = null
+    if (!mainWindow) {
+      log.error('Cannot get audio buffer: main window not initialized');
+      return null;
     }
     
-    // Different stop methods based on platform and recording type
-    if (micRecordingProcess) {
-      if (process.platform === 'darwin' || process.platform === 'linux') {
-        micRecordingProcess.kill('SIGTERM')
-      }
-      micRecordingProcess = null
+    // Ask renderer to provide the current buffer without stopping recording
+    const audioData = await mainWindow.webContents.executeJavaScript(
+      'window.stopAudioRecording && window.stopAudioRecording();'
+    );
+    
+    if (!audioData) {
+      log.warn('No audio data received from renderer');
+      return null;
     }
     
-    if (sysAudioRecordingProcess) {
-      if (process.platform === 'darwin' || process.platform === 'linux') {
-        sysAudioRecordingProcess.kill('SIGTERM')
-      }
-      sysAudioRecordingProcess = null
-    }
+    // Process audio data and save to file
+    const filePath = audioData ? processAudioFromRenderer(audioData) : null;
     
-    if (process.platform === 'win32') {
-      // Windows: We need to find and kill the ffmpeg process
-      try {
-        execSync('taskkill /f /im ffmpeg.exe', { stdio: 'ignore' })
-      } catch (killError) {
-        log.warn('Could not kill ffmpeg process, may have already ended:', killError)
-      }
-    }
-    
-    // Calculate recording duration
-    const endTime = Date.now()
-    const duration = endTime - startTime
-    
-    // Reset state
-    isRecording = false
-    
-    // Verify files exist and have content
-    let micFileValid = false
-    let sysFileValid = false
-    let micFilePath = null
-    let sysFilePath = null
-    
-    if (audioFilePath && fs.existsSync(audioFilePath)) {
-      const stats = fs.statSync(audioFilePath)
-      micFileValid = stats.size > 0
-      
-      if (micFileValid) {
-        micFilePath = audioFilePath
-      } else {
-        log.warn(`Microphone audio file is empty: ${audioFilePath}`)
-        fs.unlinkSync(audioFilePath)
-      }
-    }
-    
-    if (sysAudioFilePath && fs.existsSync(sysAudioFilePath)) {
-      const stats = fs.statSync(sysAudioFilePath)
-      sysFileValid = stats.size > 0
-      
-      if (sysFileValid) {
-        sysFilePath = sysAudioFilePath
-      } else {
-        log.warn(`System audio file is empty: ${sysAudioFilePath}`)
-        fs.unlinkSync(sysAudioFilePath)
-      }
-    }
-    
-    log.info(`Finished audio recording, duration: ${duration}ms`)
-    
-    // Mix the audio files if both are valid
-    let mixedFilePath = null
-    if (micFileValid || sysFileValid) {
-      try {
-        mixedFilePath = await mixAudioFiles(micFilePath, sysFilePath)
-      } catch (mixError) {
-        log.error('Error mixing audio files:', mixError)
-        // Keep original mic file if mixing fails
-        mixedFilePath = micFilePath
-      }
-      
-      // Return recording information with just one file
-      return {
-        filePath: mixedFilePath,
-        duration
-      }
-    } else {
-      log.warn('No valid audio files created during recording')
-      return null
-    }
+    if (!filePath) {
+      log.warn('Failed to process audio data from renderer');
+      return null;
+    }    
+    // Return recording information
+    return {
+      filePath,
+      duration: audioData.timeMs
+    };
   } catch (error) {
-    log.error('Error stopping audio recording:', error)
-    return null
-  } finally {
-    // Always reset state
-    startTime = null
-    audioFilePath = null
-    sysAudioFilePath = null
-    isRecording = false
+    log.error('Error retrieving audio buffer:', error);
+    return null;
   }
 }
 
 /**
- * Get the current recording status
- * @returns {Object} Status object with recording info
+ * Stop recording completely when shutting down
+ * @returns {Promise<boolean>} Success status
+ */
+async function shutdownRecording() {
+  if (!isRecording) {
+    return true;
+  }
+  
+  try {
+    if (!mainWindow) {
+      log.warn('Cannot shut down recording: main window not initialized');
+      isRecording = false;
+      return true;
+    }
+    
+    // Ask renderer to completely stop recording
+    await mainWindow.webContents.executeJavaScript(
+      'window.shutdownAudioRecording && window.shutdownAudioRecording();'
+    );
+    
+    isRecording = false;
+    return true;
+  } catch (error) {
+    log.error('Error shutting down audio recording:', error);
+    isRecording = false;
+    return false;
+  }
+}
+
+/**
+ * Get recording status
+ * @returns {Object} Status object
  */
 function getStatus() {
-  if (!isRecording) {
-    return {
-      recording: false
-    }
-  }
-  
-  // Calculate current duration
-  const currentTime = Date.now()
-  const duration = currentTime - startTime
-  
   return {
-    recording: true,
-    filePath: audioFilePath,
-    duration,
-    startTime
-  }
-}
-
-/**
- * Convert an audio file to text using platform-specific tools
- * Note: This requires external services or tools to be installed
- * @param {string} audioFilePath Path to the audio file
- * @param {Object} options Transcription options
- * @param {string} options.language Language code (default: 'en-US')
- * @returns {Promise<string>} Transcribed text
- */
-async function transcribeAudio(audioFilePath, options = {}) {
-  if (!audioFilePath || !fs.existsSync(audioFilePath)) {
-    throw new Error('Invalid audio file path')
-  }
-  
-  const language = options.language || 'en-US'
-  
-  try {
-    // This is a placeholder for actual transcription
-    // In a real implementation, you would:
-    // 1. Send the audio to a service like Google Speech-to-Text, AWS Transcribe, etc.
-    // 2. Or use a local library like Vosk
-    
-    log.info(`Transcription would process: ${audioFilePath} in language ${language}`)
-    
-    // Placeholder implementation - replace with actual transcription
-    return `[Transcription not implemented - would process ${path.basename(audioFilePath)}]`
-  } catch (error) {
-    log.error('Error transcribing audio:', error)
-    throw error
-  }
+    recording: isRecording
+  };
 }
 
 module.exports = {
+  initialize,
   checkPermission,
   startRecording,
   stopRecording,
+  shutdownRecording,
   getStatus,
-  transcribeAudio
 } 

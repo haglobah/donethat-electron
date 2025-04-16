@@ -28,6 +28,8 @@ const {
   updateDateCreated
 } = require('./app-state.js');
 
+require('./audio-recorder');
+
 const coreViews = ['settings', 'dashboard'];
 
 // Set persistence to browser local storage

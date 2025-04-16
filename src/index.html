@@ -348,11 +348,23 @@
               <div class="flex items-center">
                 <input
                   type="checkbox"
+                  id="screenCheckbox"
+                  class="form-checkbox h-4 w-4 text-gray-600 checked:bg-gray-600 checked:border-gray-600 accent-gray-600 ring-gray-600 cursor-not-allowed"
+                  checked
+                  disabled
+                />
+                <label for="screenCheckbox" class="ml-2 text-xs text-gray-600">
+                  Capture screen
+                </label>
+              </div>
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
                   id="windowsCheckbox"
                   class="form-checkbox h-4 w-4 text-gray-600 checked:bg-gray-600 checked:border-gray-600 accent-gray-600 ring-gray-600 cursor-pointer"
                 />
                 <label for="windowsCheckbox" class="ml-2 text-xs text-gray-600">
-                  Record active windows (for multi-tasking)
+                  Capture application names
                 </label>
               </div>
               <div class="flex items-center">
@@ -362,7 +374,7 @@
                   class="form-checkbox h-4 w-4 text-gray-600 checked:bg-gray-600 checked:border-gray-600 accent-gray-600 ring-gray-600 cursor-pointer"
                 />
                 <label for="keystrokesCheckbox" class="ml-2 text-xs text-gray-600">
-                  Record keystrokes (for writing and coding)
+                  Capture keystrokes
                 </label>
               </div>
               <div class="flex items-center">
@@ -372,7 +384,7 @@
                   class="form-checkbox h-4 w-4 text-gray-600 checked:bg-gray-600 checked:border-gray-600 accent-gray-600 ring-gray-600 cursor-pointer"
                 />
                 <label for="audioCheckbox" class="ml-2 text-xs text-gray-600">
-                  Record audio (for dictation and meetings)
+                  Capture microphone
                 </label>
               </div>
             </div>
