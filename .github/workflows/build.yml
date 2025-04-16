@@ -45,6 +45,11 @@ jobs:
       - name: Install dependencies
         run: npm install
         
+      - name: Create config files from secrets
+        run: |
+          echo "${{ secrets.FIREBASE_CONFIG }}" > firebase-config.js
+          echo "${{ secrets.SLACK_CONFIG }}" > slack-config.js
+        
       # Setup keychain for macOS code signing (if needed)
       - name: Setup macOS code signing
         if: matrix.platform == 'mac'
@@ -76,6 +81,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CI: true
         run: npm run ${{ matrix.command }}
         
       - name: Upload artifacts
