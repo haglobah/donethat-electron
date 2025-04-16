@@ -75,10 +75,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $firebaseConfig = '${{ secrets.FIREBASE_CONFIG }}'
-          $slackConfig = '${{ secrets.SLACK_CONFIG }}'
-          Set-Content -Path firebase-config.js -Value $firebaseConfig
-          Set-Content -Path slack-config.js -Value $slackConfig
+          # Create Firebase config using a temporary file approach
+          [System.IO.File]::WriteAllText("firebase-config.js", '${{ secrets.FIREBASE_CONFIG }}')
+          
+          # Create Slack config using a temporary file approach
+          [System.IO.File]::WriteAllText("slack-config.js", '${{ secrets.SLACK_CONFIG }}')
         
       # Setup keychain for macOS code signing (if needed)
       - name: Setup macOS code signing
@@ -110,6 +111,7 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CI: true
         run: npm run ${{ matrix.command }}
