@@ -87,7 +87,7 @@ function normalizeKeyName(e, down) {
   let modifier = '';
   if (e.state.ctrl) modifier += 'Ctrl+';
   if (e.state.alt) modifier += 'Alt+';
-  if (e.state.shift) modifier += 'Shift+';
+  // Exclude shift modifier as requested
   if (e.state.meta) {
     // Use different symbols depending on OS for better readability
     if (process.platform === 'darwin') {
@@ -101,6 +101,20 @@ function normalizeKeyName(e, down) {
   
   // Get base key name
   let keyName = e.name ? e.name.toLowerCase() : 'Unknown';
+  
+  // Skip mouse-related and scrolling events
+  if (keyName.includes('mouse') || 
+      keyName.includes('button') || 
+      keyName.includes('click') || 
+      keyName.includes('scroll') || 
+      keyName.includes('wheel')) {
+    return null;
+  }
+  
+  // Skip shift key itself
+  if (keyName === 'shift') {
+    return null;
+  }
   
   // Special case for space - always return a space character, even with modifiers
   if (keyName === 'space') {
@@ -123,10 +137,9 @@ function normalizeKeyName(e, down) {
   }
   
   // For single character keys, handle case appropriately
+  // Force lowercase regardless of shift state
   if (keyName.length === 1) {
-    const char = e.state.shift ? keyName.toUpperCase() : keyName;
-    // No space after regular characters
-    return modifier ? modifier + char : char;
+    return modifier ? modifier + keyName : keyName;
   }
   
   // For other keys, keep the name with modifiers
@@ -141,15 +154,29 @@ function normalizeKeyName(e, down) {
  */
 function processKeystroke(e, down) {
   try {
+    // Skip processing for mouse and scrolling events
+    if (e.name && (e.name.toLowerCase().includes('mouse') || 
+                   e.name.toLowerCase().includes('button') || 
+                   e.name.toLowerCase().includes('click') ||
+                   e.name.toLowerCase().includes('scroll') ||
+                   e.name.toLowerCase().includes('wheel'))) {
+      return;
+    }
+    
+    // Skip processing for shift key itself
+    if (e.name && e.name.toLowerCase() === 'shift') {
+      return;
+    }
+    
     // Get current time for debounce check
     const now = Date.now();
     
     // Create a unique key combining key name and modifiers to prevent duplicates
-    // but still allow modifier combinations (e.g. "a" vs "Shift+a")
+    // but still allow modifier combinations (e.g. "a" vs "Ctrl+a")
+    // Removed shift from modifier string
     let modifierStr = '';
     if (e.state.ctrl) modifierStr += 'c';
     if (e.state.alt) modifierStr += 'a';
-    if (e.state.shift) modifierStr += 's';
     if (e.state.meta) modifierStr += 'm';
     
     const uniqueKey = `${e.name}-${modifierStr}`;
@@ -162,9 +189,17 @@ function processKeystroke(e, down) {
     // Update last key time for debouncing
     lastKeyTime[uniqueKey] = now;
     
+    // Get normalized key name
+    const normalizedKey = normalizeKeyName(e, down);
+    
+    // Skip if normalizedKey is null (filtered out)
+    if (normalizedKey === null) {
+      return;
+    }
+    
     // Add to keystroke timeline - we'll correlate with window info later
     keystrokeTimeline.push({
-      key: normalizeKeyName(e, down),
+      key: normalizedKey,
       vkey: e.vkey,
       state: down ? 'down' : 'up',
       timestamp: new Date().toISOString()

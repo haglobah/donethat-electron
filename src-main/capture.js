@@ -532,10 +532,6 @@ async function collectInputData(resetBuffers = true) {
         });
       });
     }
-    
-    if (inputData.activity.length === 0) {
-      log.warn('No activity data was generated despite tracking being active');
-    }
   } catch (error) {
     log.error('Error processing activity data:', error);
     if (inputDataSettings.keystrokes) captureErrors.keystrokes = true;
