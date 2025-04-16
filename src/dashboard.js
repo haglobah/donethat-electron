@@ -9,7 +9,6 @@ const functions = getFunctions(firebaseApp, "europe-west1");
 // Create callable function references
 const generateRawSummaryFunction = httpsCallable(functions, "generateRawSummary");
 const saveFinalSummaryFunction = httpsCallable(functions, "saveFinalSummary");
-const discardSummaryFunction = httpsCallable(functions, "summaryDiscard");
 
 // Reference to permission-related elements 
 const generateSummaryBtn = document.getElementById("generateSummaryBtn");
@@ -23,6 +22,8 @@ let navigateToView;
 let showSpinner;
 let hideSpinner;
 let currentPeriodEndTime = null;
+// Add an array to store custom bullets
+let customBullets = [];
 
 // Helper function to format date for headline
 function formatHeadlineDate(timestamp) {
@@ -202,6 +203,7 @@ function showSummaryGeneratedState() {
     document.getElementById('visibilityNoteContainer')?.classList.add('hidden'); // Hide note on reset
     currentSummaryId = null;
     selectedBulletPoints = [];
+    customBullets = []; // Reset custom bullets
     currentPeriodEndTime = null; // Reset the stored period end time
   
     // Reset headline
@@ -243,11 +245,29 @@ if (submitSummaryBtn) {
         }
       });
   
+      // Get custom bullets with heart status
+      const filteredCustomBullets = [];
+      document.querySelectorAll('.custom-bullet').forEach(item => {
+        const textElement = item.querySelector('.bullet-text');
+        const heartIcon = item.querySelector('.heart-icon');
+        
+        if (textElement) {
+          let bulletText = textElement.textContent.trim();
+          
+          if (heartIcon.classList.contains('active')) {
+            bulletText = '🧡 ' + bulletText;
+          }
+          
+          filteredCustomBullets.push(bulletText);
+        }
+      });
+
       const commentText = document.getElementById('commentInput').value.trim();
   
       saveFinalSummaryFunction({
         summaryId: currentSummaryId,
         selectedBullets: selectedBullets,
+        customBullets: filteredCustomBullets,
         comment: commentText
       }).then(() => {
         summaryLoadingSpinner.classList.add('hidden');
@@ -316,6 +336,9 @@ if (submitSummaryBtn) {
           const period = result.data.period;
           // Store the period end time (as a number/timestamp)
           currentPeriodEndTime = period?.end;
+          
+          // Reset custom bullets when generating a new summary
+          customBullets = [];
 
           // Update headline
           const headlineElement = document.getElementById('dashboardHeadline');
@@ -362,11 +385,19 @@ if (submitSummaryBtn) {
             </div>
           `).join('');
   
+          // Add custom bullets container
+          const customBulletsHTML = `
+            <div id="customBulletsContainer" class="custom-bullets-container"></div>
+          `;
+  
           const commentHTML = `
             <textarea id="commentInput" class="comment-input" placeholder="Add a comment here"></textarea>
           `;
   
-          summaryContainer.innerHTML = periodHTML + bulletHTML + commentHTML;
+          summaryContainer.innerHTML = periodHTML + bulletHTML + customBulletsHTML + commentHTML;
+  
+          // Initialize custom bullets container
+          renderCustomBullets();
   
           // Add event listeners for checkboxes and heart icons
           document.querySelectorAll('.bullet-checkbox').forEach(checkbox => {
@@ -433,6 +464,98 @@ ipcRenderer.on('pauseStateChanged', () => {
 // Add a function to explicitly refresh notes
 function refreshDashboardNotes() {
   dashboardNote();
+}
+
+// Function to render existing custom bullets
+function renderCustomBullets() {
+  const customBulletsContainer = document.getElementById('customBulletsContainer');
+  if (!customBulletsContainer) return;
+  
+  // Clear existing bullets
+  customBulletsContainer.innerHTML = '';
+  
+  // Add each custom bullet as a non-editable item
+  customBullets.forEach((bullet, index) => {
+    const bulletItem = document.createElement('div');
+    bulletItem.className = 'custom-bullet';
+    
+    // Create delete icon
+    const deleteIcon = document.createElement('span');
+    deleteIcon.className = 'delete-icon';
+    deleteIcon.innerHTML = '×';
+    deleteIcon.addEventListener('click', () => {
+      customBullets.splice(index, 1);
+      renderCustomBullets();
+    });
+    
+    // Create text span for the bullet content
+    const textSpan = document.createElement('span');
+    textSpan.className = 'bullet-content bullet-text custom-bullet-italic';
+    textSpan.textContent = bullet;
+    
+    // Create heart icon
+    const heartIcon = document.createElement('span');
+    heartIcon.className = 'heart-icon';
+    heartIcon.innerHTML = '♥';
+    heartIcon.addEventListener('click', function() {
+      this.classList.toggle('active');
+    });
+    
+    // Add elements to bullet item
+    bulletItem.appendChild(deleteIcon);
+    bulletItem.appendChild(textSpan);
+    bulletItem.appendChild(heartIcon);
+    
+    customBulletsContainer.appendChild(bulletItem);
+  });
+  
+  // Add input field for new bullets with proper alignment
+  const inputRow = document.createElement('div');
+  inputRow.className = 'bullet-input-row';
+  inputRow.style.display = 'flex';
+  inputRow.style.alignItems = 'center';
+  
+  // Create plus icon
+  const plusIcon = document.createElement('span');
+  plusIcon.className = 'add-bullet-icon';
+  plusIcon.innerHTML = '+';
+  
+  // Create input field that spans full width
+  const inputField = document.createElement('input');
+  inputField.type = 'text';
+  inputField.className = 'custom-bullet-input';
+  inputField.placeholder = 'Add bullet points';
+  
+  // Function to add new bullet
+  const addNewBullet = () => {
+    const text = inputField.value.trim();
+    if (text) {
+      customBullets.push(text);
+      inputField.value = '';
+      renderCustomBullets();
+      // Focus the input field after adding a bullet
+      setTimeout(() => {
+        const newInputField = document.querySelector('.custom-bullet-input');
+        if (newInputField) newInputField.focus();
+      }, 0);
+    }
+  };
+  
+  // Add event listeners
+  plusIcon.addEventListener('click', addNewBullet);
+  
+  inputField.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      addNewBullet();
+    }
+  });
+  
+  // Append elements to the input row
+  inputRow.appendChild(plusIcon);
+  inputRow.appendChild(inputField);
+  
+  // Add the input row to the container
+  customBulletsContainer.appendChild(inputRow);
 }
 
 module.exports = { initializeDashboard, resetSummaryState, refreshDashboardNotes };

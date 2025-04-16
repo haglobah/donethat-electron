@@ -35,32 +35,11 @@ async function checkPermissions() {
  * @returns {string} Normalized key representation
  */
 function normalizeKeyName(e, down) {
-  // Handle special keys with Unicode characters and readable names
-  const specialKeys = {
-    'space': ' ',
-    'tab': '⇥',        // Tab arrow
-    'enter': '↵',      // Return symbol
-    'escape': 'Esc ',  // More readable escape
+  // We only want to keep backspace, enter, and space from special keys
+  const allowedSpecialKeys = {
     'backspace': '⌫ ', // Backspace symbol with space
-    'delete': 'Del ',  // More readable delete
-    'up': '↑ ',        // Up arrow
-    'down': '↓ ',      // Down arrow
-    'left': '← ',      // Left arrow
-    'right': '→ ',     // Right arrow
-    'home': 'Home ',   // Home
-    'end': 'End ',     // End
-    'page up': 'PgUp ', // More readable Page up
-    'page down': 'PgDn ', // More readable Page down
-    'insert': 'Ins ',  // More readable Insert
-    'capslock': 'Caps ', // More readable Caps lock
-    'numlock': 'Num ',  // More readable Num lock
-    'scrolllock': 'Scroll ', // More readable Scroll lock
-    'pause': 'Pause ', // Pause
-    'printscreen': 'PrtSc ', // More readable Print screen
-    'clear': 'Clear ', // Clear key
-    'menu': 'Menu ',   // Menu/options
-    'undo': 'Undo ',   // Undo
-    'redo': 'Redo '    // Redo
+    'enter': '↵',      // Return symbol
+    'space': ' '       // Actual space character
   };
 
   // Direct mapping for punctuation keys
@@ -83,21 +62,8 @@ function normalizeKeyName(e, down) {
     'divide': '/'
   };
 
-  // Handle common modifiers with shorter symbols and proper spacing
-  let modifier = '';
-  if (e.state.ctrl) modifier += 'Ctrl+';
-  if (e.state.alt) modifier += 'Alt+';
-  // Exclude shift modifier as requested
-  if (e.state.meta) {
-    // Use different symbols depending on OS for better readability
-    if (process.platform === 'darwin') {
-      modifier += '⌘+'; // Command symbol on macOS
-    } else if (process.platform === 'win32') {
-      modifier += 'Win+'; // Windows key on Windows
-    } else {
-      modifier += 'Super+'; // Super key on Linux/others
-    }
-  }
+  // Ignore all modifiers (ctrl, alt, meta, shift)
+  // No modifier string will be added to keys
   
   // Get base key name
   let keyName = e.name ? e.name.toLowerCase() : 'Unknown';
@@ -111,40 +77,45 @@ function normalizeKeyName(e, down) {
     return null;
   }
   
-  // Skip shift key itself
-  if (keyName === 'shift') {
+  // Skip all modifier keys
+  if (['shift', 'control', 'ctrl', 'alt', 'meta', 'command', 'cmd', 'super', 'win'].includes(keyName)) {
     return null;
   }
   
-  // Special case for space - always return a space character, even with modifiers
-  if (keyName === 'space') {
-    return ' ';
+  // Skip all special keys except allowed ones (backspace, enter, and space)
+  const isSpecialKey = [
+    'tab', 'escape', 'delete', 'up', 'down', 'left', 'right',
+    'home', 'end', 'page up', 'page down', 'insert', 'capslock', 'numlock',
+    'scrolllock', 'pause', 'printscreen', 'clear', 'menu', 'undo', 'redo'
+  ].includes(keyName);
+  
+  // Filter out special keys except allowed ones
+  if (isSpecialKey && !allowedSpecialKeys[keyName]) {
+    return null;
   }
   
-  // Check if it's a special key
-  if (specialKeys[keyName]) {
-    return modifier + specialKeys[keyName];
+  // Check if it's an allowed special key (including space)
+  if (allowedSpecialKeys[keyName]) {
+    return allowedSpecialKeys[keyName];
   }
   
   // Check if it's a punctuation key
   if (punctuationKeys[keyName]) {
-    return modifier ? modifier + punctuationKeys[keyName] : punctuationKeys[keyName];
+    return punctuationKeys[keyName];
   }
   
-  // For function keys (F1-F12)
+  // Skip function keys (F1-F12)
   if (/^f\d+$/.test(keyName)) {
-    return modifier + keyName.toUpperCase() + ' ';
+    return null;
   }
   
-  // For single character keys, handle case appropriately
-  // Force lowercase regardless of shift state
+  // For single character keys
   if (keyName.length === 1) {
-    return modifier ? modifier + keyName : keyName;
+    return keyName;
   }
   
-  // For other keys, keep the name with modifiers
-  // Only add space after special command names
-  return modifier + keyName;
+  // For all other keys, just ignore them
+  return null;
 }
 
 /**
@@ -163,23 +134,11 @@ function processKeystroke(e, down) {
       return;
     }
     
-    // Skip processing for shift key itself
-    if (e.name && e.name.toLowerCase() === 'shift') {
-      return;
-    }
-    
     // Get current time for debounce check
     const now = Date.now();
     
-    // Create a unique key combining key name and modifiers to prevent duplicates
-    // but still allow modifier combinations (e.g. "a" vs "Ctrl+a")
-    // Removed shift from modifier string
-    let modifierStr = '';
-    if (e.state.ctrl) modifierStr += 'c';
-    if (e.state.alt) modifierStr += 'a';
-    if (e.state.meta) modifierStr += 'm';
-    
-    const uniqueKey = `${e.name}-${modifierStr}`;
+    // Simple debouncing without tracking modifiers
+    const uniqueKey = e.name;
     
     // Debounce check - ignore if the same key was pressed recently
     if (lastKeyTime[uniqueKey] && now - lastKeyTime[uniqueKey] < DEBOUNCE_TIME) {
@@ -189,8 +148,20 @@ function processKeystroke(e, down) {
     // Update last key time for debouncing
     lastKeyTime[uniqueKey] = now;
     
+    // Create clean event without modifiers
+    const cleanEvent = {...e};
+    if (cleanEvent.state) {
+      cleanEvent.state = {
+        ...cleanEvent.state,
+        shift: false,
+        ctrl: false,
+        alt: false,
+        meta: false
+      };
+    }
+    
     // Get normalized key name
-    const normalizedKey = normalizeKeyName(e, down);
+    const normalizedKey = normalizeKeyName(cleanEvent, down);
     
     // Skip if normalizedKey is null (filtered out)
     if (normalizedKey === null) {

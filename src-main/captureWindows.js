@@ -225,7 +225,6 @@ function processTimelineData(timeline) {
  * @returns {boolean} True if tracking is active
  */
 function isTrackingActive() {
-  log.debug(`Window tracking status checked: ${isTracking}`);
   return isTracking;
 }
 
