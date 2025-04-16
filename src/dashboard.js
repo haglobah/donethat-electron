@@ -281,7 +281,11 @@ if (submitSummaryBtn) {
         // Clear summary content immediately
         document.getElementById('summaryContainer').innerHTML = '<p class="empty-state-text"></p>';
 
-        ipcRenderer.send("summarySubmitted");
+        // Send both the current timestamp and the period end time
+        ipcRenderer.send("summarySubmitted", {
+          timestamp: Date.now(),
+          lastSummaryPeriodEnd: currentPeriodEndTime
+        });
 
         logAnalyticsEvent('summary_submitted', {
             status: 'success',

@@ -273,7 +273,7 @@ app.whenReady().then(async () => {
     }
 
     // Load last summary timestamp from store into local variable
-    let loadedTimestamp = store.get('lastSummaryTimestamp');
+    let loadedTimestamp = store.get('lastSummaryPeriodEnd');
 
     // Directly try to use the loaded value, assuming it's milliseconds (number)
     if (loadedTimestamp !== null && loadedTimestamp !== undefined) {
@@ -282,28 +282,28 @@ app.whenReady().then(async () => {
         // Validate the date created from the loaded number
         if (!isNaN(dateObject.getTime())) {
           lastSummaryTimestamp = loadedTimestamp; // Store as milliseconds
-          log.info('Loaded valid timestamp:', new Date(lastSummaryTimestamp).toISOString());
+          log.info('Loaded valid period end:', new Date(lastSummaryTimestamp).toISOString());
         } else {
           // If the loaded number results in an invalid date, log error and delete the stored value
-          log.error('Invalid timestamp format received:', loadedTimestamp, 
+          log.error('Invalid period end format received:', loadedTimestamp, 
                     'Type:', typeof loadedTimestamp, 
                     'Resulting date object:', dateObject);
-          store.delete('lastSummaryTimestamp');
+          store.delete('lastSummaryPeriodEnd');
           lastSummaryTimestamp = null;
         }
       } catch (error) {
-        log.error('Error processing timestamp:', error, 
-                 'Raw timestamp value:', loadedTimestamp, 
+        log.error('Error processing period end:', error, 
+                 'Raw value:', loadedTimestamp, 
                  'Type:', typeof loadedTimestamp);
-        store.delete('lastSummaryTimestamp');
+        store.delete('lastSummaryPeriodEnd');
         lastSummaryTimestamp = null;
       }
     } else {
       // For new users, initialize timestamp to current time
       // This gives them time to use the app before showing notifications
       lastSummaryTimestamp = Date.now();
-      store.set('lastSummaryTimestamp', lastSummaryTimestamp);
-      log.info('Initialized default timestamp for new user');
+      store.set('lastSummaryPeriodEnd', lastSummaryTimestamp);
+      log.info('Initialized default period end for new user');
     }
 
     // --> Check for unreviewed work on startup <--
@@ -1061,16 +1061,24 @@ app.on('browser-window-focus', async () => {
 
 
 // Add listener for when summary is submitted
-ipcMain.on('summarySubmitted', (event) => {
-  // Update the local timestamp variable
-  lastSummaryTimestamp = Date.now();
-  
-  // Also save to persistent store
-  if (store) {
-    store.set('lastSummaryTimestamp', lastSummaryTimestamp);
-    log.info('Summary timestamp updated:', new Date(lastSummaryTimestamp).toISOString());
+ipcMain.on('summarySubmitted', (event, data) => {
+  // Check if we received the period end time
+  if (data && data.lastSummaryPeriodEnd) {
+    // Store the period end time
+    const lastSummaryPeriodEnd = data.lastSummaryPeriodEnd;
+    
+    // Update the local timestamp variable with the period end time
+    lastSummaryTimestamp = lastSummaryPeriodEnd;
+    
+    // Save to persistent store
+    if (store) {
+      store.set('lastSummaryPeriodEnd', lastSummaryPeriodEnd);
+      log.info('Summary period end updated:', new Date(lastSummaryPeriodEnd).toISOString());
+    } else {
+      log.warn('Store not initialized, cannot save lastSummaryPeriodEnd on summary submission');
+    }
   } else {
-    log.warn('Store not initialized, cannot save lastSummaryTimestamp on summary submission');
+    log.warn('No period end time received with summary submission');
   }
 })
 
@@ -1198,20 +1206,20 @@ function checkAndNotifyForUnreviewedWork() {
       return; // Can't check if store isn't ready
     }
 
-    // Retrieve the stored timestamp (expecting milliseconds)
-    const storedTimestamp = store.get('lastSummaryTimestamp');
+    // Retrieve the stored period end time
+    const storedPeriodEnd = store.get('lastSummaryPeriodEnd');
     
-    // Only show notification if we have a valid timestamp and it's been more than 12 hours
-    if (typeof storedTimestamp === 'number' && !isNaN(storedTimestamp) && storedTimestamp > 0) {
-      const hoursSinceLastSummary = (Date.now() - storedTimestamp) / (1000 * 60 * 60);
-      log.info('Hours since last summary:', hoursSinceLastSummary);
+    // Only show notification if we have a valid period end time and it's been more than 12 hours
+    if (typeof storedPeriodEnd === 'number' && !isNaN(storedPeriodEnd) && storedPeriodEnd > 0) {
+      const hoursSinceLastSummary = (Date.now() - storedPeriodEnd) / (1000 * 60 * 60);
+      log.info('Hours since last summary period end:', hoursSinceLastSummary);
 
       if (hoursSinceLastSummary > 12) {
         // Add 2-minute delay before showing notification
         setTimeout(() => {
-          // Double-check the timestamp hasn't been updated during the delay
-          const currentTimestamp = store.get('lastSummaryTimestamp');
-          if (currentTimestamp === storedTimestamp) {
+          // Double-check the period end hasn't been updated during the delay
+          const currentPeriodEnd = store.get('lastSummaryPeriodEnd');
+          if (currentPeriodEnd === storedPeriodEnd) {
             const notification = new Notification({
               title: "Review Yesterday's Work", // Use double quotes for string with apostrophe
               body: "You haven't reviewed your last summary. Generate one in DoneThat to catch up!",
@@ -1228,7 +1236,7 @@ function checkAndNotifyForUnreviewedWork() {
         }, 2 * 60 * 1000); // 2 minutes in milliseconds
       }
     } else {
-      log.info('No valid lastSummaryTimestamp found or first run');
+      log.info('No valid lastSummaryPeriodEnd found or first run');
     }
   } catch (error) {
     log.error('Error checking/notifying for unreviewed work:', error);
@@ -1244,13 +1252,13 @@ ipcMain.on('updateLastSummaryTimestamp', (event, timestamp) => {
     // Attempt to store the converted milliseconds
     if (store) {
       lastSummaryTimestamp = timestampInMillis; // Update local variable
-      store.set('lastSummaryTimestamp', timestampInMillis); // Store as milliseconds
+      store.set('lastSummaryPeriodEnd', timestampInMillis); // Store as periodEnd
     } else {
       // Log only if store isn't ready - potentially important
-      log.warn('Store not initialized, cannot save lastSummaryTimestamp.');
+      log.warn('Store not initialized, cannot save lastSummaryPeriodEnd.');
     }
   } catch (error) {
     // Log any errors during conversion or storage
-    log.error('Error processing/storing lastSummaryTimestamp:', error, 'Raw value:', timestamp);
+    log.error('Error processing/storing lastSummaryPeriodEnd:', error, 'Raw value:', timestamp);
   }
 });
