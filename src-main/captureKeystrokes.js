@@ -63,6 +63,26 @@ function normalizeKeyName(e, down) {
     'redo': 'Redo '    // Redo
   };
 
+  // Direct mapping for punctuation keys
+  const punctuationKeys = {
+    'comma': ',',
+    'period': '.',
+    'semicolon': ';',
+    'quote': '\'',
+    'backquote': '`',
+    'minus': '-',
+    'equal': '=',
+    'open bracket': '[',
+    'close bracket': ']',
+    'backslash': '\\',
+    'slash': '/',
+    'multiply': '*',
+    'add': '+',
+    'subtract': '-',
+    'decimal point': '.',
+    'divide': '/'
+  };
+
   // Handle common modifiers with shorter symbols and proper spacing
   let modifier = '';
   if (e.state.ctrl) modifier += 'Ctrl+';
@@ -92,6 +112,11 @@ function normalizeKeyName(e, down) {
     return modifier + specialKeys[keyName];
   }
   
+  // Check if it's a punctuation key
+  if (punctuationKeys[keyName]) {
+    return modifier ? modifier + punctuationKeys[keyName] : punctuationKeys[keyName];
+  }
+  
   // For function keys (F1-F12)
   if (/^f\d+$/.test(keyName)) {
     return modifier + keyName.toUpperCase() + ' ';
@@ -100,11 +125,13 @@ function normalizeKeyName(e, down) {
   // For single character keys, handle case appropriately
   if (keyName.length === 1) {
     const char = e.state.shift ? keyName.toUpperCase() : keyName;
-    return modifier ? modifier + char + ' ' : char + ' ';
+    // No space after regular characters
+    return modifier ? modifier + char : char;
   }
   
   // For other keys, keep the name with modifiers
-  return modifier + keyName + ' ';
+  // Only add space after special command names
+  return modifier + keyName;
 }
 
 /**

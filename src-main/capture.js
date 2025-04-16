@@ -588,6 +588,7 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
           // Remove start/end times from the API payload
           delete apiItem.startTime;
           delete apiItem.endTime;
+          delete apiItem.duration;
           
           return apiItem;
         });
