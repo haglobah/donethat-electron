@@ -77,7 +77,6 @@ async function recordCurrentWindow() {
     const activeWindowInfo = await activeWindow()
     
     if (!activeWindowInfo) {
-      log.warn('Could not retrieve active window information')
       // Still record the timestamp but with empty data
       windowTimeline.push({
         timestamp: new Date().toISOString(),
