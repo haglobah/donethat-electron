@@ -42,10 +42,27 @@ jobs:
           node-version: '22'
           cache: 'npm'
           
+      - name: Setup Python for node-gyp
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools wheel
+          
+      # Fix for active-win on macOS GitHub runners
+      - name: Fix macOS active-win dependencies
+        if: matrix.platform == 'mac'
+        run: |
+          pip install macholib
+          
       - name: Install dependencies
         run: npm install
         
-      - name: Create config files from secrets
+      - name: Create config files from secrets (Unix)
+        if: runner.os != 'Windows'
         run: |
           cat > firebase-config.js << 'EOL'
           ${{ secrets.FIREBASE_CONFIG }}
@@ -53,6 +70,15 @@ jobs:
           cat > slack-config.js << 'EOL'
           ${{ secrets.SLACK_CONFIG }}
           EOL
+
+      - name: Create config files from secrets (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $firebaseConfig = '${{ secrets.FIREBASE_CONFIG }}'
+          $slackConfig = '${{ secrets.SLACK_CONFIG }}'
+          Set-Content -Path firebase-config.js -Value $firebaseConfig
+          Set-Content -Path slack-config.js -Value $slackConfig
         
       # Setup keychain for macOS code signing (if needed)
       - name: Setup macOS code signing
