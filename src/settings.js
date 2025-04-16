@@ -462,9 +462,8 @@ async function updateSettingsUI(settings) {
     // Send the timestamp to the main process
     ipcRenderer.send('updateLastSummaryTimestamp', timestamp);
   } else {
-     // Handle case where lastSummary might be explicitly null or undefined
-     // Optionally send null to main process to clear stored value if needed
-     ipcRenderer.send('updateLastSummaryTimestamp', null);
+    // Handle case where lastSummary might be explicitly null or undefined
+    // Don't send null to main process to avoid errors with Firebase timestamp properties
   }
   
   // Handle Slack settings

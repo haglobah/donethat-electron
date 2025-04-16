@@ -620,6 +620,12 @@ function setupIPCHandlers() {
   // Add IPC handler for receiving last summary timestamp
   ipcMain.on('updateLastSummaryTimestamp', (event, timestamp) => {
     try {
+      // Check if timestamp exists before trying to access its properties
+      if (!timestamp) {
+        log.warn('Received null or undefined timestamp');
+        return;
+      }
+      
       // Attempt to convert directly, assuming Firebase Timestamp object
       const timestampInMillis = timestamp._seconds * 1000 + Math.floor(timestamp._nanoseconds / 1000000);
 
