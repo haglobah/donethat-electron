@@ -291,6 +291,12 @@ async function saveUserSettings(type, value) {
         osPlatform: value.osPlatform, // Updated field name
         osRelease: value.osRelease   // Added field
       });
+    } else if (type === 'timezone') {
+      settingsData.timezone = value;
+      logAnalyticsEvent('settings_updated', {
+        type: 'timezone',
+        timezone: value
+      });
     }
 
     await updateUserSettingsFunction(settingsData);
@@ -417,25 +423,24 @@ async function updateSettingsUI(settings) {
   let fetchedTimezone = "UTC"; // Default to UTC if not set
   if (settings && settings.timezone) {
     fetchedTimezone = settings.timezone;
+  } else {
+    // No timezone in settings, try to add the local one
+    // Don't check for updates as that's also done in webapp
+    try {
+      const systemTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (systemTimezone) {
+        fetchedTimezone = systemTimezone;
+        // Save the system timezone to user settings
+        saveUserSettings('timezone', systemTimezone).catch(error => {
+          console.error("Error saving system timezone:", error);
+        });
+        console.log(`No timezone in settings. Adding local timezone: ${systemTimezone}`);
+      }
+    } catch (error) {
+      console.error("Could not determine system timezone:", error);
+    }
   }
   userTimezone = fetchedTimezone; // Store the fetched timezone
-
-  // Check system timezone and update if different
-  try {
-    const systemTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (systemTimezone && systemTimezone !== userTimezone) {
-      console.log(`System timezone (${systemTimezone}) differs from saved timezone (${userTimezone}). Logging mismatch.`);
-      // Log an analytics event for the mismatch instead of updating
-      // Don't update here because also updating in webApp and potential
-      // to cause a loop
-      logAnalyticsEvent('timezone_mismatch', {
-        system_timezone: systemTimezone,
-        user_timezone: userTimezone
-      });
-    }
-  } catch (error) {
-    console.error("Could not determine system timezone:", error);
-  }
 
   // Handle workdays
   const defaultWorkdays = [1, 2, 3, 4, 5]; // Mon-Fri
