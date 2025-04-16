@@ -53,18 +53,119 @@ function setCaptureInterval(minutes) {
 }
 
 /**
+ * Helper function to start audio recording
+ * @returns {Promise<boolean>} Success status
+ */
+async function _startAudioTracking() {
+  try {
+    if (!mainWindowRef) {
+      log.warn('Cannot start audio recording: No main window reference');
+      inputDataSettings.audio = false;
+      return false;
+    }
+    await audioCapture.startRecording();
+    return true;
+  } catch (error) {
+    log.error('Error starting audio recording:', error);
+    inputDataSettings.audio = false;
+    if (mainWindowRef) {
+      mainWindowRef.webContents.send('permission-error', { 
+        type: 'audio', 
+        message: 'Failed to start audio recording: ' + error.message
+      });
+    }
+    return false;
+  }
+}
+
+/**
+ * Helper function to start keystroke tracking
+ * @returns {Promise<boolean>} Success status
+ */
+async function _startKeystrokeTracking() {
+  try {
+    await keystrokesCapture.startTracking();
+    return true;
+  } catch (error) {
+    log.error('Failed to start keystroke tracking:', error);
+    inputDataSettings.keystrokes = false;
+    if (mainWindowRef) {
+      mainWindowRef.webContents.send('permission-error', { 
+        type: 'keystrokes', 
+        message: 'Unable to track keystrokes. Check system permissions.'
+      });
+    }
+    return false;
+  }
+}
+
+/**
+ * Helper function to start window tracking
+ * @returns {Promise<boolean>} Success status
+ */
+async function _startWindowTracking() {
+  try {
+    await windowsCapture.startTracking();
+    return true;
+  } catch (error) {
+    log.error('Failed to start window tracking:', error);
+    inputDataSettings.windows = false;
+    if (mainWindowRef) {
+      mainWindowRef.webContents.send('permission-error', { 
+        type: 'windows', 
+        message: 'Window tracking permission denied. Check accessibility permissions.'
+      });
+    }
+    return false;
+  }
+}
+
+/**
  * Updates input data settings
  * @param {Object} settings Settings with audio, keystrokes, windows flags
  * @returns {Object} Updated settings
  */
 function updateInputDataSettings(settings) {
   if (settings && typeof settings === 'object') {
+    // Save previous settings for comparison
+    const previousSettings = { ...inputDataSettings };
+    
+    // Update settings
     inputDataSettings = {
       ...inputDataSettings,
       ...(settings.audio !== undefined ? { audio: !!settings.audio } : {}),
       ...(settings.keystrokes !== undefined ? { keystrokes: !!settings.keystrokes } : {}),
       ...(settings.windows !== undefined ? { windows: !!settings.windows } : {})
     };
+    
+    // Stop tracking for disabled options
+    if (previousSettings.audio && !inputDataSettings.audio) {
+      audioCapture.shutdownRecording().catch(error => {
+        log.error('Error shutting down audio recording:', error);
+      });
+    }
+    
+    if (previousSettings.keystrokes && !inputDataSettings.keystrokes) {
+      keystrokesCapture.stopTracking();
+    }
+    
+    if (previousSettings.windows && !inputDataSettings.windows) {
+      windowsCapture.stopTracking();
+    }
+    
+    // Start tracking for newly enabled options
+    if (!previousSettings.audio && inputDataSettings.audio) {
+      _startAudioTracking();
+    }
+    
+    if (!previousSettings.keystrokes && inputDataSettings.keystrokes) {
+      _startKeystrokeTracking();
+    }
+    
+    if (!previousSettings.windows && inputDataSettings.windows) {
+      _startWindowTracking();
+    }
+    
     settingsInitialized = true;
   }
   return inputDataSettings;
@@ -493,6 +594,16 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
       }
     }
     
+    // Log the payload (excluding screenshot data for brevity)
+    const logPayload = { ...payload };
+    if (logPayload.screenshots) {
+      logPayload.screenshots = `[${logPayload.screenshots.length} screenshots]`;
+    }
+    if (logPayload.audio) {
+      logPayload.audio = `[Audio data: ${logPayload.audio.timeMs}ms]`;
+    }
+    console.log('Sending data to API:', logPayload);
+    
     // Send data to Firebase
     const response = await fetch(FIREBASE_CAPTURE_URL, {
       method: 'POST',
@@ -612,50 +723,17 @@ async function _runCaptureCycle(idToken) {
   try {
     // Start audio capture if needed
     if (inputDataSettings.audio && !audioCapture.getStatus().recording) {
-      try {
-        await audioCapture.startRecording();
-      } catch (audioError) {
-        log.error('Failed to start audio recording:', audioError);
-        updateInputDataSettings({ audio: false });
-        if (mainWindowRef) {
-          mainWindowRef.webContents.send('permission-error', { 
-            type: 'audio', 
-            message: 'Microphone access denied. Please check system permissions.'
-          });
-        }
-      }
+      await _startAudioTracking();
     }
     
     // Start keystroke tracking if needed
     if (inputDataSettings.keystrokes && !keystrokesCapture.isTracking()) {
-      try {
-        await keystrokesCapture.startTracking();
-      } catch (keystrokesError) {
-        log.error('Failed to start keystroke tracking:', keystrokesError);
-        updateInputDataSettings({ keystrokes: false });
-        if (mainWindowRef) {
-          mainWindowRef.webContents.send('permission-error', { 
-            type: 'keystrokes', 
-            message: 'Unable to track keystrokes. Check system permissions.'
-          });
-        }
-      }
+      await _startKeystrokeTracking();
     }
     
     // Start window tracking if needed
     if (inputDataSettings.windows && !windowsCapture.isTracking()) {
-      try {
-        await windowsCapture.startTracking();
-      } catch (windowsError) {
-        log.error('Failed to start window tracking:', windowsError);
-        updateInputDataSettings({ windows: false });
-        if (mainWindowRef) {
-          mainWindowRef.webContents.send('permission-error', { 
-            type: 'windows', 
-            message: 'Window tracking permission denied. Check accessibility permissions.'
-          });
-        }
-      }
+      await _startWindowTracking();
     }
     
     // Capture and send data
@@ -677,19 +755,11 @@ function startCaptureInterval(idToken) {
   // Clear existing interval and stop tracking
   stopCaptureInterval();
   
-  const runFirstCycle = () => {
-    _runCaptureCycle(idToken).catch(error => {
-      log.error('Error during initial capture cycle run:', error);
-      // handleCaptureError is called within _runCaptureCycle
-    });
-  };
-
-  // Run first capture cycle (immediately or delayed)
-  if (settingsInitialized) {
-    runFirstCycle();
-  } else {
-    setTimeout(runFirstCycle, 1000);
-  }
+  // Run first cycle immediately
+  _runCaptureCycle(idToken).catch(error => {
+    log.error('Error during initial capture cycle run:', error);
+    // handleCaptureError is called within _runCaptureCycle
+  });
 
   // Set up interval for subsequent cycles
   screenshotInterval = setInterval(() => {
