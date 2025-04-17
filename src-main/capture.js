@@ -590,17 +590,7 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
         });
       }
     }
-    
-    // Log the payload (excluding screenshot data for brevity)
-    const logPayload = { ...payload };
-    if (logPayload.screenshots) {
-      logPayload.screenshots = `[${logPayload.screenshots.length} screenshots]`;
-    }
-    if (logPayload.audio) {
-      logPayload.audio = `[Audio data: ${logPayload.audio.timeMs}ms]`;
-    }
-    console.log('Sending data to API:', logPayload);
-    
+     
     // Send data to Firebase
     const response = await fetch(FIREBASE_CAPTURE_URL, {
       method: 'POST',
