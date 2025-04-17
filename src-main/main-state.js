@@ -198,20 +198,6 @@ function _resumeRecording() {
   }
 }
 
-/**
- * Format a duration in milliseconds to HH:MM:SS format
- * @param {number} ms - Duration in milliseconds
- * @returns {string} Formatted duration as HH:MM:SS
- */
-function formatDuration(ms) {
-  const seconds = Math.floor(ms / 1000);
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainingSeconds = seconds % 60;
-  
-  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
-}
-
 // Function to pause recording for a specified duration
 function pauseRecording(duration, mainWindow, reason = null) {
   if (pauseState.timeoutId) {
@@ -235,10 +221,6 @@ function pauseRecording(duration, mainWindow, reason = null) {
   if (checkAndAdjustRecording) {
     checkAndAdjustRecording();
   }
-
-  const formattedDuration = formatDuration(duration);
-  const formattedEndTime = endTime.toLocaleTimeString();
-  log.info(`Pausing recording for ${formattedDuration} until ${formattedEndTime} - Reason: ${reason || 'not specified'}`);
 
   // Send analytics event to renderer
   if (mainWindow) {
@@ -496,7 +478,13 @@ function setupIPCHandlers() {
     const mainWindow = event.sender.getOwnerBrowserWindow();
     
     if (setIdToken(token)) {
-      // Check recording state after login
+      // Check if we're outside of work hours and should pause
+      const now = new Date();
+      if (!isActiveWorkPeriod(now)) {
+        pauseUntilNextWorkPeriod(mainWindow);
+      } 
+
+      // Only start recording if we're in work hours
       if (checkAndAdjustRecording) {
         checkAndAdjustRecording();
       }
@@ -728,10 +716,6 @@ function _scheduleNextWorkEndCheck() {
   
   // Ensure msUntilCheck is positive
   const positiveMsUntilCheck = Math.max(msUntilCheck, 60000); // Minimum 1 minute wait
-  
-  const formattedDuration = formatDuration(positiveMsUntilCheck);
-  const formattedEndTime = nextWorkEndTime.toLocaleString();
-  log.info(`Scheduled workday end check in ${formattedDuration} at ${formattedEndTime}`);
     
   // Set timeout for next check - when work period ends, pause until next work period
   workPeriodCheckTimeoutId = setTimeout(() => {
