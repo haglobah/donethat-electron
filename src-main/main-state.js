@@ -140,19 +140,22 @@ function _checkWorkdayEndNotification() {
   const threeHoursInMillis = 3 * 60 * 60 * 1000;
 
   if (lastSummaryTimestamp && (Date.now() - lastSummaryTimestamp > threeHoursInMillis)) {
+    // Create notification with same options structure as start notification
     const notification = new Notification({
       title: "Workday Ended",
       body: "Remember to generate your summary in DoneThat!",
-      silent: false
+      silent: false,
+      hasReply: false,
+      urgency: 'critical'
     });
 
     notification.on('click', () => {
-      console.log('clicking');
-      if(navigateToView) {
+      if (navigateToView) {
         navigateToView('signup-next');
       }
     });
 
+    // Show notification
     notification.show();
   }
 }
@@ -164,17 +167,18 @@ function _checkWorkdayStartNotification() {
     const hoursSinceLastSummary = (Date.now() - lastSummaryTimestamp) / (1000 * 60 * 60);
 
     if (hoursSinceLastSummary > 12) {
+      // Create the same notification options as the end notification for consistency
       const notification = new Notification({
         title: "Review Yesterday's Work",
         body: "You haven't reviewed your last summary. Generate one in DoneThat to catch up!",
-        silent: false
+        silent: false,
+        hasReply: false,
+        urgency: 'critical'
       });
       
-      // Make notification clickable to open the app
+      // Set callback before showing
       notification.on('click', () => {
-        console.log('opening app');
-        if(navigateToView) {
-          console.log('navigating to view');
+        if (navigateToView) {
           navigateToView('signup-next');
         }
       });
