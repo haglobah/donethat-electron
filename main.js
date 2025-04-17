@@ -237,21 +237,8 @@ function setupAutoStart() {
 app.whenReady().then(async () => {
   // Initialize the state manager with necessary callbacks
   stateManager = await initState({
-    updateIcon: updateTrayIcon,
-    checkRecording: checkAndAdjustRecording,
-    resumeRecording: () => {
-      // Even if already capturing, update icon to show recording state
-      if (isCapturing()) {
-        updateTrayIcon(true);
-        return;
-      }
-      if (stateManager && stateManager.isAuthenticated()) {
-        startRecording();
-      }
-    },
-    navigate: navigateToView,
-    stopRecording: stopRecording,
-    showWindow: showWindowBelowTray
+    checkRecording: checkAndAdjustRecording, // for pause state changes
+    navigateToView: navigateToView // for notifications
   });
 
   // Create tray with initial error icon
@@ -279,7 +266,7 @@ app.whenReady().then(async () => {
   powerMonitor.on('resume', () => {
     // Clear the potentially delayed timeout from before sleep
     if (stateManager) {
-        stateManager.clearDailyWorkPeriodCheckTimeout();
+        stateManager.resume();
     }
     // Immediately check the state and schedule the *next* check
     checkAndAdjustRecording();
@@ -318,12 +305,12 @@ app.whenReady().then(async () => {
   app.on('activate', async () => {
     await checkScreenCapturePermission();
 
-    log.warn(`A Sending permission check result: hasPermission=${stateManager.hasScreenCapturePermission()}, isWaylandSession=${stateManager.isWaylandSession()}`);
+    log.warn(`A Sending permission check result: hasPermission=${stateManager?.hasScreenCapturePermission()}, isWaylandSession=${stateManager?.isWaylandSession()}`);
 
     if (mainWindow) {
       mainWindow.webContents.send('screenCapturePermission', {
-        hasPermission: stateManager.hasScreenCapturePermission(),
-        isWaylandSession: stateManager.isWaylandSession()
+        hasPermission: stateManager?.hasScreenCapturePermission(),
+        isWaylandSession: stateManager?.isWaylandSession()
       });
     }
   });
@@ -348,9 +335,7 @@ app.on('before-quit', () => {
   }
   
   // Clean up state (timeouts and save pause state if needed)
-  if (stateManager) {
-    stateManager.cleanupOnQuit();
-  }
+  stateManager?.cleanupOnQuit();
 })
 
 ////// TRAY /////
@@ -365,29 +350,26 @@ function updateTrayIcon(isActuallyRecording) {
   let iconPath;
   let tooltip;
 
-  const loggedIn = stateManager && stateManager.isAuthenticated();
-  const manuallyPaused = stateManager && stateManager.isPaused();
-  const todayIsWorkPeriod = stateManager && stateManager.isActiveWorkPeriod(); // Check current day
+  const loggedIn = stateManager?.isAuthenticated() ?? false;
+  const isPaused = stateManager?.isPaused() ?? false;
+  const hasPermission = stateManager?.hasScreenCapturePermission() ?? false;
 
   if (isActuallyRecording) {
     iconPath = iconRecordingPath;
     tooltip = 'DoneThat - Recording';
-  } else if (manuallyPaused) {
-    iconPath = iconPausedPath;
-    tooltip = 'DoneThat - Paused';
+  } else if (!hasPermission) {
+    iconPath = iconErrorPath;
+    tooltip = 'DoneThat - No Screen Capture Permission';
   } else if (!loggedIn) {
     iconPath = iconErrorPath;
     tooltip = 'DoneThat - Not Logged In';
-  } else if (!stateManager.hasScreenCapturePermission()) {
-      iconPath = iconErrorPath;
-      tooltip = 'DoneThat - Screen Permission Needed';
-  } else if (!todayIsWorkPeriod) {
-    iconPath = iconPausedPath; // Use paused icon for non-work-period
-    tooltip = 'DoneThat - Not Recording (no working hours)';
+  } else if (isPaused) {
+    iconPath = iconPausedPath;
+    tooltip = 'DoneThat - Paused';
   } else {
-    // Default fallback (e.g., other error state?)
+    // Default fallback
     iconPath = iconErrorPath;
-    tooltip = 'DoneThat - Not Recording';
+    tooltip = 'DoneThat - Error';
   }
 
   // Load and set the appropriate icon
@@ -423,8 +405,9 @@ function navigateToView(viewName) {
 
 // Function to build the context menu with pause options
 function buildContextMenu() {
-  const isLoggedIn = stateManager && stateManager.isAuthenticated();
-  const currentlyPaused = stateManager && stateManager.isPaused();
+  const isLoggedIn = stateManager?.isAuthenticated() ?? false;
+  const isPaused = stateManager?.isPaused() ?? false;
+  const hasPermission = stateManager?.hasScreenCapturePermission() ?? false;
 
   // Start with basic template
   const template = []
@@ -456,33 +439,33 @@ function buildContextMenu() {
   template.push(
     {
       label: 'Pause for 5 minutes',
-      click: () => stateManager.pauseRecording(5 * 60 * 1000, mainWindow),
-      enabled: isLoggedIn && !currentlyPaused && screenshotInterval
+      click: () => stateManager?.pauseRecording(5 * 60 * 1000, mainWindow),
+      enabled: isLoggedIn && !isPaused && hasPermission
     },
     {
       label: 'Pause for 15 minutes',
-      click: () => stateManager.pauseRecording(15 * 60 * 1000, mainWindow),
-      enabled: isLoggedIn && !currentlyPaused && screenshotInterval
+      click: () => stateManager?.pauseRecording(15 * 60 * 1000, mainWindow),
+      enabled: isLoggedIn && !isPaused && hasPermission
     },
     {
       label: 'Pause for 30 minutes',
-      click: () => stateManager.pauseRecording(30 * 60 * 1000, mainWindow),
-      enabled: isLoggedIn && !currentlyPaused && screenshotInterval
+      click: () => stateManager?.pauseRecording(30 * 60 * 1000, mainWindow),
+      enabled: isLoggedIn && !isPaused && hasPermission
     },
     {
       label: 'Pause for 1 hour',
-      click: () => stateManager.pauseRecording(60 * 60 * 1000, mainWindow),
-      enabled: isLoggedIn && !currentlyPaused && screenshotInterval
+      click: () => stateManager?.pauseRecording(60 * 60 * 1000, mainWindow),
+      enabled: isLoggedIn && !isPaused && hasPermission
     },
     {
       label: 'Pause for today',
-      click: () => stateManager.pauseUntilNextWorkPeriod(mainWindow),
-      enabled: isLoggedIn && !currentlyPaused && screenshotInterval
+      click: () => stateManager?.pauseUntilNextWorkPeriod(mainWindow),
+      enabled: isLoggedIn && !isPaused && hasPermission
     },
     {
       label: 'Resume',
-      click: () => stateManager.resumeRecording(mainWindow),
-      enabled: isLoggedIn && currentlyPaused
+      click: () => startRecording(),
+      enabled: isLoggedIn && isPaused && hasPermission
     }
   )
 
@@ -518,63 +501,32 @@ function buildContextMenu() {
 // Central function to evaluate and adjust recording state based on all factors
 function checkAndAdjustRecording() {
     const isCurrentlyRecording = isCapturing();
-    const isAuthenticated = stateManager && stateManager.isAuthenticated();
-    const hasPermission = stateManager && stateManager.hasScreenCapturePermission();
-    const isPaused = stateManager && stateManager.isPaused();
-    const isActivePeriodNow = stateManager ? stateManager.isActiveWorkPeriod() : false; // Check current work period status
-    const lastSummaryTimestamp = stateManager ? stateManager.getLastSummaryTimestamp() : null;
 
-    // Determine the *ideal* recording state based on current conditions
-    const shouldBeRecording = isAuthenticated && hasPermission && !isPaused && isActivePeriodNow;
+    // Determine if we should be recording based on current conditions
+    const isAuthenticated = stateManager?.isAuthenticated();
+    const hasPermission = stateManager?.hasScreenCapturePermission();
+    const isPaused = stateManager?.isPaused();
+    const shouldBeRecording = isAuthenticated && hasPermission && !isPaused;
 
-    // --- Notification Logic for Workday End ---
-    // Check if recording was active *before* this check AND it should stop *now* primarily because the work period ended
-    if (isCurrentlyRecording && !shouldBeRecording && !isActivePeriodNow) {
-        // This condition targets the moment the work period ends while recording was active.
-        // We assume the other essential conditions (auth, permission, not paused) were met just before this.
+    // to capture some cases where auth is loaded later
+    // but not recording it's not triggering above function because
+    // isCurrentlyRecording is false
+    updateTrayIcon(isCurrentlyRecording && shouldBeRecording);
 
-        // Check the timestamp condition
-        const threeHoursInMillis = 3 * 60 * 60 * 1000;
-        if (lastSummaryTimestamp && (Date.now() - lastSummaryTimestamp > threeHoursInMillis)) {
-            // Show notification
-            const notification = new Notification({
-                title: "Workday Ended",
-                body: "Remember to generate your summary in DoneThat!",
-                silent: false // Make sure it's not silent
-            });
-
-            // Make notification clickable to open the app
-            notification.on('click', () => {
-                 navigateToView('signup-next'); // Navigate to the main view
-            });
-
-            notification.show();
-            log.info('Workday ended notification shown.'); // Log that we showed it
-        }
-    }
-    // --- End Notification Logic ---
-
-    // If authenticated, has permission, not manually paused, but outside work hours,
-    // auto-pause until next work period
-    if (isAuthenticated && hasPermission && !isPaused && !isActivePeriodNow) {
-        stateManager.pauseUntilNextWorkPeriod(mainWindow);
-    } 
     // Regular start/stop logic
-    else if (isCurrentlyRecording && !shouldBeRecording) {
-        stopRecording();
+    if (isCurrentlyRecording && !shouldBeRecording) {
+      stopRecording();
     } else if (!isCurrentlyRecording && shouldBeRecording) {
-        startRecording();
-    } else {
-        // No change in start/stop needed, but update icon based on *actual* recording status
-        // This handles cases like being manually paused outside work hours, etc.
-        updateTrayIcon(isCurrentlyRecording);
+      startRecording();
     }
 
-    // Schedule the next check (important for the loop)
-    if (stateManager) {
-        stateManager.scheduleNextCheck();
-    }
+
 }
+
+// Add IPC handler for resume action
+ipcMain.on('resumeRecording', (event) => {
+  startRecording();
+});
 
 ////// WINDOWS /////
 
@@ -618,8 +570,8 @@ function createWindow() {
     // Position the window once it's ready.
     mainWindow.once('ready-to-show', () => {
       mainWindow.webContents.send('screenCapturePermission', {
-        hasPermission: stateManager.hasScreenCapturePermission(),
-        isWaylandSession: stateManager.isWaylandSession()
+        hasPermission: stateManager?.hasScreenCapturePermission(),
+        isWaylandSession: stateManager?.isWaylandSession()
       });
       
       // Initialize capture with auth error handler
@@ -717,15 +669,15 @@ app.on('window-all-closed', (event) => {
 
 // Update the focus handler to use state manager
 app.on('browser-window-focus', async () => {
-  const oldPermission = stateManager ? stateManager.hasScreenCapturePermission() : false;
+  const oldPermission = stateManager?.hasScreenCapturePermission() ?? false;
   await checkScreenCapturePermission();
 
   // Only send update if permission status actually changed
-  if (oldPermission !== stateManager.hasScreenCapturePermission() && mainWindow) {
+  if (oldPermission !== stateManager?.hasScreenCapturePermission() && mainWindow) {
     // Use the state manager values
     mainWindow.webContents.send('screenCapturePermission', {
-      hasPermission: stateManager.hasScreenCapturePermission(),
-      isWaylandSession: stateManager.isWaylandSession()
+      hasPermission: stateManager?.hasScreenCapturePermission(),
+      isWaylandSession: stateManager?.isWaylandSession()
     });
 
     // Re-evaluate recording state based on permission change
@@ -735,20 +687,17 @@ app.on('browser-window-focus', async () => {
 
 ////// INPUT DATA ////
 
-// Checks all conditions (login, permission, pause, workday) and starts interval if appropriate
 function startRecording() {
-  // Check for unreviewed work before starting/resuming recording
-  if (stateManager) {
-    stateManager.checkAndNotifyForUnreviewedWork(mainWindow);
+  if (!stateManager?.isAuthenticated()) {
+    return;
   }
 
-  // Start the capture interval - auth errors are now handled by the callback passed to initCapture
-  if (stateManager && stateManager.isAuthenticated()) {
-    startCaptureInterval(stateManager.getIdToken());
-  }
+  startCaptureInterval(stateManager.getIdToken());
+
+  stateManager?.recordingStarted(mainWindow);
   
-  // Common operations
   updateTrayIcon(true) // Show recording state
+
   if (mainWindow) {
     mainWindow.webContents.send('pauseStateChanged', false)
     mainWindow.webContents.send('analytics-event', { 
@@ -762,6 +711,10 @@ function startRecording() {
 function stopRecording() {
   // Stop the capture interval and all captures
   stopCaptureInterval();
+
+  // Don't need to call recordingStopped in state as
+  // This is either handled by pause (already in state)
+  // or by permissions (already in state)
 
   updateTrayIcon(false) // Update icon to non-recording state
   
@@ -799,8 +752,8 @@ ipcMain.on('checkScreenCapturePermission', async () => {
   if (mainWindow) {
     // Send both permission status and session type from state manager
     mainWindow.webContents.send('screenCapturePermission', {
-      hasPermission: stateManager.hasScreenCapturePermission(),
-      isWaylandSession: stateManager.isWaylandSession()
+      hasPermission: stateManager?.hasScreenCapturePermission(),
+      isWaylandSession: stateManager?.isWaylandSession()
     });
   }
 });
@@ -826,13 +779,13 @@ ipcMain.on('requestScreenCapturePermission', async () => {
     // Remove listener immediately to prevent multiple triggers
     app.removeListener('browser-window-focus', focusListener);
 
-    const oldPermission = stateManager.hasScreenCapturePermission();
+    const oldPermission = stateManager?.hasScreenCapturePermission();
     await checkScreenCapturePermission();
 
-    if (stateManager.hasScreenCapturePermission() !== oldPermission && mainWindow) { // Check if permission *changed*
+    if (stateManager?.hasScreenCapturePermission() !== oldPermission && mainWindow) { // Check if permission *changed*
       mainWindow.webContents.send('screenCapturePermission', {
-        hasPermission: stateManager.hasScreenCapturePermission(),
-        isWaylandSession: stateManager.isWaylandSession()
+        hasPermission: stateManager?.hasScreenCapturePermission(),
+        isWaylandSession: stateManager?.isWaylandSession()
       });
 
       // Re-evaluate recording state based on permission change
@@ -852,9 +805,7 @@ ipcMain.on('requestScreenCapturePermission', async () => {
 function handleCaptureAuthErrors(result) {
   // Handle auth error
   if (result && result.authError) {
-    if (stateManager) {
-      stateManager.clearIdToken();
-    }
+    stateManager?.clearIdToken();
     
     if (mainWindow) {
       mainWindow.webContents.send('auth-error');
@@ -871,3 +822,10 @@ function handleCaptureAuthErrors(result) {
     }
   }
 }
+
+ipcMain.on('initialAuthCheck', (event, isAuthenticated) => {
+  if (!stateManager?.isAuthenticated()) {
+    // If user is not authenticated, show the window
+    showWindowBelowTray();
+  }
+});

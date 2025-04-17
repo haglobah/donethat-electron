@@ -5,7 +5,8 @@ const log = require('electron-log');
 let store = null;
 let pauseState = {
   endTime: null,     // If non-null and in future, app is paused
-  timeoutId: null    // Reference to the auto-resume timer
+  timeoutId: null,    // Reference to the auto-resume timer
+  reason: null        // Reason for pausing (workday-start, manual, etc.)
 };
 let userWorkdays = [1, 2, 3, 4, 5]; // Default Mon-Fri (0=Sun, 6=Sat)
 let userWorkhours = { start: "09:00", end: "17:00" }; // Default 9 AM to 5 PM
@@ -16,32 +17,18 @@ let idToken = null; // User authentication token
 let workPeriodCheckTimeoutId = null; // For scheduling next workday/workhours check
 
 // Function references that will be set by main.js
-let updateTrayIcon = null;
 let checkAndAdjustRecording = null;
-let resumeRecordingCallback = null;
 let navigateToView = null;
-let stopRecordingCallback = null; // Add this for logout handling
-let showWindowCallback = null; // Add this for showing the window
 
 /**
  * Initialize the state manager
  * @param {Object} options Configuration options
- * @param {Function} options.updateIcon Function to update tray icon
  * @param {Function} options.checkRecording Function to check and adjust recording
- * @param {Function} options.resumeRecording Function to resume recording
- * @param {Function} options.navigate Function to navigate to a view
- * @param {Function} options.stopRecording Function to stop recording
- * @param {Function} options.showWindow Function to show window
  */
 async function initState(options = {}) {
   // Store callback functions
-  updateTrayIcon = options.updateIcon;
   checkAndAdjustRecording = options.checkRecording;
-  resumeRecordingCallback = options.resumeRecording;
-  navigateToView = options.navigate;
-  stopRecordingCallback = options.stopRecording;
-  showWindowCallback = options.showWindow;
-
+  navigateToView = options.navigateToView;
   try {
     // Initialize electron-store using dynamic import for ES module
     const { default: Store } = await import('electron-store');
@@ -50,9 +37,10 @@ async function initState(options = {}) {
     });
 
     // Load saved states
-    loadPauseState();
     loadWorkSettings();
     loadSummaryTimestamp();
+
+    resume();
     
     // Set up IPC handlers
     setupIPCHandlers();
@@ -64,14 +52,12 @@ async function initState(options = {}) {
       isWithinWorkHours,
       isActiveWorkPeriod,
       pauseRecording,
-      resumeRecording,
+      recordingStarted,
       pauseUntilNextWorkPeriod,
       updateWaylandStatus,
       updateScreenCapturePermission,
-      checkAndNotifyForUnreviewedWork,
       getUserWorkdays: () => userWorkdays,
       getUserWorkhours: () => userWorkhours,
-      getLastSummaryTimestamp: () => lastSummaryTimestamp,
       hasScreenCapturePermission: () => hasScreenCapturePermission,
       isWaylandSession: () => isWaylandSession,
       isAuthenticated: () => Boolean(idToken),
@@ -79,8 +65,7 @@ async function initState(options = {}) {
       setIdToken,
       clearIdToken,
       cleanupOnQuit,
-      scheduleNextCheck,
-      clearDailyWorkPeriodCheckTimeout
+      resume
     };
   } catch (error) {
     log.error('Failed to initialize state:', error);
@@ -88,9 +73,21 @@ async function initState(options = {}) {
   }
 }
 
-// Helper function to check if currently paused (manual pause)
+/**
+ * Reset timers when starting or power back
+ */
+function resume() {
+  if (workPeriodCheckTimeoutId) {
+    clearTimeout(workPeriodCheckTimeoutId);
+    workPeriodCheckTimeoutId = null;
+  }
+  _scheduleNextWorkEndCheck();
+  loadPauseState();
+}
+
+// Helper function to check if currently paused
 function isPaused() {
-  return pauseState.endTime !== null && pauseState.endTime > new Date();
+  return pauseState.endTime !== null && (pauseState.endTime > new Date());
 }
 
 // Helper function to check if today is a configured workday
@@ -139,8 +136,80 @@ function isActiveWorkPeriod(date = new Date()) {
   return isWorkday(date) && isWithinWorkHours(date);
 }
 
+function _checkWorkdayEndNotification() {
+  const threeHoursInMillis = 3 * 60 * 60 * 1000;
+
+  if (lastSummaryTimestamp && (Date.now() - lastSummaryTimestamp > threeHoursInMillis)) {
+    const notification = new Notification({
+      title: "Workday Ended",
+      body: "Remember to generate your summary in DoneThat!",
+      silent: false
+    });
+
+    notification.on('click', () => {
+      console.log('clicking');
+      if(navigateToView) {
+        navigateToView('signup-next');
+      }
+    });
+
+    notification.show();
+  }
+}
+
+function _checkWorkdayStartNotification() {
+  // Only show notification if we have a valid period end time and it's been more than 12 hours
+  if (typeof lastSummaryTimestamp === 'number' 
+      && !isNaN(lastSummaryTimestamp) && lastSummaryTimestamp > 0) {
+    const hoursSinceLastSummary = (Date.now() - lastSummaryTimestamp) / (1000 * 60 * 60);
+
+    if (hoursSinceLastSummary > 12) {
+      const notification = new Notification({
+        title: "Review Yesterday's Work",
+        body: "You haven't reviewed your last summary. Generate one in DoneThat to catch up!",
+        silent: false
+      });
+      
+      // Make notification clickable to open the app
+      notification.on('click', () => {
+        console.log('opening app');
+        if(navigateToView) {
+          console.log('navigating to view');
+          navigateToView('signup-next');
+        }
+      });
+      
+      notification.show();
+    }
+  }
+}
+
+function _resumeRecording() {
+  if (pauseState.reason === 'workday-start') {
+    _checkWorkdayStartNotification();
+  }
+
+  if (checkAndAdjustRecording) {
+    checkAndAdjustRecording();
+  }
+}
+
+/**
+ * Format a duration in milliseconds to HH:MM:SS format
+ * @param {number} ms - Duration in milliseconds
+ * @returns {string} Formatted duration as HH:MM:SS
+ */
+function formatDuration(ms) {
+  const seconds = Math.floor(ms / 1000);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+}
+
 // Function to pause recording for a specified duration
-function pauseRecording(duration, mainWindow) {
+function pauseRecording(duration, mainWindow, reason = null) {
   if (pauseState.timeoutId) {
     clearTimeout(pauseState.timeoutId);
     pauseState.timeoutId = null;
@@ -152,21 +221,20 @@ function pauseRecording(duration, mainWindow) {
   // Set pause state
   pauseState = {
     endTime: endTime,
-    timeoutId: setTimeout(() => resumeRecording(mainWindow), duration)
+    timeoutId: setTimeout(() => _resumeRecording(), duration),
+    reason: reason
   };
-  
-  // Save the pause state
+
   savePauseState();
   
   // Make sure recording is stopped
-  if (stopRecordingCallback) {
-    stopRecordingCallback();
+  if (checkAndAdjustRecording) {
+    checkAndAdjustRecording();
   }
-  
-  // Update tray icon if callback is available
-  if (updateTrayIcon) {
-    updateTrayIcon(false);
-  }
+
+  const formattedDuration = formatDuration(duration);
+  const formattedEndTime = endTime.toLocaleTimeString();
+  log.info(`Pausing recording for ${formattedDuration} until ${formattedEndTime} - Reason: ${reason || 'not specified'}`);
 
   // Send analytics event to renderer
   if (mainWindow) {
@@ -181,8 +249,12 @@ function pauseRecording(duration, mainWindow) {
 }
 
 // Function to pause until the start of the next active work period (either today or next workday)
-function pauseUntilNextWorkPeriod(mainWindow) {
+function pauseUntilNextWorkPeriod(mainWindow, silent=false) {
   const now = new Date();
+  
+  if (!silent) {
+    _checkWorkdayEndNotification();
+  }
   
   // Parse work hours
   const startParts = userWorkhours.start.split(':');
@@ -206,7 +278,8 @@ function pauseUntilNextWorkPeriod(mainWindow) {
   if (isWorkday(now) && now < todayStartTime) {
     const duration = todayStartTime.getTime() - now.getTime();
     if (duration > 0) {
-      pauseRecording(duration, mainWindow);
+      pauseRecording(duration, mainWindow, 'workday-start');
+      // Schedule next check after this pause ends
       return;
     }
   }
@@ -235,7 +308,7 @@ function pauseUntilNextWorkPeriod(mainWindow) {
   
   // Ensure duration is positive
   if (duration > 0) {
-    pauseRecording(duration, mainWindow);
+    pauseRecording(duration, mainWindow, 'workday-start');
   } else {
     log.error('Calculated pause duration was not positive');
     // Fallback: Pause for 1 hour
@@ -244,20 +317,17 @@ function pauseUntilNextWorkPeriod(mainWindow) {
 }
 
 // Function to resume recording (called manually or by timer)
-function resumeRecording(mainWindow) {
+function recordingStarted(mainWindow) {
   if (pauseState.timeoutId) {
     clearTimeout(pauseState.timeoutId);
   }
 
   // Reset pause state
-  const wasPaused = isPaused(); // Check if we were *manually* paused
+  const wasPaused = isPaused(); // Check if we were paused
   pauseState = { endTime: null, timeoutId: null };
   if (store) store.delete('pauseState');
 
-  // Call resume callback if available
-  if (resumeRecordingCallback) {
-    resumeRecordingCallback();
-  }
+  _scheduleNextWorkEndCheck();
 
   // Common operations for all resume cases
   if (mainWindow && wasPaused) {
@@ -267,9 +337,6 @@ function resumeRecording(mainWindow) {
         eventParams: { status: 'resumed' } 
     });
   }
-  
-  // Check for unreviewed work when manually resuming
-  checkAndNotifyForUnreviewedWork(mainWindow);
 }
 
 // Function to save pause state using electron-store
@@ -282,7 +349,8 @@ function savePauseState() {
     }
 
     const stateToSave = {
-      endTime: pauseState.endTime ? pauseState.endTime.getTime() : null
+      endTime: pauseState.endTime ? pauseState.endTime.getTime() : null,
+      reason: pauseState.reason
     };
     store.set('pauseState', stateToSave);
   } catch (error) {
@@ -311,7 +379,8 @@ function loadPauseState() {
         
         pauseState = {
           endTime: endTime,
-          timeoutId: setTimeout(() => resumeRecording(), remainingDuration)
+          timeoutId: setTimeout(() => _resumeRecording(), remainingDuration),
+          reason: savedState.reason
         };
         
         return true;
@@ -416,50 +485,6 @@ function updateScreenCapturePermission(permission) {
   hasScreenCapturePermission = permission;
 }
 
-// Function to check for unreviewed work and notify
-function checkAndNotifyForUnreviewedWork(mainWindow) {
-  try {
-    if (!store) {
-      return; // Can't check if store isn't ready
-    }
-
-    // Retrieve the stored period end time
-    const storedPeriodEnd = store.get('lastSummaryPeriodEnd');
-    
-    // Only show notification if we have a valid period end time and it's been more than 12 hours
-    if (typeof storedPeriodEnd === 'number' && !isNaN(storedPeriodEnd) && storedPeriodEnd > 0) {
-      const hoursSinceLastSummary = (Date.now() - storedPeriodEnd) / (1000 * 60 * 60);
-
-      if (hoursSinceLastSummary > 12) {
-        // Add 2-minute delay before showing notification
-        setTimeout(() => {
-          // Double-check the period end hasn't been updated during the delay
-          const currentPeriodEnd = store.get('lastSummaryPeriodEnd');
-          if (currentPeriodEnd === storedPeriodEnd) {
-            const notification = new Notification({
-              title: "Review Yesterday's Work",
-              body: "You haven't reviewed your last summary. Generate one in DoneThat to catch up!",
-              silent: false
-            });
-            
-            // Make notification clickable to open the app
-            notification.on('click', () => {
-              if (navigateToView) {
-                navigateToView('signup-next');
-              }
-            });
-            
-            notification.show();
-          }
-        }, 2 * 60 * 1000); // 2 minutes in milliseconds
-      }
-    } else {
-    }
-  } catch (error) {
-    log.error('Error checking/notifying for unreviewed work:', error);
-  }
-}
-
 // Set up IPC handlers for state management
 function setupIPCHandlers() {
   // Auth handlers - single source of truth for login/logout events
@@ -470,11 +495,6 @@ function setupIPCHandlers() {
       // Check recording state after login
       if (checkAndAdjustRecording) {
         checkAndAdjustRecording();
-      }
-      
-      // Update tray icon
-      if (updateTrayIcon) {
-        updateTrayIcon(!isPaused() && hasScreenCapturePermission);
       }
       
       // Send permission status to renderer
@@ -491,17 +511,8 @@ function setupIPCHandlers() {
     clearIdToken();
     
     // Stop recording on logout
-    if (stopRecordingCallback) {
-      stopRecordingCallback();
-    }
-  });
-
-  ipcMain.on('initialAuthCheck', (event, isAuthenticated) => {
-    if (!isAuthenticated) {
-      // If user is not authenticated, show the window
-      if (showWindowCallback) {
-        showWindowCallback();
-      }
+    if (checkAndAdjustRecording) {
+      checkAndAdjustRecording();
     }
   });
   
@@ -534,10 +545,12 @@ function setupIPCHandlers() {
         log.error('Failed to save userWorkdays:', error);
       }
       
-      // Check and adjust recording state if callback available
-      if (checkAndAdjustRecording) {
-        checkAndAdjustRecording();
+      if (isPaused() && pauseState.reason === 'workday-start') {
+        pauseUntilNextWorkPeriod(event.sender.getOwnerBrowserWindow(), silent=true);
+      } else {
+        _scheduleNextWorkEndCheck();
       }
+
     } else {
       log.error('Received invalid workdays data:', days);
     }
@@ -563,18 +576,15 @@ function setupIPCHandlers() {
       }
       
       // Check if we should adjust recording based on the new hours
-      if (checkAndAdjustRecording) {
-        checkAndAdjustRecording();
+      if (isPaused() && pauseState.reason === 'workday-start') {
+        pauseUntilNextWorkPeriod(event.sender.getOwnerBrowserWindow(), silent=true);
+      } else {
+        _scheduleNextWorkEndCheck();
       }
+
     } else {
       log.error('Received invalid workhours data:', hours);
     }
-  });
-
-  // Add IPC handler for resume action
-  ipcMain.on('resumeRecording', (event) => {
-    const mainWindow = event.sender.getOwnerBrowserWindow();
-    resumeRecording(mainWindow);
   });
 
   // Add handler to get initial pause state
@@ -645,10 +655,10 @@ function setupIPCHandlers() {
 }
 
 /**
- * Schedules a check for the next workday/work hours transition
+ * Schedules a check for the next workday end
  * Returns the time until the next check in milliseconds
  */
-function scheduleNextCheck() {
+function _scheduleNextWorkEndCheck() {
   // Clear any existing timeout
   if (workPeriodCheckTimeoutId) {
     clearTimeout(workPeriodCheckTimeoutId);
@@ -657,87 +667,81 @@ function scheduleNextCheck() {
 
   const now = new Date();
   
-  // Calculate next check times for:
-  // 1. Start of today's work hours (if in the future)
-  // 2. End of today's work hours (if in the future)
-  // 3. Start of next workday
-  
-  let nextCheckTime = null;
-  let checkReason = '';
+  // We only care about when the current/next work period ends
+  let nextWorkEndTime = null;
   
   // Parse work hours
-  const startParts = userWorkhours.start.split(':');
   const endParts = userWorkhours.end.split(':');
   
-  if (startParts.length >= 2 && endParts.length >= 2) {
-    const startHour = parseInt(startParts[0], 10);
-    const startMinute = parseInt(startParts[1], 10);
+  if (endParts.length >= 2) {
     const endHour = parseInt(endParts[0], 10);
     const endMinute = parseInt(endParts[1], 10);
     
-    if (!isNaN(startHour) && !isNaN(startMinute) && !isNaN(endHour) && !isNaN(endMinute)) {
-      // Today's start time
-      const todayStartTime = new Date(now);
-      todayStartTime.setHours(startHour, startMinute, 0, 0);
-      
+    if (!isNaN(endHour) && !isNaN(endMinute)) {
       // Today's end time
       const todayEndTime = new Date(now);
       todayEndTime.setHours(endHour, endMinute, 0, 0);
       
-      if (isWorkday(now) && now < todayStartTime) {
-        // Before work hours on a workday - check at start time
-        nextCheckTime = todayStartTime;
-        checkReason = "start of today's work hours";
-      } else if (now < todayEndTime) {
-        // During work hours - check at end time
-        nextCheckTime = todayEndTime;
-        checkReason = "end of today's work hours";
+      if (isWorkday(now) && now < todayEndTime) {
+        // We're on a workday before end time - check at end time
+        nextWorkEndTime = todayEndTime;
       } else {
-        // After work hours - check at start time on next workday
+        // Find the next workday
         let nextWorkday = new Date(now);
-        nextWorkday.setDate(nextWorkday.getDate() + 1);
+        
+        // Start from tomorrow if we're past today's end time or not a workday
+        if (!isWorkday(now) || now >= todayEndTime) {
+          nextWorkday.setDate(nextWorkday.getDate() + 1);
+        }
         
         // Find the next workday
-        let daysAhead = 1;
-        while (!isWorkday(nextWorkday) && daysAhead < 8) {
+        let daysAhead = 0;
+        while (!isWorkday(nextWorkday) && daysAhead < 7) {
           nextWorkday.setDate(nextWorkday.getDate() + 1);
           daysAhead++;
         }
         
-        if (daysAhead < 8) {
-          const nextWorkdayStartTime = new Date(nextWorkday);
-          nextWorkdayStartTime.setHours(startHour, startMinute, 0, 0);
-          nextCheckTime = nextWorkdayStartTime;
-          checkReason = "start of next workday";
+        if (daysAhead < 7) {
+          // Set to the end time of next workday
+          nextWorkEndTime = new Date(nextWorkday);
+          nextWorkEndTime.setHours(endHour, endMinute, 0, 0);
         }
       }
     }
   }
   
-  // If we couldn't determine a next check time, default to checking at 4:01 AM tomorrow
-  if (!nextCheckTime) {
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(4, 1, 0, 0);
-    nextCheckTime = tomorrow;
-    checkReason = "default check time (4:01 AM)";
+  // If we couldn't determine next work end time, default to checking at 5:00 PM today or tomorrow
+  if (!nextWorkEndTime) {
+    nextWorkEndTime = new Date(now);
+    if (now.getHours() >= 17) {
+      nextWorkEndTime.setDate(nextWorkEndTime.getDate() + 1);
+    }
+    nextWorkEndTime.setHours(17, 0, 0, 0);
   }
   
   // Calculate milliseconds until next check
-  const msUntilCheck = nextCheckTime.getTime() - now.getTime();
+  const msUntilCheck = nextWorkEndTime.getTime() - now.getTime();
   
   // Ensure msUntilCheck is positive
   const positiveMsUntilCheck = Math.max(msUntilCheck, 60000); // Minimum 1 minute wait
+  
+  const formattedDuration = formatDuration(positiveMsUntilCheck);
+  const formattedEndTime = nextWorkEndTime.toLocaleString();
+  log.info(`Scheduled workday end check in ${formattedDuration} at ${formattedEndTime}`);
     
-  // Set timeout for next check
+  // Set timeout for next check - when work period ends, pause until next work period
   workPeriodCheckTimeoutId = setTimeout(() => {
-    if (checkAndAdjustRecording) {
-      checkAndAdjustRecording();
-    } else {
-      log.warn("checkAndAdjustRecording not available when timeout fired");
-      // Schedule the next check anyway to keep the cycle going
-      scheduleNextCheck();
+    // Create a bridge to mainWindow
+    let mainWindow = null;
+    try {
+      const { BrowserWindow } = require('electron');
+      mainWindow = BrowserWindow.getAllWindows()[0];
+    } catch (error) {
+      log.error('Failed to get mainWindow for pauseUntilNextWorkPeriod:', error);
     }
+    
+    // When work period ends, pause until next work period
+    pauseUntilNextWorkPeriod(mainWindow);
   }, positiveMsUntilCheck);
   
   return positiveMsUntilCheck;
@@ -791,38 +795,6 @@ function clearIdToken() {
   idToken = null;
 }
 
-/**
- * Clear the work period check timeout
- */
-function clearDailyWorkPeriodCheckTimeout() {
-  if (workPeriodCheckTimeoutId) {
-    clearTimeout(workPeriodCheckTimeoutId);
-    workPeriodCheckTimeoutId = null;
-  }
-}
-
 module.exports = {
   initState,
-  cleanupOnQuit,
-  isPaused,
-  isWorkday,
-  isWithinWorkHours,
-  isActiveWorkPeriod,
-  pauseRecording,
-  resumeRecording,
-  pauseUntilNextWorkPeriod,
-  updateWaylandStatus,
-  updateScreenCapturePermission,
-  checkAndNotifyForUnreviewedWork,
-  getUserWorkdays: () => userWorkdays,
-  getUserWorkhours: () => userWorkhours,
-  getLastSummaryTimestamp: () => lastSummaryTimestamp,
-  hasScreenCapturePermission: () => hasScreenCapturePermission,
-  isWaylandSession: () => isWaylandSession,
-  isAuthenticated: () => Boolean(idToken),
-  getIdToken: () => idToken,
-  setIdToken,
-  clearIdToken,
-  scheduleNextCheck,
-  clearDailyWorkPeriodCheckTimeout
-}; 
+}
