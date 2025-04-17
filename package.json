@@ -15,12 +15,12 @@
     "build:win:arm64": "npm run build:prepare && electron-builder --win --arm64",
     "build:linux:x64": "npm run build:prepare && electron-builder --linux --x64",
     "build:linux:arm64": "npm run build:prepare && electron-builder --linux --arm64",
-    "upload:mac:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --x64 --publish always",
-    "upload:mac:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --arm64 --publish always",
-    "upload:win:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --x64 --publish always",
-    "upload:win:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --arm64 --publish always",
-    "upload:linux:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --linux --x64 --publish always",
-    "upload:linux:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --linux --arm64 --publish always",
+    "upload:mac:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --x64 --publish always --config.extraMetadata.main=main.js",
+    "upload:mac:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --arm64 --publish always --config.extraMetadata.main=main.js",
+    "upload:win:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --x64 --publish always --config.extraMetadata.main=main.js",
+    "upload:win:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --arm64 --publish always --config.extraMetadata.main=main.js",
+    "upload:linux:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --linux --x64 --publish always --config.extraMetadata.main=main.js",
+    "upload:linux:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --linux --arm64 --publish always --config.extraMetadata.main=main.js",
     "release": "echo 'Build strategy: Run the upload:PLATFORM:ARCH command matching your current system architecture'"
   },
   "repository": {
@@ -67,6 +67,7 @@
     "afterSign": "scripts/notarize.js",
     "icon": "resources/icon_inverse.png",
     "artifactName": "${productName}-${arch}.${ext}",
+    "generateUpdatesFilesForAllChannels": true,
     "files": [
       "main.js",
       "firebase-config.js",
@@ -101,7 +102,8 @@
       ],
       "extendInfo": {
         "LSUIElement": 1
-      }
+      },
+      "artifactName": "${productName}-${arch}.${ext}"
     },
     "win": {
       "target": "nsis",
@@ -112,7 +114,8 @@
           "from": "resources/app.manifest",
           "to": "app.manifest"
         }
-      ]
+      ],
+      "artifactName": "${productName}-${arch}.${ext}"
     },
     "nsis": {
       "runAfterFinish": true,
@@ -128,7 +131,8 @@
         "StartupWMClass": "donethat",
         "NoDisplay": true,
         "Type": "Application"
-      }
+      },
+      "artifactName": "${productName}-${arch}.${ext}"
     },
     "compression": "maximum"
   }
