@@ -211,18 +211,20 @@ function updateInputDataSettings(settings) {
     }
     
     // Start tracking for newly enabled options
-    if (!previousSettings.audio && inputDataSettings.audio) {
-      _startAudioTracking();
+    if(isCapturing()) {
+      if (!previousSettings.audio && inputDataSettings.audio) {
+        _startAudioTracking();
+      }
+      
+      if (!previousSettings.keystrokes && inputDataSettings.keystrokes) {
+        _startKeystrokeTracking();
+      }
+      
+      if (!previousSettings.windows && inputDataSettings.windows) {
+        _startWindowTracking();
+      }
     }
-    
-    if (!previousSettings.keystrokes && inputDataSettings.keystrokes) {
-      _startKeystrokeTracking();
-    }
-    
-    if (!previousSettings.windows && inputDataSettings.windows) {
-      _startWindowTracking();
-    }
-    
+  
     settingsInitialized = true;
   }
   return inputDataSettings;
