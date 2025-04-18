@@ -122,31 +122,36 @@ function setupPermissionResultListener() {
   document.addEventListener('permissionResult', async (event) => {
     const { type, hasPermission } = event.detail;
     
-    // If permission was denied, update the corresponding checkbox and setting
-    if (!hasPermission) {
-      const checkboxMap = {
-        'audio': 'audioCheckbox',
-        'keystrokes': 'keystrokesCheckbox',
-        'windows': 'windowsCheckbox'
-      };
+    const checkboxMap = {
+      'audio': 'audioCheckbox',
+      'keystrokes': 'keystrokesCheckbox',
+      'windows': 'windowsCheckbox'
+    };
+    
+    const checkbox = document.getElementById(checkboxMap[type]);
+    if (!checkbox) return;
+    
+    // Set checkbox and local state according to permission result
+    checkbox.checked = hasPermission;
+    inputData[type] = hasPermission;
+    
+    // Save to server
+    try {
+      await saveUserSettings('inputData', inputData);
       
-      const checkbox = document.getElementById(checkboxMap[type]);
-      if (checkbox) {
+      // Send updated input data to main process
+      ipcRenderer.send('updateInputDataSettings', inputData);
+      
+      logAnalyticsEvent(`permission_${hasPermission ? 'granted' : 'denied'}_setting_updated`, {
+        type: type,
+        platform: process.platform
+      });
+    } catch (error) {
+      console.error(`Error updating settings after ${type} permission ${hasPermission ? 'granted' : 'denied'}:`, error);
+      if (hasPermission) {
+        // Only need to revert UI state on error if we were trying to enable
         checkbox.checked = false;
-        
-        // Update our local state
         inputData[type] = false;
-        
-        // Save to server - no need to await
-        try {
-          await saveUserSettings('inputData', inputData);
-          logAnalyticsEvent('permission_denied_setting_updated', {
-            type: type,
-            platform: process.platform
-          });
-        } catch (error) {
-          console.error(`Error updating settings after ${type} permission denied:`, error);
-        }
       }
     }
   });
@@ -830,25 +835,15 @@ function setupInputDataCheckboxListeners() {
     const originalValue = inputData[fieldName];
 
     if (isChecked) {
-      // If turning ON, request permission first
+      // Revert checkbox state immediately - will be re-enabled by permission listener if granted
+      checkbox.checked = false;
+      // If turning ON, only request permission and wait for the result
+      // The permissionResult event listener will handle enabling if granted
       permissionFunction();
       
-      // Optimistically update state - permission result will be handled by the listener
-      inputData[fieldName] = isChecked;
-      
-      try {
-        // Save the entire inputData object
-        await saveUserSettings('inputData', inputData);
-        
-        // Send updated input data to main process
-        ipcRenderer.send('updateInputDataSettings', inputData);
-      } catch (error) {
-        // Revert UI and state on error with settings save
-        inputData[fieldName] = originalValue;
-        checkbox.checked = originalValue;
-      }
+
     } else {
-      // If turning OFF, just update setting - no permission needed
+      // If turning OFF, update setting immediately - no permission needed
       inputData[fieldName] = false;
       
       try {
