@@ -1,6 +1,6 @@
 {
   "name": "donethat",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Make your work visible, on your terms.",
   "main": "main.js",
   "scripts": {
@@ -103,7 +103,8 @@
       "extendInfo": {
         "LSUIElement": 1
       },
-      "artifactName": "${productName}-${arch}.${ext}"
+      "artifactName": "${productName}-${arch}.${ext}",
+      "notarize": false
     },
     "win": {
       "target": "nsis",

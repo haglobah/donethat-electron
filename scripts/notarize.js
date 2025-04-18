@@ -9,34 +9,66 @@ export default async function notarizing(context) {
         return;
     }
 
-    // Skip notarization if required variables are missing
-    const teamId = process.env.APPLETEAMID || process.env.APPLE_TEAM_ID;
-    const appleId = process.env.APPLEID || process.env.APPLE_ID;
-    const appleIdPassword = process.env.APPLEIDPASS || process.env.APPLE_ID_PASSWORD;
+    const appName = context.packager.appInfo.productFilename;
+    const appPath = `${appOutDir}/${appName}.app`;
+    const appBundleId = 'com.donethat.app'; // Make sure this matches your app's bundle ID
 
-    if (!teamId || !appleId || !appleIdPassword) {
-        console.log('Skipping notarization: missing required environment variables');
+    // --- App Store Connect API Key Credentials (Preferred) ---
+    const apiKey = process.env.APP_STORE_CONNECT_KEY_ID;
+    const apiIssuer = process.env.APP_STORE_CONNECT_ISSUER_ID;
+    // Consider storing the key content directly in an env var or reading from a secure location
+    const apiKeyPath = process.env.APP_STORE_CONNECT_PRIVATE_KEY_PATH; // Or load the key content directly
+
+    // --- Legacy Apple ID Credentials (Fallback) ---
+    const appleId = process.env.APPLEID || process.env.APPLE_ID;
+    const appleIdPassword = process.env.APPLEIDPASS || process.env.APPLE_ID_PASSWORD; // Should be an app-specific password
+    const teamId = process.env.APPLETEAMID || process.env.APPLE_TEAM_ID; // Team ID is needed for Apple ID method
+
+    let notarizeOptions;
+
+    if (apiKey && apiIssuer && apiKeyPath) {
+        console.log('Using App Store Connect API Key for notarization.');
+        notarizeOptions = {
+            tool: 'notarytool',
+            appBundleId: appBundleId,
+            appPath: appPath,
+            // Use apiKey, apiIssuer, and potentially apiKeyPath or apiKeyContent
+            // electron-notarize expects either `appleApiKey` (path) or `appleApiKeyContent`
+            appleApiKey: apiKeyPath, // Assuming env var holds the PATH to the .p8 file
+            appleApiKeyId: apiKey,
+            appleApiIssuer: apiIssuer,
+            ascProvider: teamId, // Include Team ID as ascProvider for clarity if needed with API Key
+            verbose: true,
+        };
+        // If APP_STORE_CONNECT_PRIVATE_KEY_P8 contains the key *content*:
+        // const apiKeyContent = process.env.APP_STORE_CONNECT_PRIVATE_KEY_P8;
+        // if (apiKeyContent) {
+        //     delete notarizeOptions.appleApiKey; // Remove path if content is provided
+        //     notarizeOptions.appleApiKeyContent = apiKeyContent;
+        // }
+
+    } else if (appleId && appleIdPassword && teamId) {
+        console.warn('Using legacy Apple ID and App-Specific Password for notarization. Consider migrating to API Key.');
+        notarizeOptions = {
+            tool: 'notarytool', // or 'altool' if notarytool fails with app-specific password
+            appBundleId: appBundleId,
+            appPath: appPath,
+            appleId: appleId,
+            appleIdPassword: appleIdPassword, // Ensure this is an APP-SPECIFIC password
+            teamId: teamId,
+            verbose: true,
+        };
+    } else {
+        console.log('Skipping notarization: missing required credentials (API Key or Apple ID/Password + Team ID).');
         return;
     }
 
-    const appName = context.packager.appInfo.productFilename;
-    console.log('Notarizing app', appName);
-    
+    console.log(`Notarizing app: ${appName}`);
     try {
-        await notarize({
-            tool: 'notarytool',
-            verbose: true,
-            teamId: teamId,
-            appBundleId: 'com.donethat.app',
-            appPath: `${appOutDir}/${appName}.app`,
-            appleId: appleId,
-            appleIdPassword: appleIdPassword,
-        });
+        await notarize(notarizeOptions);
         console.log('Notarization completed successfully');
     } catch (error) {
         console.error('Notarization failed:', error);
-        // Don't throw error to allow builds to continue in CI environment
-        // unless we explicitly want to enforce notarization
         if (process.env.ENFORCE_NOTARIZATION === 'true') {
             throw error;
         }
