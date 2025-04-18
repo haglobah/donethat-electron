@@ -141,15 +141,23 @@ function setupAutoUpdater() {
   // Add configuration for GitHub provider
   autoUpdater.allowPrerelease = false
   autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.autoInstallOnAppQuit = app.isPackaged; // Only install on quit in packaged app
+  autoUpdater.forceDevUpdateConfig = true; // Force check in dev mode
 
+  // Set the correct channel based on the current architecture
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
+  autoUpdater.channel = arch
 
   autoUpdater.on('update-downloaded', (info) => {
     log.info('Update downloaded:', info.version)
 
-    // Send event to renderer to show update view
-    if (mainWindow) {
-      mainWindow.webContents.send('update-downloaded')
+    // Send event to renderer to show update view *only* in packaged app
+    if (app.isPackaged) {
+      if (mainWindow) {
+        mainWindow.webContents.send('update-downloaded')
+      }
+    } else {
+      log.info('Skipping quitAndInstall trigger in development mode.');
     }
   })
 
@@ -175,7 +183,7 @@ ipcMain.on('install-update', () => {
 function scheduleUpdateChecks() {
 
   // First check after 1 minute to let the app fully initialize
-  setTimeout(() => {
+  setTimeout(() => {    
     autoUpdater.checkForUpdates()
       .catch(err => log.error('Error in first update check:', err));
 
@@ -186,10 +194,6 @@ function scheduleUpdateChecks() {
     }, 60 * 60 * 1000);
   }, 1 * 60 * 1000);
 }
-
-// Call setup function
-setupAutoUpdater()
-
 
 // Add IPC handler for getting app version
 ipcMain.handle('get-app-version', () => {
@@ -290,13 +294,9 @@ app.whenReady().then(async () => {
 
   // Check for updates with proper error handling
   try {
-    // Setup updater
     setupAutoUpdater();
+    scheduleUpdateChecks();
 
-    if (app.isPackaged) {
-      scheduleUpdateChecks();
-    } else {
-    }
   } catch (error) {
     log.error('Error setting up updater:', error);
   }
@@ -314,14 +314,6 @@ app.whenReady().then(async () => {
       });
     }
   });
-
-  // Set up periodic update checks (every hour)
-  setInterval(() => {
-    autoUpdater.checkForUpdates()
-      .then()
-      .catch(err => console.error('Error in periodic update check:', err))
-  }, 60 * 60 * 1000) // 1 hours in milliseconds
-
 })
 
 // Handle OS-level quit events properly - especially important for macOS
