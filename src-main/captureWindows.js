@@ -5,7 +5,11 @@ const activeWindow = require('active-win')
 let isTracking = false
 let windowTimeline = []
 let trackingInterval = null
-const TRACKING_INTERVAL_MS = 2000 // Poll every 2 seconds
+const INITIAL_TRACKING_INTERVAL_MS = 2000 // Base polling interval (2 seconds)
+let currentTrackingIntervalMs = INITIAL_TRACKING_INTERVAL_MS // Current interval that can change with backoff
+const MAX_BACKOFF_MS = 60000 // Maximum backoff (1 minute)
+const BACKOFF_MULTIPLIER = 2 // Exponential backoff multiplier
+let consecutiveFailures = 0 // Track consecutive failures for backoff
 
 /**
  * Checks if the application has permission to access window information
@@ -23,12 +27,56 @@ async function checkPermissions() {
 }
 
 /**
+ * Apply exponential backoff to the tracking interval
+ * @private 
+ */
+function applyBackoff() {
+  consecutiveFailures++
+  
+  // Calculate new interval with exponential backoff
+  currentTrackingIntervalMs = Math.min(
+    currentTrackingIntervalMs * BACKOFF_MULTIPLIER,
+    MAX_BACKOFF_MS
+  )
+  
+  log.warn(`Window tracking failed ${consecutiveFailures} times. Backing off to ${currentTrackingIntervalMs}ms interval.`)
+  
+  // Restart tracking with new interval if we're still tracking
+  if (isTracking && trackingInterval) {
+    clearInterval(trackingInterval)
+    trackingInterval = setInterval(recordCurrentWindow, currentTrackingIntervalMs)
+  }
+}
+
+/**
+ * Reset backoff when tracking succeeds
+ * @private
+ */
+function resetBackoff() {
+  if (consecutiveFailures > 0 || currentTrackingIntervalMs !== INITIAL_TRACKING_INTERVAL_MS) {
+    log.info('Window tracking succeeded. Resetting to normal interval.')
+    consecutiveFailures = 0
+    
+    // Only reset interval if we're backing off significantly
+    if (currentTrackingIntervalMs > INITIAL_TRACKING_INTERVAL_MS * 2) {
+      currentTrackingIntervalMs = INITIAL_TRACKING_INTERVAL_MS
+      
+      // Restart tracking with normal interval
+      if (isTracking && trackingInterval) {
+        clearInterval(trackingInterval)
+        trackingInterval = setInterval(recordCurrentWindow, currentTrackingIntervalMs)
+      }
+    }
+  }
+}
+
+/**
  * Starts continuous tracking of active application windows
  * @returns {Promise<boolean>} True if tracking started successfully, false if permission denied or error occurred
  */
 async function startTracking() {
   if (isTracking) {
-    return
+    return true
   }
   
   // First check if we have permission
@@ -39,8 +87,10 @@ async function startTracking() {
     return false
   }
   
-  // Clear previous data
+  // Reset tracking state
   windowTimeline = []
+  consecutiveFailures = 0
+  currentTrackingIntervalMs = INITIAL_TRACKING_INTERVAL_MS
   
   // Start continuous tracking interval
   try {
@@ -48,14 +98,7 @@ async function startTracking() {
     await recordCurrentWindow()
     
     // Set up interval to record windows periodically
-    trackingInterval = setInterval(async () => {
-      try {
-        await recordCurrentWindow()
-      } catch (err) {
-        // Log error but continue tracking
-        log.error('Error during periodic window tracking:', err)
-      }
-    }, TRACKING_INTERVAL_MS)
+    trackingInterval = setInterval(recordCurrentWindow, currentTrackingIntervalMs)
     
     isTracking = true
     return true
@@ -85,6 +128,9 @@ async function recordCurrentWindow() {
         app: 'Unknown',
         executable: 'unknown'
       })
+      
+      // Consider this a success for backoff purposes (not an error)
+      resetBackoff()
       return
     }
     
@@ -97,13 +143,17 @@ async function recordCurrentWindow() {
     })
     
     // Keep timeline at a reasonable size (store at most 1 hour of data)
-    const MAX_ENTRIES = 60 * 60 / (TRACKING_INTERVAL_MS/1000)
+    const MAX_ENTRIES = 60 * 60 / (INITIAL_TRACKING_INTERVAL_MS/1000)
     if (windowTimeline.length > MAX_ENTRIES) {
       windowTimeline = windowTimeline.slice(-MAX_ENTRIES)
     }
     
+    // Reset backoff on success
+    resetBackoff()
+    
   } catch (error) {
     log.error('Error tracking window:', error)
+    
     // Record the error in the timeline
     windowTimeline.push({
       timestamp: new Date().toISOString(),
@@ -111,6 +161,9 @@ async function recordCurrentWindow() {
       app: 'Error',
       executable: error.message
     })
+    
+    // Apply exponential backoff
+    applyBackoff()
   }
 }
 
@@ -154,6 +207,9 @@ function stopTracking() {
   }
   
   isTracking = false
+  // Reset backoff state when stopping
+  consecutiveFailures = 0
+  currentTrackingIntervalMs = INITIAL_TRACKING_INTERVAL_MS
 }
 
 /**
@@ -228,6 +284,14 @@ function isTrackingActive() {
   return isTracking;
 }
 
+/**
+ * Gets the current tracking interval in milliseconds
+ * @returns {number} Current tracking interval
+ */
+function getCurrentInterval() {
+  return currentTrackingIntervalMs;
+}
+
 module.exports = {
   startTracking,
   stopTracking,
@@ -235,5 +299,6 @@ module.exports = {
   getTimelineBuffer,
   clearTimeline,
   processTimelineData,
-  isTracking: isTrackingActive
+  isTracking: isTrackingActive,
+  getCurrentInterval
 } 
