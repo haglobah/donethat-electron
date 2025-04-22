@@ -511,8 +511,6 @@ function checkAndAdjustRecording() {
     } else if (!isCurrentlyRecording && shouldBeRecording) {
       startRecording();
     }
-
-
 }
 
 // Add IPC handler for resume action
@@ -567,7 +565,7 @@ function createWindow() {
       });
       
       // Initialize capture with auth error handler
-      initCapture(mainWindow, handleCaptureAuthErrors);
+      initCapture(mainWindow, handleCaptureAuthErrors, stateManager.getIdToken);
     })
 
     mainWindow.on('blur', () => {
@@ -684,7 +682,8 @@ function startRecording() {
     return;
   }
 
-  startCaptureInterval(stateManager.getIdToken());
+
+  startCaptureInterval(); // Call without token
 
   stateManager?.recordingStarted(mainWindow);
   
@@ -805,7 +804,7 @@ function handleCaptureAuthErrors(result) {
   }
   
   // Handle token expired error
-  if (result && result.tokenExpired) {    
+  if (result && result.tokenExpired) {
     // Request token refresh from renderer process
     if (mainWindow) {
       mainWindow.webContents.send('refresh-token');

@@ -16,6 +16,7 @@ let captureIntervalMinutes; // Set in main
 let reauthenticateCallback = null; // Store reauthenticate callback function
 let mainWindowRef = null; // Store mainWindow reference
 let settingsInitialized = false; // Flag to track if settings have been loaded
+let getIdTokenFunction = null; // Store the getIdToken function reference
 
 // Track input data settings
 let inputDataSettings = {
@@ -33,7 +34,6 @@ function setCaptureInterval(minutes) {
   if (!minutes || typeof minutes !== 'number' || minutes <= 0) {
     throw new Error('Capture interval must be a positive number of minutes');
   }
-  
   captureIntervalMinutes = minutes;
   
   // Update audio buffer duration if mainWindow exists
@@ -236,9 +236,10 @@ function updateInputDataSettings(settings) {
  * @param {Function} onAuthError Callback for when authentication errors are detected
  *                               Called with either {authError: true} for general auth failures
  *                               or {tokenExpired: true} for token expiration
+ * @param {Function} getIdToken Function to get the current ID token
  * @throws {Error} If mainWindow is not provided or capture interval is not set
  */
-function initCapture(mainWindow, onAuthError) {
+function initCapture(mainWindow, onAuthError, getIdToken) {
   if (!mainWindow) {
     throw new Error('Main window must be provided to initialize capture');
   }
@@ -249,6 +250,11 @@ function initCapture(mainWindow, onAuthError) {
   
   // Store the reauthenticate callback
   reauthenticateCallback = onAuthError;
+  // Store getIdToken function
+  if (typeof getIdToken !== 'function') {
+      throw new Error('getIdToken function must be provided to initialize capture');
+  }
+  getIdTokenFunction = getIdToken;
   // Store mainWindow reference
   mainWindowRef = mainWindow;
   
@@ -609,8 +615,8 @@ async function collectInputData(resetBuffers = true) {
  */
 async function _sendToServer(idToken, screenshots, inputData = {}) {
   if (!idToken) {
-    log.warn('Cannot send data: User not authenticated');
     if (reauthenticateCallback) {
+      log.warn('_sendToServer: Calling reauthenticate callback with authError (no token).'); // Keep specific warning
       reauthenticateCallback({ authError: true });
     }
     return { authError: true };
@@ -659,27 +665,31 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
       },
       body: JSON.stringify(payload)
     });
-    
+
     if (!response.ok) {
       // If response is not ok, check the detailed error
       const errorData = await response.json().catch(() => ({}));
-      
+
       // Check specifically for token expiration
       if (response.status === 401 && errorData.error === 'token_expired') {
+        log.warn('_sendToServer: Token expired error detected.'); // Keep this
         // Call the reauthenticate callback if available
         if (reauthenticateCallback) {
+          log.warn('_sendToServer: Calling reauthenticate callback with tokenExpired.'); // Keep this
           reauthenticateCallback({ tokenExpired: true });
         }
         return { tokenExpired: true };
       }
       
       // Log other error details
-      log.error('Data upload error:', errorData);
-      
+      log.error(`_sendToServer: Data upload failed with status ${response.status}`, errorData);
+
       // For unauthorized errors (not token expired), return auth error
       if (response.status === 401 || response.status === 403) {
+        log.warn('_sendToServer: Unauthorized error detected (not token expired).');
         // Call the reauthenticate callback if available
         if (reauthenticateCallback) {
+          log.warn('_sendToServer: Calling reauthenticate callback with authError.'); // Keep this
           reauthenticateCallback({ authError: true });
         }
         return { authError: true };
@@ -690,7 +700,7 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
     
     return true;
   } catch (error) {
-    log.error('Data capture and send error:', error.message, error.stack);
+    log.error('_sendToServer: Error during data sending:', error.message, error.stack);
     console.error('Data upload failed:', error);
     return false;
   }
@@ -711,9 +721,9 @@ async function captureAndSend(idToken) {
         return false;
     }
 
-    // Get input data while resetting buffers to avoid duplicate data in next capture
+    // Get input data while resetting buffers
     const inputData = await collectInputData(true);
-    
+
     // Check if any capture errors occurred
     const captureErrors = inputData.captureErrors;
     if (captureErrors && (captureErrors.audio || captureErrors.keystrokes || captureErrors.windows)) {
@@ -723,9 +733,10 @@ async function captureAndSend(idToken) {
     }
     
     // Send all collected data to the server
-    return await _sendToServer(idToken, screenshots, inputData);
+    const sendResult = await _sendToServer(idToken, screenshots, inputData);
+    return sendResult;
   } catch (error) {
-    // If collectInputData threw an uncaught error or another part failed
+    // Handle errors specifically from captureScreenshot or collectInputData
     handleCaptureError(error, 'unknown');
     return false;
   }
@@ -733,7 +744,7 @@ async function captureAndSend(idToken) {
 
 // Helper function to handle errors during capture interval
 function handleCaptureError(error, context, captureErrors = null, stopCapture = true) {
-  log.error(`Error during ${context} capture:`, error);
+  log.error(`handleCaptureError: Error details (Context: ${context}):`, error); // Keep error log
   
   // Only stop the capture interval if requested
   if (stopCapture) {
@@ -810,7 +821,22 @@ function handleCaptureError(error, context, captureErrors = null, stopCapture = 
 }
 
 // Internal function to run a single capture cycle
-async function _runCaptureCycle(idToken) {
+async function _runCaptureCycle() {
+  // Fetch the current token *inside* the cycle
+  const currentIdToken = getIdTokenFunction ? getIdTokenFunction() : null;
+  
+  // Check if token exists before proceeding
+  if (!currentIdToken) {
+      log.warn('_runCaptureCycle: No ID token available. Skipping capture cycle.');
+      // Optionally, trigger re-authentication or stop interval if needed
+      // For now, just skip this cycle
+      // Re-evaluate if stopping is better - currently relies on _sendToServer detecting lack of token
+      if (reauthenticateCallback) {
+          reauthenticateCallback({ authError: true }); // Signal general auth error if no token
+      }
+      return; // Exit the cycle
+  }
+
   try {
     // Start audio capture if needed
     if (inputDataSettings.audio && !audioCapture.getStatus().recording) {
@@ -826,9 +852,9 @@ async function _runCaptureCycle(idToken) {
     if (inputDataSettings.windows && !windowsCapture.isTracking()) {
       await _startWindowTracking();
     }
-    
-    // Capture and send data
-    await captureAndSend(idToken);
+
+    // Capture and send data, passing the fetched token
+    const result = await captureAndSend(currentIdToken); // Pass currentIdToken
 
   } catch (error) {
     // Handle errors from captureAndSend or other cycle errors
@@ -839,24 +865,24 @@ async function _runCaptureCycle(idToken) {
 
 /**
  * Starts the capture interval
- * @param {string} idToken The Firebase ID token
  * @returns {number} The interval ID
  */
-function startCaptureInterval(idToken) {
+function startCaptureInterval() {
+  // Token is now fetched inside _runCaptureCycle
   // Clear existing interval and stop tracking
-  stopCaptureInterval();
+  stopCaptureInterval(); // Ensure clean state
   
   // Run first cycle immediately
-  _runCaptureCycle(idToken).catch(error => {
+  _runCaptureCycle().catch(error => {
     log.error('Error during initial capture cycle run:', error);
     // handleCaptureError is called within _runCaptureCycle
   });
 
   // Set up interval for subsequent cycles
   screenshotInterval = setInterval(() => {
-    _runCaptureCycle(idToken).catch(error => {
-      log.error('Error during scheduled capture cycle run:', error);
-      // handleCaptureError is called within _runCaptureCycle
+    _runCaptureCycle().catch(error => {
+      log.error('startCaptureInterval: Error during scheduled _runCaptureCycle execution:', error);
+       // handleCaptureError should be called within _runCaptureCycle itself
     });
   }, captureIntervalMinutes * 60 * 1000);
   
@@ -894,7 +920,8 @@ function stopCaptureInterval() {
  * @returns {boolean} True if capturing is active
  */
 function isCapturing() {
-  return screenshotInterval !== null;
+  const isActive = screenshotInterval !== null;
+  return isActive;
 }
 
 module.exports = {

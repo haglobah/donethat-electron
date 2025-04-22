@@ -66,7 +66,6 @@ async function refreshAuthToken() {
       // Update app state with new token
       updateAuthState(true, newToken);
       
-      // Send new token back to main process
       ipcRenderer.send('token-refreshed', newToken);
       return newToken;
     } else {
@@ -74,6 +73,17 @@ async function refreshAuthToken() {
       return null;
     }
   } catch (error) {
+    console.error('Renderer: Error during refreshAuthToken:', error);
+    console.error("Renderer: Error Code:", error.code);
+    console.error("Renderer: Error Message:", error.message);
+
+    if (error.code === 'auth/user-token-expired' ||
+        error.code === 'auth/invalid-refresh-token' ||
+        error.code === 'auth/user-disabled' ||
+        error.code === 'auth/invalid-user-token') {
+        console.error("Renderer: Refresh token might be invalid or user session expired server-side.");
+    }
+
     ipcRenderer.send('token-refreshed', null);
     return null;
   }
@@ -271,4 +281,4 @@ signInForm.addEventListener("submit", (e) => {
     }
   }
 
-  export { initializeAuth, userIdToken };
+  export { initializeAuth, userIdToken, refreshAuthToken };

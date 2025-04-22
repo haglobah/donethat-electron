@@ -8,6 +8,7 @@ const { logAnalyticsEvent } = require('./analytics.js');
 const { ipcRenderer } = require("electron");
 const { updateLastSummary, updateIsPublic } = require('./app-state.js');
 const { requestAudioPermission, requestKeystrokesPermission, requestWindowsPermission } = require('./permissions.js');
+const { refreshAuthToken } = require('./auth.js');
 const os = require('os');
 const packageInfo = require('../package.json');
 
@@ -49,12 +50,14 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   // Set up Firestore listener for user settings
   const auth = getAuth();
   if (auth.currentUser) {
-    setupSettingsListener(auth.currentUser.uid);
+    const userId = auth.currentUser.uid;
+    setupSettingsListener(userId);
   } else {
     // Add auth state listener
     auth.onAuthStateChanged((user) => {
       if (user) {
-        setupSettingsListener(user.uid);
+        const userId = user.uid;
+        setupSettingsListener(userId);
       } else {
         stopSettingsListener();
       }
@@ -212,9 +215,22 @@ function setupSettingsListener(userId) {
       if (loadUserSettingsCallback) {
         loadUserSettingsCallback();
       }
+    } else {
+        // Handle case where settings doc doesn't exist (e.g., new user)
     }
   }, (error) => {
     console.error("Error listening to settings changes:", error);
+    // Check if the error is likely auth-related
+    if (error.code === 'permission-denied' || error.code === 'unauthenticated') {
+        console.warn('Firestore settings listener failed due to auth error. Attempting token refresh...');
+        logAnalyticsEvent('firestore_listener_auth_error', { error_code: error.code });
+        // Attempt to refresh the token
+        refreshAuthToken().catch(refreshError => {
+            console.error("Error attempting token refresh after listener failure:", refreshError);
+        });
+    }
+    // Note: The listener might automatically retry after a successful refresh,
+    // or might need to be explicitly restarted depending on Firestore SDK behavior.
   });
 }
 

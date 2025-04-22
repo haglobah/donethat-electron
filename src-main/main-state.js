@@ -62,7 +62,9 @@ async function initState(options = {}) {
       hasScreenCapturePermission: () => hasScreenCapturePermission,
       isWaylandSession: () => isWaylandSession,
       isAuthenticated: () => Boolean(idToken),
-      getIdToken: () => idToken,
+      getIdToken: () => {
+        return idToken;
+      },
       setIdToken,
       clearIdToken,
       cleanupOnQuit,
@@ -519,7 +521,7 @@ function setupIPCHandlers() {
   // Token refresh handling
   ipcMain.on('token-refreshed', (event, newToken) => {
     const mainWindow = event.sender.getOwnerBrowserWindow();
-    
+
     if (setIdToken(newToken)) {
       // Token updated successfully
     } else {
@@ -795,7 +797,6 @@ function setIdToken(token) {
     idToken = token;
     return true;
   } else {
-    log.warn('Invalid authentication token provided');
     return false;
   }
 }
