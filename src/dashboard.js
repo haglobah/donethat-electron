@@ -238,33 +238,21 @@ if (submitSummaryBtn) {
       const selectedBullets = [];
       document.querySelectorAll('.bullet-item').forEach(item => {
         const checkbox = item.querySelector('.bullet-checkbox');
-        const heartIcon = item.querySelector('.heart-icon');
         const textElement = item.querySelector('.bullet-text');
   
         if (checkbox.checked) {
           let bulletText = textElement.textContent.trim();
-  
-          if (heartIcon.classList.contains('active')) {
-            bulletText = '🧡 ' + bulletText;
-          }
-  
           selectedBullets.push(bulletText);
         }
       });
   
-      // Get custom bullets with heart status
+      // Get custom bullets
       const filteredCustomBullets = [];
       document.querySelectorAll('.custom-bullet').forEach(item => {
         const textElement = item.querySelector('.bullet-text');
-        const heartIcon = item.querySelector('.heart-icon');
         
         if (textElement) {
           let bulletText = textElement.textContent.trim();
-          
-          if (heartIcon.classList.contains('active')) {
-            bulletText = '🧡 ' + bulletText;
-          }
-          
           filteredCustomBullets.push(bulletText);
         }
       });
@@ -391,7 +379,6 @@ if (submitSummaryBtn) {
             <div class="bullet-item">
               <input type="checkbox" class="bullet-checkbox" checked>
               <span class="bullet-content bullet-text">${point}</span>
-              <span class="heart-icon">♥</span>
             </div>
           `).join('');
   
@@ -409,26 +396,16 @@ if (submitSummaryBtn) {
           // Initialize custom bullets container
           renderCustomBullets();
   
-          // Add event listeners for checkboxes and heart icons
+          // Add event listeners for checkboxes
           document.querySelectorAll('.bullet-checkbox').forEach(checkbox => {
             checkbox.addEventListener('change', function () {
               const textElement = this.nextElementSibling;
-              const heartIcon = textElement.nextElementSibling;
   
               if (this.checked) {
                 textElement.classList.remove('bullet-text-crossed');
-                heartIcon.classList.remove('opacity-50', 'pointer-events-none');
               } else {
                 textElement.classList.add('bullet-text-crossed');
-                heartIcon.classList.add('opacity-50', 'pointer-events-none');
-                heartIcon.classList.remove('active');
               }
-            });
-          });
-  
-          document.querySelectorAll('.heart-icon').forEach(heart => {
-            heart.addEventListener('click', function () {
-              this.classList.toggle('active');
             });
           });
   
@@ -503,18 +480,9 @@ function renderCustomBullets() {
     textSpan.className = 'bullet-content bullet-text custom-bullet-italic';
     textSpan.textContent = bullet;
     
-    // Create heart icon
-    const heartIcon = document.createElement('span');
-    heartIcon.className = 'heart-icon';
-    heartIcon.innerHTML = '♥';
-    heartIcon.addEventListener('click', function() {
-      this.classList.toggle('active');
-    });
-    
     // Add elements to bullet item
     bulletItem.appendChild(deleteIcon);
     bulletItem.appendChild(textSpan);
-    bulletItem.appendChild(heartIcon);
     
     customBulletsContainer.appendChild(bulletItem);
   });

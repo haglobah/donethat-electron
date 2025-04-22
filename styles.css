@@ -195,27 +195,6 @@
   box-shadow: 0 0 0 3px var(--color-primary-focus);
 }
 
-/* Heart icon styles */
-.heart-icon {
-  @apply ml-auto cursor-pointer transition-colors duration-200 text-base;
-  color: var(--color-neutral-500);
-}
-.heart-icon:hover {
-  color: var(--color-neutral-700);
-}
-
-.heart-icon.active {
-  color: var(--color-primary);
-}
-.heart-icon.active:hover {
-  color: var(--color-primary-dark);
-}
-
-/* Disabled heart icon when item is crossed out */
-.heart-icon.opacity-50.pointer-events-none {
-  @apply cursor-default;
-}
-
 /* Text styles for bullet points */
 .bullet-text {
   @apply text-gray-800;
