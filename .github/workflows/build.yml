@@ -114,11 +114,12 @@ jobs:
           [System.Convert]::FromBase64String("${{ secrets.SM_CLIENT_CERT_FILE_B64 }}") | Set-Content -Path "D:\Certificate_pkcs12.p12" -Encoding Byte
           
           # Create PKCS11 configuration file
-          @"
+          $pkcs11Config = @"
 name=signingmanager
 library=C:\Program Files\DigiCert\DigiCert Keylocker Tools\smpkcs11.dll
 slotListIndex=0
-"@ | Out-File -FilePath "D:\pkcs11properties.cfg" -Encoding ASCII
+"@
+          $pkcs11Config | Out-File -FilePath "D:\pkcs11properties.cfg" -Encoding ASCII
           
       - name: Install DigiCert KeyLocker Tools
         if: matrix.platform == 'win'
