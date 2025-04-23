@@ -1,4 +1,4 @@
-name: Build and Release
+name: 'Build and Release'
 
 on:
   workflow_dispatch:
@@ -47,7 +47,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install setuptools wheel
           
-      # Fix for active-win on macOS GitHub runners
       - name: Fix macOS active-win dependencies
         if: matrix.platform == 'mac'
         run: |
@@ -95,7 +94,6 @@ jobs:
           echo };
           ) > slack-config.js
         
-      # Setup keychain for macOS code signing (if needed)
       - name: Setup macOS code signing
         if: matrix.platform == 'mac'
         env:
@@ -106,9 +104,7 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
         run: |
           echo "Setting up macOS code signing..."
-          # Additional setup code if needed
           
-      # Set up Windows code signing with DigiCert
       - name: Setup Windows code signing
         if: matrix.platform == 'win'
         shell: powershell
@@ -154,7 +150,6 @@ slotListIndex=0
           FIREBASE_APISECRET: ${{ secrets.FIREBASE_APISECRET }}
           SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
           SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
-          # Windows signing environment variables
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
           SM_CLIENT_CERT_FILE: D:\Certificate_pkcs12.p12
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
