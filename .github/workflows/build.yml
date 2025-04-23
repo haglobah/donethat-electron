@@ -152,14 +152,14 @@ jobs:
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
           SM_HOST: ${{ secrets.SM_HOST }}
           PKCS11_CONFIG: D:\pkcs11properties.cfg
-        shell: powershell
+        shell: ${{ matrix.platform == 'win' && 'pwsh' || 'bash' }}
         run: |
-          if ($env:matrix_platform -eq "win") {
+          if [ "${{ matrix.platform }}" = "win" ]; then
             npm run build:win:x64
             node scripts/sign-windows.js
-          } else {
-            npm run $env:matrix_command
-          }
+          else
+            npm run ${{ matrix.command }}
+          fi
         
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
