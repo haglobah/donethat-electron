@@ -115,7 +115,11 @@ jobs:
           SM_HOST: ${{ secrets.SM_HOST }}
         run: |
           # Create certificate file from base64
-          [System.Convert]::FromBase64String("${{ secrets.SM_CLIENT_CERT_FILE_B64 }}") | Set-Content -Path "D:\Certificate_pkcs12.p12" -Encoding Byte
+          $certPath = "D:\Certificate_pkcs12.p12"
+          [System.Convert]::FromBase64String("${{ secrets.SM_CLIENT_CERT_FILE_B64 }}") | Set-Content -Path $certPath -Encoding Byte
+          
+          # Set the environment variable for the signing script
+          Write-Host "::set-env name=SM_CLIENT_CERT_FILE::$certPath"
           
           # Create PKCS11 configuration file
           $config = "name=signingmanager`nlibrary=C:\Program Files\DigiCert\DigiCert Keylocker Tools\smpkcs11.dll`nslotListIndex=0"
