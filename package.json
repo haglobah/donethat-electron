@@ -1,6 +1,6 @@
 {
   "name": "donethat",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "Make your work visible, on your terms.",
   "main": "main.js",
   "scripts": {
@@ -11,8 +11,8 @@
     "build": "npm run build:prepare && electron-builder",
     "build:mac:x64": "npm run build:prepare && electron-builder --mac --x64",
     "build:mac:arm64": "npm run build:prepare && electron-builder --mac --arm64",
-    "build:win:x64": "npm run build:prepare && electron-builder --win --x64",
-    "build:win:arm64": "npm run build:prepare && electron-builder --win --arm64",
+    "build:win:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --x64",
+    "build:win:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --arm64",
     "build:linux:x64": "npm run build:prepare && electron-builder --linux --x64",
     "build:linux:arm64": "npm run build:prepare && electron-builder --linux --arm64",
     "upload:mac:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --x64 --publish always --config.extraMetadata.main=main.js --config.publish.channel=x64",
@@ -116,7 +116,11 @@
           "to": "app.manifest"
         }
       ],
-      "artifactName": "${productName}-${arch}.${ext}"
+      "artifactName": "${productName}-${arch}.${ext}",
+      "signtoolOptions": {
+        "signingHashAlgorithms": ["sha256"],
+        "sign": "./scripts/sign-windows.js"
+      }
     },
     "nsis": {
       "runAfterFinish": true,

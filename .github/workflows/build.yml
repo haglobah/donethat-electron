@@ -111,19 +111,34 @@ jobs:
       # Set up Windows code signing with DigiCert
       - name: Setup Windows code signing
         if: matrix.platform == 'win'
+        shell: powershell
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: ${{ secrets.SM_HOST }}
         run: |
-          echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | base64 --decode > /d/Certificate_pkcs12.p12
-          echo "name=signingmanager" > pkcs11properties.cfg
-          echo "library=C:\\Program Files\\DigiCert\\DigiCert Keylocker Tools\\smpkcs11.dll" >> pkcs11properties.cfg
-          echo "slotListIndex=0" >> pkcs11properties.cfg
-        shell: bash
+          # Create certificate file from base64
+          [System.Convert]::FromBase64String("${{ secrets.SM_CLIENT_CERT_FILE_B64 }}") | Set-Content -Path "D:\Certificate_pkcs12.p12" -Encoding Byte
+          
+          # Create PKCS11 configuration file
+          @"
+name=signingmanager
+library=C:\Program Files\DigiCert\DigiCert Keylocker Tools\smpkcs11.dll
+slotListIndex=0
+"@ | Out-File -FilePath "D:\pkcs11properties.cfg" -Encoding ASCII
           
       - name: Install DigiCert KeyLocker Tools
         if: matrix.platform == 'win'
+        shell: powershell
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
         run: |
-          curl -X GET "https://one.digicert.com/signingmanager/api-ui/v1/releases/Keylockertools-windows-x64.msi/download" -H "x-api-key:${{ secrets.SM_API_KEY }}" -o Keylockertools-windows-x64.msi
-          msiexec /i Keylockertools-windows-x64.msi /quiet /qn
-        shell: cmd
+          $headers = @{
+            "x-api-key" = "${{ secrets.SM_API_KEY }}"
+          }
+          Invoke-WebRequest -Uri "https://one.digicert.com/signingmanager/api-ui/v1/releases/Keylockertools-windows-x64.msi/download" -Headers $headers -OutFile "D:\Keylockertools-windows-x64.msi"
+          Start-Process -FilePath "msiexec" -ArgumentList "/i D:\Keylockertools-windows-x64.msi /quiet /qn" -Wait
           
       - name: Build and upload
         env:
@@ -143,14 +158,16 @@ jobs:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
           SM_CLIENT_CERT_FILE: D:\Certificate_pkcs12.p12
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-          WINDOWS_SIGN_CERTIFICATE_NAME: ${{ secrets.WINDOWS_SIGN_CERTIFICATE_NAME }}
+          SM_HOST: ${{ secrets.SM_HOST }}
+          PKCS11_CONFIG: D:\pkcs11properties.cfg
+        shell: powershell
         run: |
-          if [ "${{ matrix.platform }}" = "win" ]; then
+          if ($env:matrix_platform -eq "win") {
             npm run build:win:x64
             node scripts/sign-windows.js
-          else
-            npm run ${{ matrix.command }}
-          fi
+          } else {
+            npm run $env:matrix_command
+          }
         
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
