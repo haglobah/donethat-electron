@@ -153,4 +153,5 @@ release/
 # Slack config
 slack-config.js
 
-pkcs11properties.cfg
+pkcs11properties.config
+Certificate_pkcs12.p12

@@ -113,6 +113,7 @@ jobs:
           SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
           SM_HOST: ${{ secrets.SM_HOST }}
+          SM_KEY_ALIAS: ${{ secrets.SM_KEY_ALIAS }}
         run: |
           # Create certificate file from base64
           $certPath = "D:\Certificate_pkcs12.p12"
@@ -125,31 +126,35 @@ jobs:
           $config = "name=signingmanager`nlibrary=C:\Program Files\DigiCert\DigiCert Keylocker Tools\smpkcs11.dll`nslotListIndex=0"
           $config | Out-File -FilePath "D:\pkcs11properties.cfg" -Encoding ASCII
           
-      - name: Install DigiCert KeyLocker Tools
+      - name: Download and Install DigiCert KeyLocker Tools
         if: matrix.platform == 'win'
         shell: pwsh
         env:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
         run: |
-          $headers = @{
-            "x-api-key" = "${{ secrets.SM_API_KEY }}"
+          # Download the DigiCert KeyLocker Tools MSI
+          Write-Host "Downloading DigiCert KeyLocker Tools..."
+          $headers = @{ "Accept" = "*/*" }
+          $msiUrl = "https://one.digicert.com/signingmanager/api-ui/v1/releases/noauth/smtools-windows-x64.msi/download"
+          $msiPath = "D:\smtools-windows-x64.msi"
+          
+          Invoke-WebRequest -Uri $msiUrl -Headers $headers -OutFile $msiPath
+          
+          # Install the MSI
+          Write-Host "Installing DigiCert KeyLocker Tools..."
+          Start-Process -FilePath "msiexec" -ArgumentList "/i `"$msiPath`" /quiet /qn" -Wait
+          
+          # Verify installation
+          $keylockerPath = "C:\Program Files\DigiCert\DigiCert Keylocker Tools"
+          if (Test-Path "$keylockerPath\smctl.exe") {
+            Write-Host "DigiCert KeyLocker Tools installed successfully."
+          } else {
+            throw "DigiCert KeyLocker Tools were not installed properly."
           }
-          Invoke-WebRequest -Uri "https://one.digicert.com/signingmanager/api-ui/v1/releases/Keylockertools-windows-x64.msi/download" -Headers $headers -OutFile "D:\Keylockertools-windows-x64.msi"
-          Start-Process -FilePath "msiexec" -ArgumentList "/i D:\Keylockertools-windows-x64.msi /quiet /qn" -Wait
           
           # Add KeyLocker Tools to PATH
-          $keylockerPath = "C:\Program Files\DigiCert\DigiCert Keylocker Tools"
           $env:PATH = "$keylockerPath;$env:PATH"
           Add-Content -Path $env:GITHUB_PATH -Value $keylockerPath
-          
-          # Verify DLL exists
-          if (-not (Test-Path "$keylockerPath\smpkcs11.dll")) {
-            throw "DigiCert KeyLocker Tools DLL not found after installation"
-          }
-          
-          # Create PKCS11 configuration file
-          $pkcs11Config = "name=signingmanager`nlibrary=$keylockerPath\smpkcs11.dll`nslotListIndex=0"
-          $pkcs11Config | Out-File -FilePath "D:\pkcs11properties.cfg" -Encoding ASCII
           
       - name: Build and upload (Windows)
         if: matrix.platform == 'win'
@@ -170,6 +175,8 @@ jobs:
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
           SM_CLIENT_CERT_FILE: D:\Certificate_pkcs12.p12
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          SM_KEY_ALIAS: ${{ secrets.SM_KEY_ALIAS }}
           SM_HOST: ${{ secrets.SM_HOST }}
           PKCS11_CONFIG: D:\pkcs11properties.cfg
         run: |
