@@ -201,6 +201,9 @@ function _resumeRecording() {
     _checkWorkdayStartNotification();
   }
 
+  // Clear pause state to avoid issues
+  pauseState = { endTime: null, timeoutId: null, reason: null };
+
   if (checkAndAdjustRecording) {
     checkAndAdjustRecording();
   }

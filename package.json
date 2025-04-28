@@ -117,10 +117,7 @@
         }
       ],
       "artifactName": "${productName}-${arch}.${ext}",
-      "signtoolOptions": {
-        "signingHashAlgorithms": ["sha256"],
-        "sign": "./scripts/sign-windows.js"
-      }
+      "sign": "./scripts/digicert-sign-windows.js"
     },
     "nsis": {
       "runAfterFinish": true,

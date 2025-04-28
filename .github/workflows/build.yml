@@ -104,57 +104,31 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
         run: |
           echo "Setting up macOS code signing..."
+          # Additional setup code if needed
           
-      - name: Setup Windows code signing
+      # Set up Windows code signing with DigiCert
+      - name: Setup DigiCert code signing for Windows
         if: matrix.platform == 'win'
-        shell: powershell
-        env:
-          SM_API_KEY: ${{ secrets.SM_API_KEY }}
-          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-          SM_HOST: ${{ secrets.SM_HOST }}
-          SM_KEY_ALIAS: ${{ secrets.SM_KEY_ALIAS }}
-        run: |
-          # Create certificate file from base64
-          $certPath = "D:\Certificate_pkcs12.p12"
-          [System.Convert]::FromBase64String("${{ secrets.SM_CLIENT_CERT_FILE_B64 }}") | Set-Content -Path $certPath -Encoding Byte
-          
-          # Set the environment variable for the signing script
-          Write-Host "::set-env name=SM_CLIENT_CERT_FILE::$certPath"
-          
-          # Create PKCS11 configuration file
-          $config = "name=signingmanager`nlibrary=C:\Program Files\DigiCert\DigiCert Keylocker Tools\smpkcs11.dll`nslotListIndex=0"
-          $config | Out-File -FilePath "D:\pkcs11properties.cfg" -Encoding ASCII
-          
-      - name: Download and Install DigiCert KeyLocker Tools
+        uses: digicert/ssm-code-signing@v1.0.0
+        
+      - name: Set up DigiCert certificate for Windows
         if: matrix.platform == 'win'
-        shell: pwsh
-        env:
-          SM_API_KEY: ${{ secrets.SM_API_KEY }}
         run: |
-          # Download the DigiCert KeyLocker Tools MSI
-          Write-Host "Downloading DigiCert KeyLocker Tools..."
-          $headers = @{ "Accept" = "*/*" }
-          $msiUrl = "https://one.digicert.com/signingmanager/api-ui/v1/releases/noauth/smtools-windows-x64.msi/download"
-          $msiPath = "D:\smtools-windows-x64.msi"
+          echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | base64 --decode > /d/Certificate_pkcs12.p12
+        shell: bash
+        
+      - name: Set DigiCert environment variables for Windows
+        if: matrix.platform == 'win'
+        run: |
+          echo "SM_HOST=${{ secrets.SM_HOST }}" >> $GITHUB_ENV
+          echo "SM_API_KEY=${{ secrets.SM_API_KEY }}" >> $GITHUB_ENV
+          echo "SM_CLIENT_CERT_FILE=D:\\Certificate_pkcs12.p12" >> $GITHUB_ENV
+          echo "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" >> $GITHUB_ENV
+          echo "SM_CODE_SIGNING_CERT_SHA1_HASH=${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" >> $GITHUB_ENV
           
-          Invoke-WebRequest -Uri $msiUrl -Headers $headers -OutFile $msiPath
-          
-          # Install the MSI
-          Write-Host "Installing DigiCert KeyLocker Tools..."
-          Start-Process -FilePath "msiexec" -ArgumentList "/i `"$msiPath`" /quiet /qn" -Wait
-          
-          # Verify installation
-          $keylockerPath = "C:\Program Files\DigiCert\DigiCert Keylocker Tools"
-          if (Test-Path "$keylockerPath\smctl.exe") {
-            Write-Host "DigiCert KeyLocker Tools installed successfully."
-          } else {
-            throw "DigiCert KeyLocker Tools were not installed properly."
-          }
-          
-          # Add KeyLocker Tools to PATH
-          $env:PATH = "$keylockerPath;$env:PATH"
-          Add-Content -Path $env:GITHUB_PATH -Value $keylockerPath
+          # Log for debugging
+          echo "DigiCert environment variables set"
+        shell: bash
           
       - name: Build and upload (Windows)
         if: matrix.platform == 'win'
@@ -172,32 +146,12 @@ jobs:
           FIREBASE_APISECRET: ${{ secrets.FIREBASE_APISECRET }}
           SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
           SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
-          SM_API_KEY: ${{ secrets.SM_API_KEY }}
-          SM_CLIENT_CERT_FILE: D:\Certificate_pkcs12.p12
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
-          SM_KEY_ALIAS: ${{ secrets.SM_KEY_ALIAS }}
-          SM_HOST: ${{ secrets.SM_HOST }}
-          PKCS11_CONFIG: D:\pkcs11properties.cfg
-        run: |
-          npm run build:win:x64
-          node scripts/sign-windows.js
-
-      - name: Build and upload (Non-Windows)
-        if: matrix.platform != 'win'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CI: true
-          FIREBASE_APIKEY: ${{ secrets.FIREBASE_APIKEY }}
-          FIREBASE_APISECRET: ${{ secrets.FIREBASE_APISECRET }}
-          SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
-          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
-        run: |
-          npm run ${{ matrix.command }} 
+          # DigiCert environment variables will be inherited from previous steps
+        run: npm run ${{ matrix.command }}
+        
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-${{ matrix.arch }}-build
+          path: release/
+          if-no-files-found: ignore 
