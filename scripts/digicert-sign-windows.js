@@ -41,13 +41,12 @@ exports.default = async function(configuration) {
     try {
       console.log('Running SMCTL healthcheck...');
       const healthCheckOutput = execSync('smctl healthcheck', { encoding: 'utf8' });
-      console.log('Healthcheck output (last 20 lines):\n', getLastNLines(healthCheckOutput));
+      console.log('Healthcheck output:', healthCheckOutput);
     } catch (healthcheckError) {
       console.error('Healthcheck failed:', healthcheckError.message);
-      if (healthcheckError.stdout) console.log('Healthcheck stdout (last 20 lines):\n', getLastNLines(healthcheckError.stdout));
-      if (healthcheckError.stderr) console.log('Healthcheck stderr (last 20 lines):\n', getLastNLines(healthcheckError.stderr));
-      console.error('Build stopped: Healthcheck failed');
-      return false;
+      if (healthcheckError.stdout) console.log('Healthcheck stdout:', healthcheckError.stdout);
+      if (healthcheckError.stderr) console.log('Healthcheck stderr:', healthcheckError.stderr);
+      throw new Error('Build failed: Healthcheck failed');
     }
     
     // Try to get keypair alias as a fallback
@@ -55,7 +54,7 @@ exports.default = async function(configuration) {
     try {
       console.log('Looking for available keypairs...');
       const keypairsOutput = execSync('smctl keypair list', { encoding: 'utf8' });
-      console.log('Keypairs output (last 20 lines):\n', getLastNLines(keypairsOutput));
+      console.log('Keypairs output:', keypairsOutput);
       
       // Try to extract first keypair alias from output
       const match = keypairsOutput.match(/\|\s+(\w+)\s+\|/);
@@ -65,15 +64,15 @@ exports.default = async function(configuration) {
       }
     } catch (keypairError) {
       console.error('Failed to list keypairs:', keypairError.message);
-      if (keypairError.stdout) console.log('Keypair list stdout (last 20 lines):\n', getLastNLines(keypairError.stdout));
-      if (keypairError.stderr) console.log('Keypair list stderr (last 20 lines):\n', getLastNLines(keypairError.stderr));
+      if (keypairError.stdout) console.log('Keypair list stdout:', keypairError.stdout);
+      if (keypairError.stderr) console.log('Keypair list stderr:', keypairError.stderr);
     }
 
     // List certificates in store
     try {
       console.log('Listing certificates in store...');
       const certListOutput = execSync('certutil -store -user My', { encoding: 'utf8' });
-      console.log('Certificate store contents (last 20 lines):\n', getLastNLines(certListOutput));
+      console.log('Certificate store contents:', certListOutput);
     } catch (certListError) {
       console.error('Failed to list certificates:', certListError.message);
     }
@@ -86,7 +85,7 @@ exports.default = async function(configuration) {
       console.log(`Executing command: ${cmd.replace(process.env.SM_CODE_SIGNING_CERT_SHA1_HASH, '***')}`);
       
       const output = execSync(cmd, { encoding: 'utf8' });
-      console.log('Signing output (last 20 lines):\n', getLastNLines(output));
+      console.log('Signing output:', output);
       
       // Check if output contains "FAILED"
       if (output.includes('FAILED')) {
@@ -95,8 +94,8 @@ exports.default = async function(configuration) {
       success = true;
     } catch (error) {
       console.error('Fingerprint signing failed:', error.message);
-      if (error.stdout) console.log('Command stdout (last 20 lines):\n', getLastNLines(error.stdout));
-      if (error.stderr) console.log('Command stderr (last 20 lines):\n', getLastNLines(error.stderr));
+      if (error.stdout) console.log('Command stdout:', error.stdout);
+      if (error.stderr) console.log('Command stderr:', error.stderr);
       
       // Read and log SMCTL log file if it exists
       if (fs.existsSync(smctlLogPath)) {
@@ -116,7 +115,7 @@ exports.default = async function(configuration) {
           console.log(`Executing command: ${cmd}`);
           
           const output = execSync(cmd, { encoding: 'utf8' });
-          console.log('Signing output (last 20 lines):\n', getLastNLines(output));
+          console.log('Signing output:', output);
           
           // Check if output contains "FAILED"
           if (output.includes('FAILED')) {
@@ -125,17 +124,15 @@ exports.default = async function(configuration) {
           success = true;
         } catch (aliasError) {
           console.error('Keypair alias signing failed:', aliasError.message);
-          if (aliasError.stdout) console.log('Command stdout (last 20 lines):\n', getLastNLines(aliasError.stdout));
-          if (aliasError.stderr) console.log('Command stderr (last 20 lines):\n', getLastNLines(aliasError.stderr));
+          if (aliasError.stdout) console.log('Command stdout:', aliasError.stdout);
+          if (aliasError.stderr) console.log('Command stderr:', aliasError.stderr);
           
           // Both attempts failed, stop the build
-          console.error('Build stopped: Both signing attempts failed');
-          return false;
+          throw new Error('Build failed: Both signing attempts failed');
         }
       } else {
         // No keypair alias available, stop the build
-        console.error('Build stopped: No keypair alias available for second attempt');
-        return false;
+        throw new Error('Build failed: No keypair alias available for second attempt');
       }
     }
     
@@ -145,7 +142,7 @@ exports.default = async function(configuration) {
         console.log('Verifying signature...');
         const verifyCmd = `smctl sign verify --input "${configuration.path}"`;
         const verifyOutput = execSync(verifyCmd, { encoding: 'utf8' });
-        console.log('Verification output (last 20 lines):\n', getLastNLines(verifyOutput));
+        console.log('Verification output:', verifyOutput);
         
         // Check if verification failed
         if (verifyOutput.includes('FAILED') || verifyOutput.includes('No signature found')) {
@@ -153,10 +150,9 @@ exports.default = async function(configuration) {
         }
       } catch (verifyError) {
         console.error('Verification failed:', verifyError.message);
-        if (verifyError.stdout) console.log('Verify stdout (last 20 lines):\n', getLastNLines(verifyError.stdout));
-        if (verifyError.stderr) console.log('Verify stderr (last 20 lines):\n', getLastNLines(verifyError.stderr));
-        console.error('Build stopped: Signature verification failed');
-        return false;
+        if (verifyError.stdout) console.log('Verify stdout:', verifyError.stdout);
+        if (verifyError.stderr) console.log('Verify stderr:', verifyError.stderr);
+        throw new Error('Build failed: Signature verification failed');
       }
     }
     
@@ -164,6 +160,6 @@ exports.default = async function(configuration) {
     return true;
   } catch (error) {
     console.error('Error during DigiCert code signing:', error.message);
-    return false;
+    throw error; // Re-throw the error to ensure the pipeline fails
   }
 } 
