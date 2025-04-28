@@ -46,6 +46,8 @@ exports.default = async function(configuration) {
       console.error('Healthcheck failed:', healthcheckError.message);
       if (healthcheckError.stdout) console.log('Healthcheck stdout (last 20 lines):\n', getLastNLines(healthcheckError.stdout));
       if (healthcheckError.stderr) console.log('Healthcheck stderr (last 20 lines):\n', getLastNLines(healthcheckError.stderr));
+      console.error('Build stopped: Healthcheck failed');
+      return false;
     }
     
     // Try to get keypair alias as a fallback
@@ -125,28 +127,15 @@ exports.default = async function(configuration) {
           console.error('Keypair alias signing failed:', aliasError.message);
           if (aliasError.stdout) console.log('Command stdout (last 20 lines):\n', getLastNLines(aliasError.stdout));
           if (aliasError.stderr) console.log('Command stderr (last 20 lines):\n', getLastNLines(aliasError.stderr));
-        }
-      }
-
-      // Attempt 3: Try with direct certificate file
-      if (process.env.SM_CLIENT_CERT_FILE && fs.existsSync(process.env.SM_CLIENT_CERT_FILE)) {
-        try {
-          console.log('Attempt 3: Signing with direct certificate file...');
-          const cmd = `smctl sign --cert-file "${process.env.SM_CLIENT_CERT_FILE}" --cert-password "${process.env.SM_CLIENT_CERT_PASSWORD}" --input "${configuration.path}" --config-file "${pkcs11ConfigPath}"`;
-          console.log(`Executing command: ${cmd.replace(process.env.SM_CLIENT_CERT_PASSWORD, '***')}`);
           
-          const output = execSync(cmd, { encoding: 'utf8' });
-          console.log('Signing output (last 20 lines):\n', getLastNLines(output));
-          
-          if (output.includes('FAILED')) {
-            throw new Error('Signing failed - output indicates failure');
-          }
-          success = true;
-        } catch (certFileError) {
-          console.error('Certificate file signing failed:', certFileError.message);
-          if (certFileError.stdout) console.log('Command stdout (last 20 lines):\n', getLastNLines(certFileError.stdout));
-          if (certFileError.stderr) console.log('Command stderr (last 20 lines):\n', getLastNLines(certFileError.stderr));
+          // Both attempts failed, stop the build
+          console.error('Build stopped: Both signing attempts failed');
+          return false;
         }
+      } else {
+        // No keypair alias available, stop the build
+        console.error('Build stopped: No keypair alias available for second attempt');
+        return false;
       }
     }
     
@@ -166,19 +155,15 @@ exports.default = async function(configuration) {
         console.error('Verification failed:', verifyError.message);
         if (verifyError.stdout) console.log('Verify stdout (last 20 lines):\n', getLastNLines(verifyError.stdout));
         if (verifyError.stderr) console.log('Verify stderr (last 20 lines):\n', getLastNLines(verifyError.stderr));
-        success = false;
+        console.error('Build stopped: Signature verification failed');
+        return false;
       }
-    }
-    
-    if (!success) {
-      console.error('All signing attempts failed');
-      return false; // Return false to indicate signing failure
     }
     
     console.log(`Successfully signed: ${configuration.path}`);
     return true;
   } catch (error) {
     console.error('Error during DigiCert code signing:', error.message);
-    return false; // Return false to indicate signing failure
+    return false;
   }
 } 
