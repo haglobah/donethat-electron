@@ -71,7 +71,6 @@
     "files": [
       "main.js",
       "firebase-config.js",
-      "slack-config.js",
       "src/**/*",
       "build/**/*",
       "resources/**/*",

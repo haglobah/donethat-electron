@@ -61,9 +61,6 @@ jobs:
           cat > firebase-config.js << 'EOL'
           ${{ secrets.FIREBASE_CONFIG }}
           EOL
-          cat > slack-config.js << 'EOL'
-          ${{ secrets.SLACK_CONFIG }}
-          EOL
 
       - name: Create config files from secrets (Windows)
         if: runner.os == 'Windows'
@@ -71,8 +68,6 @@ jobs:
         env:
           FIREBASE_APIKEY: ${{ secrets.FIREBASE_APIKEY }}
           FIREBASE_APISECRET: ${{ secrets.FIREBASE_APISECRET }}
-          SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
-          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
         run: |
           (
           echo module.exports = {
@@ -86,13 +81,6 @@ jobs:
           echo   apiSecret: "%FIREBASE_APISECRET%"
           echo };
           ) > firebase-config.js
-          
-          (
-          echo module.exports = {
-          echo   clientId: '%SLACK_CLIENT_ID%',
-          echo   clientSecret: '%SLACK_CLIENT_SECRET%'
-          echo };
-          ) > slack-config.js
         
       - name: Set Apple environment variables
         if: matrix.platform == 'mac'

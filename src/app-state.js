@@ -13,23 +13,17 @@ const state = {
   hasActiveTeam: false,
 
   // Settings state
-  hasEmails: false,
-  hasSlack: false,
-  hasSlackToken: false,
-  name: '',
+  isPublic: false,
   storeScreenshots: false,
-  emailRecipients: [],
-  slackChannel: null,
   lastSummary: null,
 
   // Navigation state
-  currentView: null
-};
+  currentView: null,
 
-// Add pause state
-let isPaused = false;
-let userDateCreated = null;
-let isPublic = false;
+  // Paused and user creation date
+  isPaused: false,
+  userDateCreated: null
+};
 
 // Getters
 function getState() {
@@ -48,32 +42,12 @@ function hasValidAccess() {
   return state.hasValidAccess;
 }
 
-function hasEmails() {
-  return state.hasEmails;
-}
-
-function hasSlack() {
-  return state.hasSlack;
-}
-
-function hasSlackToken() {
-  return state.hasSlackToken;
-}
-
-function getName() {
-  return state.name;
+function isPublic() {
+  return state.isPublic;
 }
 
 function isStoreScreenshots() {
   return state.storeScreenshots;
-}
-
-function getEmailRecipients() {
-  return [...state.emailRecipients];
-}
-
-function getSlackChannel() {
-  return state.slackChannel;
 }
 
 function getCurrentView() {
@@ -84,17 +58,12 @@ function getLastSummary() {
   return state.lastSummary;
 }
 
-// Add getter and setter for pause state
 function getIsPaused() {
-  return isPaused;
+  return state.isPaused;
 }
 
 function getDateCreated() {
-  return userDateCreated;
-}
-
-function getIsPublic() {
-  return isPublic;
+  return state.userDateCreated;
 }
 
 // Setters
@@ -115,23 +84,12 @@ function updateSubscriptionState(subscriptionStatus, activeTeam) {
                         subscriptionStatus === 'active';
 }
 
-function updateName(name) {
-  state.name = name;
+function updateIsPublic(isPublic) {
+  state.isPublic = isPublic;
 }
 
-function updateStoreScreenshots(enabled) {
-  state.storeScreenshots = enabled;
-}
-
-function updateEmailSettings(recipients) {
-  state.emailRecipients = [...recipients];
-  state.hasEmails = recipients.length > 0;
-}
-
-function updateSlackSettings(channel, hasToken = false) {
-  state.slackChannel = channel;
-  state.hasSlackToken = hasToken;
-  state.hasSlack = !!channel;
+function updateStoreScreenshots(storeScreenshots) {
+  state.storeScreenshots = storeScreenshots;
 }
 
 function updateCurrentView(view) {
@@ -143,18 +101,14 @@ function updateLastSummary(timestamp) {
 }
 
 function updatePauseState(paused) {
-  isPaused = paused;
+  state.isPaused = paused;
 }
 
-function updateDateCreated(newDateCreated) {
-  userDateCreated = newDateCreated;
+function updateDateCreated(timestamp) {
+  state.userDateCreated = timestamp;
 }
 
-function updateIsPublic(publicStatus) {
-  isPublic = !!publicStatus; // Ensure boolean
-}
-
-// Reset state (useful for logout)
+// Reset state
 function resetState() {
   Object.keys(state).forEach(key => {
     if (Array.isArray(state[key])) {
@@ -174,29 +128,20 @@ module.exports = {
   isAuthenticated,
   hasScreenCapturePermission,
   hasValidAccess,
-  hasEmails,
-  hasSlack,
-  hasSlackToken,
-  getName,
+  isPublic,
   isStoreScreenshots,
-  getEmailRecipients,
-  getSlackChannel,
   getCurrentView,
   getLastSummary,
   getIsPaused,
   getDateCreated,
-  getIsPublic,
   updateAuthState,
   updateScreenCapturePermission,
   updateSubscriptionState,
-  updateName,
+  updateIsPublic,
   updateStoreScreenshots,
-  updateEmailSettings,
-  updateSlackSettings,
   updateCurrentView,
   updateLastSummary,
   updatePauseState,
   updateDateCreated,
-  updateIsPublic,
   resetState
 }; 

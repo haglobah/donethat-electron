@@ -5,7 +5,6 @@ const {
 const { ipcRenderer } = require('electron');
 
 const { auth } = require('./firebase.js');
-const { initializeSlack} = require('./slack');
 const { subscriptionInitialize, subscriptionUpdateUI } = require('./subscription.js');
 const { initializeSettings, loadUserSettings } = require('./settings.js');
 const { initializeAuth } = require('./auth.js');
@@ -17,9 +16,6 @@ const {
   hasScreenCapturePermission,
   hasValidAccess,
   updateSubscriptionState,
-  updateEmailSettings,
-  updateSlackSettings,
-  updateName,
   updateStoreScreenshots,
   updateCurrentView,
   getCurrentView,
@@ -149,12 +145,6 @@ async function loadUserSettingsCallback() {
 
   // Update all relevant state
   updateSubscriptionState(result.data?.subscription?.status, hasActiveTeam);
-  updateEmailSettings(result.data?.emailRecipients || []);
-  updateSlackSettings(
-    result.data?.slack?.defaultChannel,
-    !!result.data?.slack?.accessToken
-  );
-  updateName(result.data?.name);
   updateStoreScreenshots(result.data?.storeScreenshots || false);
   updateDateCreated(result.data?.analytics?.createdAt);
 
@@ -190,7 +180,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialize all modules
   initializeAuth(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   initializeDashboard(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
-  initializeSlack(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner);
   subscriptionInitialize(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   initializeSettings(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   initializeAutoUpdate(navigateToView);

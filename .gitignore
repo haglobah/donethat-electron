@@ -150,9 +150,6 @@ tools/
 # Release
 release/
 
-# Slack config
-slack-config.js
-
 # DigiCert
 pkcs11properties.config
 Certificate_pkcs12.p12

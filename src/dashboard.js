@@ -2,7 +2,7 @@ const { getFunctions, httpsCallable } = require("firebase/functions");
 const { firebaseApp } = require('./firebase.js');
 const { ipcRenderer } = require('electron');
 const { logAnalyticsEvent } = require('./analytics.js');
-const { hasSlack, hasSlackToken, getName, getLastSummary, getIsPaused, getDateCreated, getIsPublic, hasEmails } = require('./app-state.js');
+const { getLastSummary, getIsPaused, getDateCreated, getIsPublic } = require('./app-state.js');
 
 const functions = getFunctions(firebaseApp, "europe-west1");
 
@@ -75,17 +75,7 @@ function showSummaryGeneratedState() {
     const visibilityNoteContainer = document.getElementById('visibilityNoteContainer');
     if (visibilityNoteContainer) {
       const isPublic = getIsPublic();
-      const hasRecipients = hasEmails();
-      const hasSlackChannel = hasSlackToken(); // Check if Slack token exists (channel implies token)
-
-      let visibilityText = isPublic ? 'Posting to your public feed' : 'Posting to your private feed';
-      const destinations = [];
-      if (hasRecipients) destinations.push('email');
-      if (hasSlackChannel) destinations.push('Slack');
-
-      if (destinations.length > 0) {
-        visibilityText += ` and ${destinations.join(' and ')}`;
-      }
+      let visibilityText = isPublic ? 'Posting to your public feed' : 'Posting to your feed';
       visibilityText += `. <a href="#" class="settings-link">Change here</a>.`;
 
       visibilityNoteContainer.innerHTML = `<p class="text-xs text-gray-500 text-center">${visibilityText}</p>`;
@@ -107,22 +97,6 @@ function showSummaryGeneratedState() {
     if (getIsPaused()) {
       notes.push({
         text: 'DoneThat is paused. <a href="#" class="resume-link">Resume recording</a>.',
-        isWarning: true
-      });
-    }
-
-    // Check if Slack is connected but no channel is set
-    if (hasSlack() && !hasSlackToken()) {
-      notes.push({
-        text: 'No Slack channel configured. <a href="#" class="settings-link">Set it up in settings</a>.',
-        isWarning: true
-      });
-    }
-
-    // Check if name is not set
-    if (!getName()) {
-      notes.push({
-        text: 'Complete your profile setup in <a href="#" class="settings-link">settings</a>.',
         isWarning: true
       });
     }

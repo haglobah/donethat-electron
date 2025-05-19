@@ -6,12 +6,7 @@ const { ipcRenderer } = require('electron');
 const { firebaseApp } = require('./firebase.js');
 const { auth } = require('./firebase.js');
 const os = require('os');
-const { 
-  hasEmails, 
-  hasSlack, 
-  hasValidAccess, 
-  getState 
-} = require('./app-state.js');
+const { hasValidAccess, getState } = require('./app-state.js');
 
 let appVersion = null;
 
@@ -195,19 +190,6 @@ class Analytics {
   }
   
   /**
-   * Get integration type based on email and slack settings
-   */
-  getIntegrationType() {
-    const hasEmailIntegration = hasEmails();
-    const hasSlackIntegration = hasSlack();
-    
-    if (hasEmailIntegration && hasSlackIntegration) return 'emailAndSlack';
-    if (hasEmailIntegration) return 'email';
-    if (hasSlackIntegration) return 'slack';
-    return 'none';
-  }
-  
-  /**
    * Get subscription status type
    */
   getSubscriptionType() {
@@ -258,8 +240,6 @@ class Analytics {
       timestamp_ms: Date.now(),
       // User type
       is_new_user: !localStorage.getItem('returning_user'),
-      // App state info
-      integration_type: this.getIntegrationType(),
       subscription_type: this.getSubscriptionType()
     };
   }

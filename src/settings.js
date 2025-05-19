@@ -3,7 +3,6 @@ const { getFirestore, doc, onSnapshot } = require("@firebase/firestore");
 const { getAuth } = require("firebase/auth");
 const { getFunctions, httpsCallable } = require("firebase/functions");
 const firebaseConfig = require("../firebase-config.js");
-const { updateSlackUI, updateSlackInputState } = require('./slack');
 const { logAnalyticsEvent } = require('./analytics.js');
 const { ipcRenderer } = require("electron");
 const { updateLastSummary, updateIsPublic } = require('./app-state.js');
@@ -29,7 +28,6 @@ let navigateToView = null;
 let settingsUnsubscribe = null;
 
 // Settings state
-let recipientEmails = [];
 let userTimezone = "UTC"; // Default timezone
 let workdays = [1, 2, 3, 4, 5]; // Default Mon-Fri (0=Sun, 6=Sat)
 let workhours = { start: "09:00", end: "17:00" }; // Default 9 AM to 5 PM
@@ -38,7 +36,6 @@ let inputData = {
   keystrokes: false,
   audio: false
 };
-let autoSubmit = false; // Default to false for auto submit
 
 // Initialize settings management
 function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingSpinner, viewNavigator) {
@@ -270,18 +267,7 @@ async function saveUserSettings(type, value) {
   try {
     let settingsData = {};
 
-    if (type === 'emails') {
-      settingsData.emailRecipients = value;
-      logAnalyticsEvent('settings_updated', {
-        type: 'emails',
-        recipient_count: value.length
-      });
-    } else if (type === 'name') {
-      settingsData.name = value; // value is already null if empty
-      logAnalyticsEvent('settings_updated', {
-        type: 'name'
-      });
-    } else if (type === 'screenshots') {
+    if (type === 'screenshots') {
       settingsData.storeScreenshots = value;
       logAnalyticsEvent('settings_updated', {
         type: 'screenshots',
@@ -301,18 +287,6 @@ async function saveUserSettings(type, value) {
         type: 'workhours',
         start: value.start,
         end: value.end
-      });
-    } else if (type === 'publicSummaries') {
-      settingsData.public = value;
-      logAnalyticsEvent('settings_updated', {
-        type: 'publicSummaries',
-        enabled: value
-      });
-    } else if (type === 'autoSubmit') {
-      settingsData.autoSubmit = value;
-      logAnalyticsEvent('settings_updated', {
-        type: 'autoSubmit',
-        enabled: value
       });
     } else if (type === 'inputData') { // Renamed type
       settingsData.inputData = value; // Use inputData
@@ -398,19 +372,6 @@ async function saveUserSettings(type, value) {
 }
 
 async function updateSettingsUI(settings) {
-  // Reset state
-  recipientEmails = [];
-  const emailTagsContainer = document.getElementById('emailTagsContainer');
-  if (emailTagsContainer) {
-    emailTagsContainer.innerHTML = "";
-  }
-
-  // Handle name
-  const nameInput = document.getElementById('nameInput');
-  if (nameInput) {
-    nameInput.value = settings?.name || '';
-  }
-
   // Handle screenshots setting
   if (settings && typeof settings.storeScreenshots === 'boolean') {
     const screenshotsCheckbox = document.getElementById('screenshotsCheckbox');
@@ -440,38 +401,6 @@ async function updateSettingsUI(settings) {
   if (keystrokesCheckbox) keystrokesCheckbox.checked = inputData.keystrokes;
   if (audioCheckbox) audioCheckbox.checked = inputData.audio; // Keep disabled state from HTML
 
-  // Handle public summaries setting
-  const publicSummariesCheckbox = document.getElementById('publicSummariesCheckbox');
-  if (publicSummariesCheckbox) {
-    const isPublicValue = settings?.public || false; // Default to false if not set
-    publicSummariesCheckbox.checked = isPublicValue;
-    updateIsPublic(isPublicValue);
-  }
-
-  // Handle auto submit setting
-  const autoSubmitCheckbox = document.getElementById('autoSubmitCheckbox');
-  if (autoSubmitCheckbox) {
-    autoSubmit = settings?.autoSubmit || false; // Default to false if not set
-    autoSubmitCheckbox.checked = autoSubmit;
-    // Send autoSubmit setting to main process
-    ipcRenderer.send('updateAutoSubmit', autoSubmit);
-  }
-
-  // Handle email recipients
-  if (settings &&
-    settings.emailRecipients &&
-    Array.isArray(settings.emailRecipients) &&
-    settings.emailRecipients.length > 0) {
-    // Get unique emails from server response
-    const uniqueEmails = [...new Set(settings.emailRecipients)];
-
-    // Set our internal state
-    recipientEmails = uniqueEmails;
-
-    // Render the email tags
-    renderEmailTags();
-  }
-
   // Handle workhours setting
   if (settings && settings.workhours) {
     workhours = {
@@ -498,29 +427,6 @@ async function updateSettingsUI(settings) {
     updateLastSummary(timestamp); // Update renderer state
     // Send the timestamp to the main process
     ipcRenderer.send('updateLastSummaryTimestamp', timestamp);
-  } else {
-    // Handle case where lastSummary might be explicitly null or undefined
-    // Don't send null to main process to avoid errors with Firebase timestamp properties
-  }
-  
-  // Handle Slack settings
-  if (settings.slack?.accessToken) {
-    const slackInput = document.getElementById('slackInput');
-    if (slackInput) {
-      slackInput.value = settings.slack.defaultChannel || '';
-    }
-
-    // Get team name from the first active team if available
-    const teams = settings.teams || {};
-    const activeTeam = Object.values(teams).find(team => team.status === 'active');
-    const teamName = activeTeam?.name || settings.slack.teamName;
-
-    // Update Slack UI with the active team's name
-    updateSlackUI(true, teamName);
-    updateSlackInputState(true, teamName, settings.slack.defaultChannel || '');
-  } else {
-    updateSlackUI(false);
-    updateSlackInputState(false);
   }
   
   // Handle timezone setting
@@ -569,242 +475,10 @@ async function updateSettingsUI(settings) {
   // Send initial workdays to main process
   ipcRenderer.send('updateWorkdays', workdays);
 
-  // Note: We intentionally don't check and update app version/OS here to prevent update loops
-  // when the app is running on multiple systems. App/OS info will only be updated when other
-  // settings are being saved.
-}
-
-/**
- * Add a new email tag
- */
-async function addEmailTag(email) {
-  if (!email) return;
-
-  email = email.trim();
-
-  if (recipientEmails.includes(email)) {
-    alert(`Email ${email} is already in the list.`);
-    return;
+  // Handle isPublic setting
+  if (typeof settings?.isPublic === 'boolean') {
+    updateIsPublic(settings.isPublic);
   }
-
-  if (!email.includes("@") || !email.includes(".")) {
-    alert(`Invalid email format: ${email}`);
-    return;
-  }
-
-  showSpinner();
-
-  try {
-    // Add to our local array
-    recipientEmails.push(email);
-
-    // Clear input field
-    const emailInput = document.getElementById("emailInput");
-    if (emailInput) {
-      emailInput.value = "";
-    }
-
-    // Render the updated list
-    renderEmailTags();
-
-    // Save to server
-    await saveUserSettings('emails', recipientEmails);
-
-  } catch (error) {
-    // If error, remove the email we just added
-    recipientEmails = recipientEmails.filter(e => e !== email);
-    renderEmailTags();
-
-    console.error("Error saving settings:", error);
-    alert(`Error saving: ${error.message}`);
-  } finally {
-    hideSpinner();
-  }
-}
-
-/**
- * Remove an email tag
- */
-async function removeEmailTag(email) {
-  if (!email || !recipientEmails.includes(email)) return;
-
-  showSpinner();
-
-  try {
-    // Create a backup of the current list
-    const originalList = [...recipientEmails];
-
-    // Update our local array
-    recipientEmails = recipientEmails.filter(e => e !== email);
-
-    // Render the updated list
-    renderEmailTags();
-
-    // Save to server
-    await saveUserSettings('emails', recipientEmails);
-
-  } catch (error) {
-    // If error, restore original list
-    recipientEmails = originalList;
-    renderEmailTags();
-
-    console.error("Error saving settings:", error);
-    alert(`Error saving: ${error.message}`);
-  } finally {
-    hideSpinner();
-  }
-}
-
-/**
- * Render email tags in the UI
- */
-function renderEmailTags() {
-  const emailTagsContainer = document.getElementById('emailTagsContainer');
-  if (!emailTagsContainer) return;
-
-  // Clear container first
-  emailTagsContainer.innerHTML = "";
-
-  // Render tags
-  recipientEmails.forEach(email => {
-    const tag = document.createElement("div");
-    tag.className = "email-tag";
-    tag.innerHTML = `
-      <span class="email-text">${email}</span>
-      <button data-email="${email}" class="remove-email remove-email-btn cursor-pointer">
-        &times;
-      </button>
-    `;
-    emailTagsContainer.appendChild(tag);
-  });
-
-  // Add click handlers for remove buttons
-  const removeButtons = emailTagsContainer.querySelectorAll('.remove-email-btn');
-  removeButtons.forEach(button => {
-    button.addEventListener('click', async (e) => {
-      const email = e.target.getAttribute('data-email');
-      if (email) {
-        await removeEmailTag(email);
-      }
-    });
-  });
-}
-
-// Add event listeners for name and screenshots
-const nameInput = document.getElementById('nameInput');
-if (nameInput) {
-  nameInput.addEventListener('change', async (e) => {
-    const newName = e.target.value.trim();
-    try {
-      showSpinner();
-      await saveUserSettings('name', newName || null);
-    } catch (error) {
-      // If error occurs, revert to previous value
-      e.target.value = getName();
-    } finally {
-      hideSpinner();
-    }
-  });
-}
-
-const screenshotsCheckbox = document.getElementById('screenshotsCheckbox');
-if (screenshotsCheckbox) {
-  screenshotsCheckbox.addEventListener('change', async (e) => {
-    try {
-      showSpinner();
-      await saveUserSettings('screenshots', e.target.checked);
-      // Show/hide container based on checkbox state
-      updateScreenshotsContainerVisibility(e.target.checked);
-    } catch (error) {
-      // If error occurs, revert to previous value
-      e.target.checked = isStoreScreenshots();
-    } finally {
-      hideSpinner();
-    }
-  });
-}
-
-// Add event listener for public summaries checkbox
-const publicSummariesCheckbox = document.getElementById('publicSummariesCheckbox');
-if (publicSummariesCheckbox) {
-  publicSummariesCheckbox.addEventListener('change', async (e) => {
-    try {
-      showSpinner();
-      await saveUserSettings('publicSummaries', e.target.checked);
-    } catch (error) {
-      // If error occurs, revert to previous value
-      e.target.checked = !e.target.checked;
-    } finally {
-      hideSpinner();
-    }
-  });
-}
-
-// Add event listener for auto submit checkbox
-const autoSubmitCheckbox = document.getElementById('autoSubmitCheckbox');
-if (autoSubmitCheckbox) {
-  autoSubmitCheckbox.addEventListener('change', async (e) => {
-    try {
-      showSpinner();
-      autoSubmit = e.target.checked;
-      await saveUserSettings('autoSubmit', e.target.checked);
-      // Send updated autoSubmit setting to main process
-      ipcRenderer.send('updateAutoSubmit', autoSubmit);
-    } catch (error) {
-      // If error occurs, revert to previous value
-      e.target.checked = !e.target.checked;
-      autoSubmit = !autoSubmit;
-    } finally {
-      hideSpinner();
-    }
-  });
-}
-
-// Add event listener for email input
-const emailInput = document.getElementById('emailInput');
-if (emailInput) {
-  emailInput.addEventListener('keypress', async (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const email = emailInput.value.trim();
-      if (email) {
-        await addEmailTag(email);
-      }
-    }
-  });
-
-  // Add blur event listener to add email when focus leaves the input
-  emailInput.addEventListener('blur', async (e) => {
-    const email = emailInput.value.trim();
-    if (email) {
-      // Check if email is already added to prevent duplicates on Enter + Blur
-      if (!recipientEmails.includes(email)) {
-         await addEmailTag(email);
-      } else {
-        emailInput.value = ""; // Uncomment if desired
-      }
-    }
-  });
-}
-
-// Helper function to get the first day of the week based on locale
-function getFirstDayOfWeek() {
-  try {
-    // Use Intl.Locale if available (modern browsers/Node versions)
-    if (typeof Intl !== 'undefined' && typeof Intl.Locale !== 'undefined') {
-      // Use navigator.language for renderer process locale
-      const locale = new Intl.Locale(navigator.language);
-      // weekInfo is experimental but widely supported
-      if (locale.weekInfo && typeof locale.weekInfo.firstDay === 'number') {
-        // Intl.Locale returns 1 for Monday, 7 for Sunday. Convert Sunday to 0.
-        return locale.weekInfo.firstDay % 7;
-      }
-    }
-  } catch (e) {
-    console.warn("Could not determine locale's first day of week, defaulting to Monday:", e);
-  }
-  // Default to Monday (1) if Intl.Locale is unavailable or doesn't provide weekInfo
-  return 1;
 }
 
 // Function to render workday selectors
@@ -835,6 +509,26 @@ function renderWorkdaySelectors() {
     }
     container.appendChild(button);
   }
+}
+
+// Helper function to get the first day of the week based on locale
+function getFirstDayOfWeek() {
+  try {
+    // Use Intl.Locale if available (modern browsers/Node versions)
+    if (typeof Intl !== 'undefined' && typeof Intl.Locale !== 'undefined') {
+      // Use navigator.language for renderer process locale
+      const locale = new Intl.Locale(navigator.language);
+      // weekInfo is experimental but widely supported
+      if (locale.weekInfo && typeof locale.weekInfo.firstDay === 'number') {
+        // Intl.Locale returns 1 for Monday, 7 for Sunday. Convert Sunday to 0.
+        return locale.weekInfo.firstDay % 7;
+      }
+    }
+  } catch (e) {
+    console.warn("Could not determine locale's first day of week, defaulting to Monday:", e);
+  }
+  // Default to Monday (1) if Intl.Locale is unavailable or doesn't provide weekInfo
+  return 1;
 }
 
 // Set up click handler for workday selectors using event delegation

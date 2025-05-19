@@ -252,95 +252,6 @@
         
         <!-- Settings content -->
         <div class="form-group">
-          <!-- Name field -->
-          <div>
-            <label for="nameInput" class="form-label mb-1">
-              Your Name
-            </label>
-            <input
-              type="text"
-              id="nameInput"
-              class="form-input text-xs py-1.5"
-              placeholder="Enter your name"
-            />
-          </div>
-
-          <div>
-            <label for="emailInput" class="form-label mb-1">
-              Recipient Emails
-            </label>
-            
-            <!-- Email list container with relative positioning for overlay -->
-            <div class="relative">
-              <div id="emailTagsContainer" class="email-list-container max-h-40 overflow-y-auto">
-                <!-- Email tags will be added here dynamically -->
-              </div>
-            </div>
-            
-            <!-- Email input with internal plus button - fixed positioning -->
-            <div class="relative w-full">
-              <input
-                type="email"
-                id="emailInput"
-                class="form-input pr-6 text-xs py-1.5"
-                placeholder="Enter an email address"
-              />
-              <button
-                id="addEmailBtn"
-                class="add-email-btn cursor-pointer"
-                aria-label="Add email"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-              </button>
-            </div>
-          </div>
-          
-          <!-- Slack Integration -->
-          <div class="mt-4">
-            <label class="form-label mb-1">
-              Slack Integration
-            </label>
-            <div class="relative w-full">
-              <input
-                type="text"
-                id="slackInput"
-                class="form-input pr-6 text-xs py-1.5"
-                placeholder="Connect to Slack"
-                disabled
-              />
-              <button
-                id="slackActionBtn"
-                class="add-email-btn cursor-pointer"
-                aria-label="Slack action"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-              </button>
-            </div>
-          </div>
-          
-          <!-- Auto Submit -->
-          <div class="mt-4">
-            <label class="form-label mb-1">
-              Auto Post
-            </label>
-            <div class="flex items-center">
-              <input
-                type="checkbox"
-                id="autoSubmitCheckbox"
-                class="form-checkbox h-4 w-4 text-gray-600 checked:bg-gray-600 checked:border-gray-600 accent-gray-600 ring-gray-600 cursor-pointer"
-              />
-              <label for="autoSubmitCheckbox" class="ml-2 text-xs text-gray-600">
-                Automatically post summaries of your last day
-              </label>
-            </div>
-          </div>
-          
           <!-- Workdays Selection -->
           <div class="mt-4">
             <label class="form-label mb-1">
@@ -425,24 +336,6 @@
           </div>
           <!-- End Advanced AI Section -->
 
-          <!-- Build in Public Section -->
-          <div class="mt-4">
-            <label class="form-label mb-1">
-              Build in public
-            </label>
-            <div class="flex items-center">
-              <input
-                type="checkbox"
-                id="publicSummariesCheckbox"
-                class="form-checkbox h-4 w-4 text-gray-600 checked:bg-gray-600 checked:border-gray-600 accent-gray-600 ring-gray-600 cursor-pointer"
-              />
-              <label for="publicSummariesCheckbox" class="ml-2 text-xs text-gray-600">
-                Summaries public on the
-                <a href="https://app.donethat.ai" target="_blank" class="underline">feed</a>
-              </label>
-            </div>
-          </div>
-
           <!-- Subscription Management Section -->
           <div class="mt-4">
             <label class="form-label mb-1">
@@ -467,6 +360,16 @@
                 </svg>
               </button>
             </div>
+          </div>
+
+          <!-- More Settings Section -->
+          <div class="mt-6">
+            <label class="form-label mb-1 font-semibold">
+              More settings
+            </label>
+            <p class="text-xs text-gray-600 mt-1">
+              Go to <a href="https://donethat.ai/settings" target="_blank" class="text-blue-500 underline">app settings</a> for more detailed settings
+            </p>
           </div>
         </div>
         

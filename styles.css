@@ -97,137 +97,44 @@
 }
 
 /* Email tag */
-.email-tag {
-  @apply flex items-center justify-between bg-white border border-gray-300 rounded-lg p-1.5 w-full mb-1;
-}
-
-/* Email text */
-.email-text {
-  @apply mr-2 break-all overflow-hidden text-ellipsis text-xs;
-  color: var(--color-neutral-900);
-}
-
-/* Remove email button */
-.remove-email-btn {
-  @apply shrink-0 focus:outline-none h-4 w-4 rounded-full flex items-center justify-center transition-colors text-xs;
-  color: var(--color-neutral-600);
-  background-color: var(--color-neutral-200);
-}
-.remove-email-btn:hover {
-  background-color: var(--color-neutral-300);
-}
-
-/* Empty state text */
-.empty-state-text {
-  @apply text-gray-500 text-center text-xs;
-}
-
-/* Email tag container */
-.email-tags-container {
-  @apply flex flex-col gap-1 mb-2 border border-gray-300 rounded-lg p-2 max-h-56 overflow-y-auto bg-gray-50 w-full;
-}
-
-/* Modal */
-.modal {
-  @apply fixed inset-0 bg-black/50 flex items-center justify-center z-50;
-}
-
-/* Modal content */ß
-.modal-content {
-  @apply max-w-xs w-full bg-white p-4 border border-black rounded-lg shadow-xl;
-}
-
-/* Summary container */
-.summary-container {
-  @apply h-68 mb-3 border border-gray-200 rounded p-2 overflow-y-auto text-sm;
-}
-
-/* Make borders consistent between inputs and containers */
-.form-input, .email-tags-container, .summary-container {
-  @apply border border-gray-300 rounded-lg;
-}
-
-/* Basic element styles */
-.bullet-item {
-  @apply flex items-start mb-2 w-full;
-}
-
-.bullet-content {
-  @apply flex-1 mx-2;
-}
-
-/* Custom checkbox styles */
-.bullet-checkbox {
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  appearance: none;
-  width: 18px;
-  height: 18px;
-  border: 2px solid #d1d5db; /* Grey border */
-  border-radius: 4px;
-  background-color: white;
-  display: inline-block;
-  position: relative;
-  margin-top: 3px;
-  cursor: pointer;
-  flex-shrink: 0;
-  margin-right: 0.5rem;
-}
-
-.bullet-checkbox:checked {
-  background-color: white; /* Keep white background when checked */
-}
-
-.bullet-checkbox:checked::after {
-  content: "✓";
-  font-size: 14px;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color: var(--color-primary);
-  font-weight: bold;
-}
-
-.bullet-checkbox:focus {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--color-primary-focus);
-}
-
-/* Text styles for bullet points */
-.bullet-text {
-  @apply text-gray-800;
-}
-
-.bullet-text-crossed {
-  @apply text-gray-400 line-through;
-}
-
-/* Comment input field styling */
-.comment-input {
-  @apply w-full border border-gray-300 p-2 rounded-lg text-sm focus:outline-none focus:ring-1 transition duration-200 mt-3;
-  --tw-ring-color: var(--color-primary);
-  min-height: 60px;
-  resize: none;
-}
-
-.comment-input::placeholder {
-  @apply text-gray-400;
-}
-
-/* Email list container - for flat display without background */
-.email-list-container {
-  @apply flex flex-col gap-1 mb-2 w-full max-h-30 overflow-y-auto;
-}
-
-/* Add email button (for email input in settings) */
-.add-email-btn {
-  @apply absolute right-1.5 top-1/2 transform -translate-y-1/2 text-white rounded-full w-4 h-4 flex items-center justify-center transition-colors;
-  background-color: var(--color-primary);
-}
-.add-email-btn:hover {
-  background-color: var(--color-primary-dark);
-}
+-.email-tag {
+-  @apply flex items-center justify-between bg-white border border-gray-300 rounded-lg p-1.5 w-full mb-1;
+-}
+-
+-/* Email text */
+-.email-text {
+-  @apply mr-2 break-all overflow-hidden text-ellipsis text-xs;
+-  color: var(--color-neutral-900);
+-}
+-
+-/* Remove email button */
+-.remove-email-btn {
+-  @apply shrink-0 focus:outline-none h-4 w-4 rounded-full flex items-center justify-center transition-colors text-xs;
+-  color: var(--color-neutral-600);
+-  background-color: var(--color-neutral-200);
+-}
+-.remove-email-btn:hover {
+-  background-color: var(--color-neutral-300);
+-}
+-
+-/* Email tag container */
+-.email-tags-container {
+-  @apply flex flex-col gap-1 mb-2 border border-gray-300 rounded-lg p-2 max-h-56 overflow-y-auto bg-gray-50 w-full;
+-}
+-
+-/* Email list container - for flat display without background */
+-.email-list-container {
+-  @apply flex flex-col gap-1 mb-2 w-full max-h-30 overflow-y-auto;
+-}
+-
+-/* Add email button (for email input in settings) */
+-.add-email-btn {
+-  @apply absolute right-1.5 top-1/2 transform -translate-y-1/2 text-white rounded-full w-4 h-4 flex items-center justify-center transition-colors;
+-  background-color: var(--color-primary);
+-}
+-.add-email-btn:hover {
+-  background-color: var(--color-primary-dark);
+-}
 
 /* Time input container styling */
 .time-input-container {
