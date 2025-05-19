@@ -9,7 +9,6 @@ const { subscriptionInitialize, subscriptionUpdateUI } = require('./subscription
 const { initializeSettings, loadUserSettings } = require('./settings.js');
 const { initializeAuth } = require('./auth.js');
 const { initializeDashboard, resetSummaryState, refreshDashboardNotes } = require('./dashboard.js');
-const { initializeAutoUpdate } = require('./autoupdate.js');
 const { initializePermissions } = require('./permissions.js');
 const { initializeAnalytics, trackPageView } = require('./analytics.js');
 const { 
@@ -49,17 +48,11 @@ const resetView = document.getElementById("resetView");
 const dashboardView = document.getElementById("dashboardView");
 const settingsView = document.getElementById("settingsView");
 const permissionView = document.getElementById("permissionView");
-const updateView = document.getElementById("updateView");
 
 // Update the navigateToView function
 function navigateToView(viewName) {
   const currentView = getCurrentView();
 
-  // If the current view is update, don't let people navigate
-  // View will change on app restart 
-  if(currentView === 'update') {
-    return;
-  }
   
   // Only navigate to a core view if the current view is a core view
   // Eg prevent navigating to settings when signup not complete
@@ -105,9 +98,6 @@ function navigateToView(viewName) {
       break;
     case 'reset':
       viewToShow = resetView;
-      break;
-    case 'update':
-      viewToShow = updateView;
       break;
     default:
       viewToShow = dashboardView;
@@ -182,7 +172,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeDashboard(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   subscriptionInitialize(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   initializeSettings(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
-  initializeAutoUpdate(navigateToView);
   initializePermissions(navigateToView);
   initializeAnalytics();
 });

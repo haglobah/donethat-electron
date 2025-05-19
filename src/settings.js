@@ -5,7 +5,7 @@ const { getFunctions, httpsCallable } = require("firebase/functions");
 const firebaseConfig = require("../firebase-config.js");
 const { logAnalyticsEvent } = require('./analytics.js');
 const { ipcRenderer } = require("electron");
-const { updateLastSummary, updateIsPublic } = require('./app-state.js');
+const { updateIsPublic } = require('./app-state.js');
 const { requestAudioPermission, requestKeystrokesPermission, requestWindowsPermission } = require('./permissions.js');
 const { refreshAuthToken } = require('./auth.js');
 const os = require('os');
@@ -37,6 +37,25 @@ let inputData = {
   audio: false
 };
 
+// Function to check and update app version
+async function checkAndUpdateAppVersion() {
+  const currentVersion = packageInfo.version;
+  const lastVersion = localStorage.getItem('lastAppVersion');
+  
+  if (lastVersion !== currentVersion) {
+    try {
+      await saveUserSettings('app', {
+        version: currentVersion,
+        osPlatform: os.platform(),
+        osRelease: os.release()
+      });
+      localStorage.setItem('lastAppVersion', currentVersion);
+    } catch (error) {
+      console.error('Error updating app version:', error);
+    }
+  }
+}
+
 // Initialize settings management
 function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingSpinner, viewNavigator) {
   loadUserSettingsCallback = onSettingsUpdate;
@@ -49,12 +68,14 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   if (auth.currentUser) {
     const userId = auth.currentUser.uid;
     setupSettingsListener(userId);
+    checkAndUpdateAppVersion();
   } else {
     // Add auth state listener
     auth.onAuthStateChanged((user) => {
       if (user) {
         const userId = user.uid;
         setupSettingsListener(userId);
+        checkAndUpdateAppVersion();
       } else {
         stopSettingsListener();
       }
@@ -312,35 +333,32 @@ async function saveUserSettings(type, value) {
       });
     }
 
-    // Check if we need to include app version and OS info (only when saving other settings, not app)
+    // Check if we need to include OS info (only when saving other settings, not app)
     if (type !== 'app') {
       try {
         // Get the latest settings to have the current stored values
         const result = await getUserSettingsFunction();
         const settings = result.data;
         
-        const localVersion = packageInfo.version;
         const localOSPlatform = os.platform();
         const localOSRelease = os.release();
-        const storedVersion = settings?.app?.version;
         const storedOSPlatform = settings?.app?.osPlatform;
         const storedOSRelease = settings?.app?.osRelease;
         
-        // Check if any values are different
-        if ((localVersion && localVersion !== storedVersion) ||
-            (localOSPlatform && localOSPlatform !== storedOSPlatform) ||
+        // Check if OS values are different
+        if ((localOSPlatform && localOSPlatform !== storedOSPlatform) ||
             (localOSRelease && localOSRelease !== storedOSRelease)) {
           
           // Include app data in this settings update
           settingsData.app = {
-            version: localVersion || storedVersion,
+            version: settings?.app?.version, // Keep existing version
             osPlatform: localOSPlatform || storedOSPlatform,
             osRelease: localOSRelease || storedOSRelease
           };
         }
       } catch (error) {
         // Non-critical error, just log it
-        console.warn('Could not check app/OS info during settings update:', error);
+        console.warn('Could not check OS info during settings update:', error);
       }
     }
 

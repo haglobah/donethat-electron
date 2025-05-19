@@ -153,9 +153,10 @@ function setupAutoUpdater() {
 
     // Send event to renderer to show update view *only* in packaged app
     if (app.isPackaged) {
-      if (mainWindow) {
-        mainWindow.webContents.send('update-downloaded')
-      }
+      // Automatically install update after a short delay
+      setTimeout(() => {
+        autoUpdater.quitAndInstall(true, true)
+      }, 1000) // 1 second delay to allow for cleanup
     } else {
       log.info('Skipping quitAndInstall trigger in development mode.');
     }
