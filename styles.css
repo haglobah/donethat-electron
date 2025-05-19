@@ -96,46 +96,6 @@
   @apply absolute inset-0 bg-white/80 flex items-center justify-center z-10;
 }
 
-/* Email tag */
--.email-tag {
--  @apply flex items-center justify-between bg-white border border-gray-300 rounded-lg p-1.5 w-full mb-1;
--}
--
--/* Email text */
--.email-text {
--  @apply mr-2 break-all overflow-hidden text-ellipsis text-xs;
--  color: var(--color-neutral-900);
--}
--
--/* Remove email button */
--.remove-email-btn {
--  @apply shrink-0 focus:outline-none h-4 w-4 rounded-full flex items-center justify-center transition-colors text-xs;
--  color: var(--color-neutral-600);
--  background-color: var(--color-neutral-200);
--}
--.remove-email-btn:hover {
--  background-color: var(--color-neutral-300);
--}
--
--/* Email tag container */
--.email-tags-container {
--  @apply flex flex-col gap-1 mb-2 border border-gray-300 rounded-lg p-2 max-h-56 overflow-y-auto bg-gray-50 w-full;
--}
--
--/* Email list container - for flat display without background */
--.email-list-container {
--  @apply flex flex-col gap-1 mb-2 w-full max-h-30 overflow-y-auto;
--}
--
--/* Add email button (for email input in settings) */
--.add-email-btn {
--  @apply absolute right-1.5 top-1/2 transform -translate-y-1/2 text-white rounded-full w-4 h-4 flex items-center justify-center transition-colors;
--  background-color: var(--color-primary);
--}
--.add-email-btn:hover {
--  background-color: var(--color-primary-dark);
--}
-
 /* Time input container styling */
 .time-input-container {
   @apply relative w-full;
