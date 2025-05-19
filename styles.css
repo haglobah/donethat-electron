@@ -378,9 +378,93 @@
   color: #9ca3af;
 }
 
-/* Restore spacing for original bullet checkboxes */
+/* Custom checkbox styles */
 .bullet-checkbox {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #d1d5db; /* Grey border */
+  border-radius: 4px;
+  background-color: white;
+  display: inline-block;
+  position: relative;
+  margin-top: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
   margin-right: 0.5rem;
+}
+
+.bullet-checkbox:checked {
+  background-color: white; /* Keep white background when checked */
+}
+
+.bullet-checkbox:checked::after {
+  content: "✓";
+  font-size: 14px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--color-primary);
+  font-weight: bold;
+}
+
+.bullet-checkbox:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-primary-focus);
+}
+
+/* Basic element styles for bullet points */
+.bullet-item {
+  @apply flex items-start mb-2 w-full;
+}
+
+.bullet-content {
+  @apply flex-1 mx-2;
+}
+
+/* Text styles for bullet points */
+.bullet-text {
+  @apply text-gray-800;
+}
+
+.bullet-text-crossed {
+  @apply text-gray-400 line-through;
+}
+
+/* Heart icon styles */
+.heart-icon {
+  @apply ml-auto cursor-pointer transition-colors duration-200 text-base;
+  color: var(--color-neutral-500);
+}
+.heart-icon:hover {
+  color: var(--color-neutral-700);
+}
+
+.heart-icon.active {
+  color: var(--color-primary);
+}
+.heart-icon.active:hover {
+  color: var(--color-primary-dark);
+}
+
+/* Disabled heart icon when item is crossed out */
+.heart-icon.opacity-50.pointer-events-none {
+  @apply cursor-default;
+}
+
+/* Comment input field styling */
+.comment-input {
+  @apply w-full border border-gray-300 p-2 rounded-lg text-sm focus:outline-none focus:ring-1 transition duration-200 mt-3;
+  --tw-ring-color: var(--color-primary);
+  min-height: 60px;
+  resize: none;
+}
+
+.comment-input::placeholder {
+  @apply text-gray-400;
 }
 
 /* Summary container */

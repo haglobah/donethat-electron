@@ -1,8 +1,8 @@
 const { getFunctions, httpsCallable } = require("firebase/functions");
 const { firebaseApp } = require('./firebase.js');
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, shell } = require('electron');
 const { logAnalyticsEvent } = require('./analytics.js');
-const {  getIsPaused, getIsPublic } = require('./app-state.js');
+const { getIsPaused } = require('./app-state.js');
 
 const functions = getFunctions(firebaseApp, "europe-west1");
 
@@ -74,17 +74,18 @@ function showSummaryGeneratedState() {
     // Show visibility note
     const visibilityNoteContainer = document.getElementById('visibilityNoteContainer');
     if (visibilityNoteContainer) {
-      const isPublic = getIsPublic();
-      let visibilityText = isPublic ? 'Posting to your public feed' : 'Posting to your feed';
-      visibilityText += `. <a href="#" class="settings-link">Change here</a>.`;
+      let visibilityText = 'Posting to your feed. You can always edit later in your ';
+      visibilityText += `<a href="#" class="settings-link">browser</a>.`;
+
 
       visibilityNoteContainer.innerHTML = `<p class="text-xs text-gray-500 text-center">${visibilityText}</p>`;
       visibilityNoteContainer.classList.remove('hidden');
 
+
       // Re-add event listener for the link
       visibilityNoteContainer.querySelector('.settings-link')?.addEventListener('click', (e) => {
         e.preventDefault();
-        navigateToView('settings');
+        shell.openExternal('https://app.donethat.ai/feed');
       });
     }
   }
@@ -138,7 +139,7 @@ function showSummaryGeneratedState() {
       document.querySelectorAll('.settings-link').forEach(link => {
         link.addEventListener('click', (e) => {
           e.preventDefault();
-          navigateToView('settings');
+          shell.openExternal('https://app.donethat.ai/feed');
         });
       });
     }
