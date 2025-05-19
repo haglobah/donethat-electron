@@ -382,3 +382,13 @@
 .bullet-checkbox {
   margin-right: 0.5rem;
 }
+
+/* Summary container */
+.summary-container {
+  @apply h-68 mb-3 border border-gray-200 rounded p-2 overflow-y-auto text-sm;
+}
+
+/* Make borders consistent between inputs and containers */
+.form-input, .summary-container {
+  @apply border border-gray-300 rounded-lg;
+}
