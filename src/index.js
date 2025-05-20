@@ -3,6 +3,7 @@ const {
   setPersistence,
 } = require("firebase/auth");
 const { ipcRenderer } = require('electron');
+const { shell } = require('electron');
 
 const { auth } = require('./firebase.js');
 const { subscriptionInitialize, subscriptionUpdateUI } = require('./subscription.js');
@@ -174,6 +175,15 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeSettings(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   initializePermissions(navigateToView);
   initializeAnalytics();
+
+  // Add event listener for app settings link
+  const appSettingsLink = document.querySelector('.app-settings-link');
+  if (appSettingsLink) {
+    appSettingsLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      shell.openExternal('https://app.donethat.ai/settings');
+    });
+  }
 });
 
 // Function to create an overlay that blocks interactions

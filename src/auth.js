@@ -84,7 +84,7 @@ function showAuthErrorNotification(message) {
   
   if (authErrorNotification && authErrorMessage) {
     // Use a simplified message instead of the detailed one
-    const displayMessage = message || 'Connection issue. This will disappear once resolved.';
+    const displayMessage = message || 'Connection issue. Try logging in again.';
     authErrorMessage.textContent = displayMessage;
     authErrorNotification.classList.remove('hidden');
   }

@@ -562,8 +562,8 @@ function createWindow() {
       mainWindow.webContents.openDevTools();
     }
     // Log any webContents errors
-    mainWindow.webContents.on('console-message', (event, level, message) => {
-      console.log('Renderer Console:', message);
+    mainWindow.webContents.on('console-message', (event) => {
+      console.log('Renderer Console:', event.message);
     });
 
     // Position the window once it's ready.

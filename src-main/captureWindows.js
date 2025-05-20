@@ -10,6 +10,8 @@ let currentTrackingIntervalMs = INITIAL_TRACKING_INTERVAL_MS // Current interval
 const MAX_BACKOFF_MS = 60000 // Maximum backoff (1 minute)
 const BACKOFF_MULTIPLIER = 2 // Exponential backoff multiplier
 let consecutiveFailures = 0 // Track consecutive failures for backoff
+let lastBackoffTime = 0 // Track when we last applied backoff
+let processingRecordWindow = false // Flag to prevent overlapping calls
 
 /**
  * Checks if the application has permission to access window information
@@ -39,7 +41,11 @@ function applyBackoff() {
     MAX_BACKOFF_MS
   )
   
-  log.warn(`Window tracking failed ${consecutiveFailures} times. Backing off to ${currentTrackingIntervalMs}ms interval.`)
+  // Log more detailed information about backoff
+  const now = Date.now()
+  const timeSinceLastBackoff = now - lastBackoffTime
+  log.warn(`Window tracking failed ${consecutiveFailures} times. Backing off to ${currentTrackingIntervalMs}ms interval. Time since last backoff: ${timeSinceLastBackoff}ms`)
+  lastBackoffTime = now
   
   // Restart tracking with new interval if we're still tracking
   if (isTracking && trackingInterval) {
@@ -117,6 +123,14 @@ async function startTracking() {
  * @private
  */
 async function recordCurrentWindow() {
+  // Prevent overlapping calls - if a previous call is still processing, skip this one
+  if (processingRecordWindow) {
+    log.debug('Skipping overlapping window tracking call')
+    return
+  }
+  
+  processingRecordWindow = true
+  
   try {
     const activeWindowInfo = await activeWindow()
     
@@ -131,6 +145,7 @@ async function recordCurrentWindow() {
       
       // Consider this a success for backoff purposes (not an error)
       resetBackoff()
+      processingRecordWindow = false
       return
     }
     
@@ -164,6 +179,9 @@ async function recordCurrentWindow() {
     
     // Apply exponential backoff
     applyBackoff()
+  } finally {
+    // Always reset the processing flag
+    processingRecordWindow = false
   }
 }
 
