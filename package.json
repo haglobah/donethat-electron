@@ -10,13 +10,13 @@
     "dev": "npm run build:prepare && electron .",
     "build": "npm run build:prepare && electron-builder",
     "build:mac:x64": "npm run build:prepare && electron-builder --mac --x64",
-    "build:mac:arm64": "npm run build:prepare && electron-builder --mac --arm64",
+    "build:mac:arm64": "npm run build:prepare && export CSC_NAME=\"E7BBD70343363E35C5FA53151072F99272B93EAD\" && export SC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --mac --arm64",
     "build:win:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --x64",
     "build:win:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --arm64",
     "build:linux:x64": "npm run build:prepare && electron-builder --linux --x64",
     "build:linux:arm64": "npm run build:prepare && electron-builder --linux --arm64",
     "upload:mac:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --x64 --publish always --config.extraMetadata.main=main.js --config.publish.channel=x64",
-    "upload:mac:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --arm64 --publish always --config.extraMetadata.main=main.js --config.publish.channel=arm64",
+    "upload:mac:arm64": "dotenv -- npm run build:prepare && export CSC_NAME=\"E7BBD70343363E35C5FA53151072F99272B93EAD\" && export SC_IDENTITY_AUTO_DISCOVERY=false && dotenv --cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --arm64 --publish always --config.extraMetadata.main=main.js --config.publish.channel=arm64",
     "upload:win:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --x64 --publish always --config.extraMetadata.main=main.js --config.publish.channel=x64",
     "upload:win:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --win --arm64 --publish always --config.extraMetadata.main=main.js --config.publish.channel=arm64",
     "upload:linux:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --linux --x64 --publish always --config.extraMetadata.main=main.js --config.publish.channel=x64",
@@ -122,7 +122,9 @@
         }
       ],
       "artifactName": "${productName}-${arch}.${ext}",
-      "sign": "./scripts/digicert-sign-windows.js"
+      "signtoolOptions": {
+        "sign": "./scripts/digicert-sign-windows.js"
+      }
     },
     "nsis": {
       "runAfterFinish": true,
@@ -135,9 +137,11 @@
       "target": "AppImage",
       "category": "Utility",
       "desktop": {
-        "StartupWMClass": "donethat",
-        "NoDisplay": true,
-        "Type": "Application"
+        "entry": {
+          "StartupWMClass": "donethat",
+          "NoDisplay": true,
+          "Type": "Application"
+        }
       },
       "artifactName": "${productName}-${arch}.${ext}"
     },
