@@ -83,6 +83,7 @@ async function handleAuthError(error) {
         error_code: error.code,
         error_message: error.message
       });
+      hideSpinner();
       await performFullLogout();
     }
   } else {
@@ -111,6 +112,7 @@ async function handleAuthError(error) {
         error_code: error.code,
         error_message: error.message
       });
+      hideSpinner();
     }
   }
 }
@@ -174,69 +176,82 @@ async function refreshAuthToken() {
 
 // Update the auth state listener
 onAuthStateChanged(auth, async (user) => {
-  if (user) {
-    // Reset retry count on successful auth
-    retryCount = 0;
-    
-    // Check if email is verified
-    if (!user.emailVerified) {
-      try {
-        await sendEmailVerification(user);
-        logAnalyticsEvent('verification_email_sent');
-        alert("Verification email sent. Please check your inbox.");
-      } catch (error) {
-        alert("Error sending verification email: " + error.message);
+  try {
+    if (user) {
+      // Reset retry count on successful auth
+      retryCount = 0;
+      
+      // Check if email is verified
+      if (!user.emailVerified) {
+        try {
+          await sendEmailVerification(user);
+          logAnalyticsEvent('verification_email_sent');
+          alert("Verification email sent. Please check your inbox.");
+        } catch (error) {
+          alert("Error sending verification email: " + error.message);
+        }
+        await signOut(auth);
+        hideSpinner();
+        navigateToView('signin');
+        return;
       }
-      await signOut(auth);
+      
+      // User is signed in
+      const token = await user.getIdToken();
+      updateAuthState(true, token);
+      ipcRenderer.send("login", token);
+
+      // Set user properties for analytics
+      setAnalyticsUserProperties({
+        user_id: user.uid,
+        email_verified: user.emailVerified
+      });
+
+      // Log sign in event
+      logAnalyticsEvent('user_signed_in', {
+        method: user.providerData[0]?.providerId || 'email',
+        email_verified: user.emailVerified
+      });
+
+      // Set up a token refresh interval
+      const refreshInterval = setInterval(async () => {
+        if (auth.currentUser) {
+          await refreshAuthToken();
+        } else {
+          clearInterval(refreshInterval);
+        }
+      }, 45 * 60 * 1000); // Refresh every 45 minutes
+
+      if (loadUserSettingsCallback) {
+        loadUserSettingsCallback();
+      }
+    } else {
+      // User is signed out
+      updateAuthState(false, null);
+      
+      // Reset retry state
+      retryCount = 0;
+      
+      hideSpinner();
       navigateToView('signin');
-      return;
+      
+      // Log sign out event
+      logAnalyticsEvent('user_signed_out');
     }
-    
-    // User is signed in
-    const token = await user.getIdToken();
-    updateAuthState(true, token);
-    ipcRenderer.send("login", token);
-
-    // Set user properties for analytics
-    setAnalyticsUserProperties({
-      user_id: user.uid,
-      email_verified: user.emailVerified
-    });
-
-    // Log sign in event
-    logAnalyticsEvent('user_signed_in', {
-      method: user.providerData[0]?.providerId || 'email',
-      email_verified: user.emailVerified
-    });
-
-    // Set up a token refresh interval
-    const refreshInterval = setInterval(async () => {
-      if (auth.currentUser) {
-        await refreshAuthToken();
-      } else {
-        clearInterval(refreshInterval);
-      }
-    }, 45 * 60 * 1000); // Refresh every 45 minutes
-
-    if (loadUserSettingsCallback) {
-      loadUserSettingsCallback();
-    }
-  } else {
-    // User is signed out
-    updateAuthState(false, null);
-    
-    // Reset retry state
-    retryCount = 0;
-    
+  } catch (error) {
+    console.error("Auth state change error:", error);
+    hideSpinner();
     navigateToView('signin');
-    
-    // Log sign out event
-    logAnalyticsEvent('user_signed_out');
   }
 });
 
 // Helper function to get user-friendly error messages
 function getErrorMessage(error) {
+  // Check for network-related errors first
+  if (error.code?.includes('network') || error.message?.includes('network')) {
+    return 'Network error. Please check your internet connection and try again.';
+  }
+
   switch (error.code) {
     case 'auth/invalid-email':
       return 'Please enter a valid email address';
@@ -254,6 +269,35 @@ function getErrorMessage(error) {
       return 'Too many attempts. Please try again later';
     case 'auth/network-request-failed':
       return 'Network error. Please check your connection';
+    // Add additional error cases
+    case 'auth/missing-email':
+      return 'Please enter an email address';
+    case 'auth/invalid-credential':
+      return 'Invalid login credentials';
+    case 'auth/account-exists-with-different-credential':
+      return 'An account already exists with the same email but different sign-in credentials';
+    case 'auth/operation-not-allowed':
+      return 'This operation is not allowed';
+    case 'auth/requires-recent-login':
+      return 'Please sign in again before retrying this request';
+    case 'auth/user-token-expired':
+      return 'Your session has expired. Please sign in again';
+    case 'auth/expired-action-code':
+      return 'This link has expired. Please request a new one';
+    case 'auth/invalid-action-code':
+      return 'The link you used is invalid or has already been used';
+    case 'auth/popup-blocked':
+      return 'Sign-in popup was blocked by your browser';
+    case 'auth/popup-closed-by-user':
+      return 'Sign-in window was closed before completing the process';
+    case 'auth/unauthorized-domain':
+      return 'This domain is not authorized for this operation';
+    case 'auth/quota-exceeded':
+      return 'Service quota exceeded. Please try again later';
+    case 'auth/timeout':
+      return 'The operation has timed out. Please try again';
+    case 'auth/web-storage-unsupported':
+      return 'Local web storage is required but not supported by your browser';
     default:
       return `An error occurred: ${error.message}`;
   }
@@ -264,7 +308,8 @@ signInForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const email = document.getElementById("signInEmail").value;
     const password = document.getElementById("signInPassword").value;
-  
+    
+    showSpinner();
     signInWithEmailAndPassword(auth, email, password)
       .then((userCredential) => {
         // Clear input fields
@@ -272,6 +317,7 @@ signInForm.addEventListener("submit", (e) => {
         document.getElementById("signInPassword").value = "";
       })
       .catch((error) => {
+        hideSpinner();
         logAnalyticsEvent('sign_in_error', {
           error_code: error.code,
           error_message: error.message
@@ -286,7 +332,8 @@ signInForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const email = document.getElementById("signUpEmail").value;
     const password = document.getElementById("signUpPassword").value;
-  
+    
+    showSpinner();
     createUserWithEmailAndPassword(auth, email, password)
       .then((userCredential) => {
         // Clear input fields
@@ -294,6 +341,7 @@ signInForm.addEventListener("submit", (e) => {
         document.getElementById("signUpPassword").value = "";
       })
       .catch((error) => {
+        hideSpinner();
         logAnalyticsEvent('sign_up_error', {
           error_code: error.code,
           error_message: error.message
@@ -307,17 +355,20 @@ signInForm.addEventListener("submit", (e) => {
   resetForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const email = document.getElementById("resetEmail").value;
-  
+    
+    showSpinner();
     sendPasswordResetEmail(auth, email)
       .then(() => {
         // Clear input field
         document.getElementById("resetEmail").value = "";
+        hideSpinner();
         logAnalyticsEvent('password_reset_email_sent');
         alert("Password reset email sent. Check your inbox.");
         resetView.classList.add("hidden");
         signInView.classList.remove("hidden");
       })
       .catch((error) => {
+        hideSpinner();
         logAnalyticsEvent('password_reset_error', {
           error_code: error.code,
           error_message: error.message
@@ -382,10 +433,12 @@ signInForm.addEventListener("submit", (e) => {
       // Notify main process
       ipcRenderer.send('logout');
 
+      hideSpinner();
       navigateToView('signin');
   
     } catch (error) {
       console.error('Error during logout:', error);
+      hideSpinner();
       alert(`Error signing out: ${error.message}`);
     }
   }
