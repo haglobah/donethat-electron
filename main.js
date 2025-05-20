@@ -527,16 +527,21 @@ ipcMain.on('resumeRecording', (event) => {
 // Separate window creation from showing
 function createWindow() {
   if (!mainWindow) {
+    // Platform-specific window configurations
+    const isPlatformMac = process.platform === 'darwin';
+    const windowWidth = DEBUG ? 600 : (isPlatformMac ? 250 : 300); // Wider for Win/Linux
+    const windowHeight = DEBUG ? 600 : (isPlatformMac ? 450 : 480); // Slightly taller for Win/Linux
+    
     mainWindow = new BrowserWindow({
-      width: DEBUG ? 600 : 250,
-      height: DEBUG ? 600 : 450,
-      // Add frame on Linux, keep frameless on other platforms
-      frame: false,
-      resizable: false,
-      // Make window movable on Linux but keep it fixed on other platforms
-      movable: !(process.platform === 'darwin'),
+      width: windowWidth,
+      height: windowHeight,
+      // Add frame on Linux/Windows, keep frameless on macOS
+      frame: !isPlatformMac,
+      resizable: false, // No resizing on any platform
+      // Make window movable on Linux/Windows, keep it fixed on macOS
+      movable: !isPlatformMac,
       show: false,
-      skipTaskbar: true, // Hide from taskbar on Windows/Linux
+      skipTaskbar: true, // Hide from taskbar on all platforms
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,
@@ -572,17 +577,54 @@ function createWindow() {
       initCapture(mainWindow, handleCaptureAuthErrors, stateManager.getIdToken);
     })
 
+    // Only auto-hide on blur for macOS (popup style)
     mainWindow.on('blur', () => {
-      if (mainWindow && mainWindow.isVisible()) {
+      if (process.platform === 'darwin' && mainWindow && mainWindow.isVisible()) {
         mainWindow.hide()
       }
     })
+    
+    // Handle close event for Windows/Linux - don't quit the app, just hide the window
+    mainWindow.on('close', (event) => {
+      // Prevent window from being closed completely if not quitting the app
+      if (!app.isQuitting) {
+        event.preventDefault();
+        mainWindow.hide();
+        return false;
+      }
+      return true;
+    });
   }
 }
 
 // Intelligently positions the window relative to the tray icon
 // with support for multiple displays
 function showWindowBelowTray() {
+  const isPlatformMac = process.platform === 'darwin';
+  
+  // For Windows and Linux, just show the window in its current position or center it if first time
+  if (!isPlatformMac) {
+    if (!mainWindow.isVisible()) {
+      // Get primary display
+      const display = screen.getPrimaryDisplay();
+      const { workArea } = display;
+      const windowBounds = mainWindow.getBounds();
+      
+      // Center window on first show
+      if (!mainWindow._hasBeenShown) {
+        const x = Math.round(workArea.x + (workArea.width / 2) - (windowBounds.width / 2));
+        const y = Math.round(workArea.y + (workArea.height / 2) - (windowBounds.height / 2));
+        mainWindow.setPosition(x, y, false);
+        mainWindow._hasBeenShown = true;
+      }
+    }
+    
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  
+  // macOS specific positioning below - original code for positioning below tray
   // Get tray icon bounds
   const trayBounds = tray.getBounds()
 
@@ -652,6 +694,7 @@ function showWindowBelowTray() {
   mainWindow.show()
   mainWindow.focus() // Ensure window gets focus
 }
+
 // Modify the window-all-closed handler to respect system quit
 app.on('window-all-closed', (event) => {
   // Only prevent default if we're not in the quit process
