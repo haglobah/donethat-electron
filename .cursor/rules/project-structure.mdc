@@ -21,7 +21,6 @@ alwaysApply: true
 - Package configuration: [package.json](mdc:package.json)
 - Webpack config: [webpack.config.js](mdc:webpack.config.js)
 - Firebase config: [firebase-config.js](mdc:firebase-config.js)
-- Slack config: [slack-config.js](mdc:slack-config.js)
 
 ## Build Process
 1. CSS is built using PostCSS: `npm run build:css`
