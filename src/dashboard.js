@@ -27,7 +27,7 @@ let customBullets = [];
 
 // Helper function to format date for headline
 function formatHeadlineDate(timestamp) {
-  if (!timestamp) return "DoneThat";
+  if (!timestamp) return "Today";
 
   const date = new Date(timestamp);
   const today = new Date();

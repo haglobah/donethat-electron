@@ -428,7 +428,10 @@ function updateTrayIcon(isActuallyRecording) {
 
 // Function to navigate to a specific view
 function navigateToView(viewName) {
-  showWindowBelowTray();
+  // Only show/position window if it's not already visible
+  if (!mainWindow.isVisible()) {
+    showWindowBelowTray();
+  }
   mainWindow.webContents.send('navigate', viewName);
 }
 
@@ -781,25 +784,25 @@ function showWindowBelowTray() {
   
   // Linux and Windows positioning logic - center by default with intelligent positioning
   if (process.platform === 'linux' || process.platform === 'win32') {
-    // Center in the display as a fallback
-    x = Math.round(workArea.x + (workArea.width / 2) - (windowBounds.width / 2));
-    y = Math.round(workArea.y + (workArea.height / 2) - (windowBounds.height / 2));
+    // Center in the display - calculate with integer positions
+    x = Math.floor(workArea.x + (workArea.width / 2) - (windowBounds.width / 2));
+    y = Math.floor(workArea.y + (workArea.height / 2) - (windowBounds.height / 2));
     
     // If we have valid tray bounds, try to position near it
     if (trayBounds.width > 0 && trayBounds.height > 0) {
       // Position at the bottom of the screen if the tray appears to be at the bottom
       // Common for panels at bottom of screen
       if (trayBounds.y > workArea.y + (workArea.height / 2)) {
-        y = workArea.y + workArea.height - windowBounds.height - 50; // 50px buffer
+        y = Math.floor(workArea.y + workArea.height - windowBounds.height - 50); // 50px buffer
       } else {
         // Otherwise position at top with offset
-        y = workArea.y + 50;
+        y = Math.floor(workArea.y + 50);
       }
     }
   } else {
     // Position relative to tray for macOS
     // Calculate x position: center window horizontally relative to the tray icon
-    x = Math.round(trayBounds.x + (trayBounds.width / 2) - (windowBounds.width / 2));
+    x = Math.floor(trayBounds.x + (trayBounds.width / 2) - (windowBounds.width / 2));
     
     // For macOS, determine if tray is closer to top or bottom of display
     const distanceToTop = trayBounds.y - workArea.y;
@@ -807,18 +810,18 @@ function showWindowBelowTray() {
     
     if (distanceToTop < distanceToBottom) {
       // Tray is closer to top - position window below tray
-      y = trayBounds.y + trayBounds.height;
+      y = Math.floor(trayBounds.y + trayBounds.height);
     } else {
       // Tray is closer to bottom - position window above tray
-      y = trayBounds.y - windowBounds.height;
+      y = Math.floor(trayBounds.y - windowBounds.height);
     }
   }
   
   // Ensure window doesn't go off-screen horizontally
-  x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - windowBounds.width));
+  x = Math.floor(Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - windowBounds.width)));
   
   // Ensure window doesn't go off-screen vertically
-  y = Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - windowBounds.height));
+  y = Math.floor(Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - windowBounds.height)));
   
   mainWindow.setPosition(x, y, false);
   mainWindow.show();
