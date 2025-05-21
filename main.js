@@ -151,14 +151,44 @@ function setupAutoUpdater() {
   autoUpdater.on('update-downloaded', (info) => {
     log.info('Update downloaded:', info.version)
 
-    // Send event to renderer to show update view *only* in packaged app
     if (app.isPackaged) {
-      // Automatically install update after a short delay
-      setTimeout(() => {
-        autoUpdater.quitAndInstall(true, true)
-      }, 1000) // 1 second delay to allow for cleanup
+      // Different update strategies per platform
+      if (process.platform === 'win32') {
+        // Windows - only use notifications, NEVER silent install
+        log.info('Windows platform: using notification-based update');
+        
+        // Show notification for user to manually install
+        const notification = new Notification({
+          title: 'DoneThat Update',
+          body: 'An update is ready. Click to install now. You may see a windows prompt to confirm.',
+          silent: false
+        });
+        
+        notification.on('click', () => {
+          log.info('Update notification clicked, installing update');
+          autoUpdater.quitAndInstall(true, true);
+        });
+        
+        notification.show();
+        
+        // Force update after 30 minutes if notification was missed/disabled
+        const currentVersion = app.getVersion();
+        setTimeout(() => {
+          // Check if we're still running the old version
+          if (app.getVersion() === currentVersion) {
+            log.info('Update not installed after 30 minutes, forcing silent update');
+            autoUpdater.quitAndInstall(true, true);
+          }
+        }, 30 * 60 * 1000); // 30 minutes
+      } else {
+        // macOS and Linux - use the original silent install approach
+        log.info('Non-Windows platform: using silent update');
+        setTimeout(() => {
+          autoUpdater.quitAndInstall(true, true);
+        }, 1000); // 1 second delay
+      }
     } else {
-      log.info('Skipping quitAndInstall trigger in development mode.');
+      log.info('Development mode: skipping update installation');
     }
   })
 
@@ -174,11 +204,6 @@ function setupAutoUpdater() {
     }
   })
 }
-
-// Add IPC handler to install update and restart
-ipcMain.on('install-update', () => {
-  autoUpdater.quitAndInstall(true, true)
-})
 
 // Function to handle scheduled update checks
 function scheduleUpdateChecks() {
