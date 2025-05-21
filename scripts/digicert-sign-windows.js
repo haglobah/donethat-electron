@@ -94,7 +94,7 @@ exports.default = async function(configuration) {
     console.log("Healtheck");
 
     try {
-      const cmdHealth = `smctl healthceck`
+      const cmdHealth = `smctl healthcheck`
       const outputHealth = execSync(cmdHealth, { encoding: 'utf8' });
       console.log(outputHealth);
     } catch (healthError) {
