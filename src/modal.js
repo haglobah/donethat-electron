@@ -28,9 +28,10 @@ function showModal(message, options = {}) {
     modalElement.style.padding = '10px 15px';
     modalElement.style.zIndex = '9999';
     modalElement.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
-    modalElement.style.fontSize = '14px';
+    modalElement.style.fontSize = '12px';
     modalElement.style.textAlign = 'center';
     modalElement.style.width = '100%';
+    modalElement.style.paddingRight = '40px';
     
     document.body.appendChild(modalElement);
   }
