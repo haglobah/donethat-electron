@@ -84,7 +84,7 @@
 
 /* Common view container */
 .view-container {
-  @apply h-full w-full items-start justify-center pt-4;
+  @apply h-full w-full items-start justify-center pt-0;
 }
 
 /* Form container */

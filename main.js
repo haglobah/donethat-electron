@@ -683,7 +683,7 @@ function createWindow() {
     // Platform-specific window configurations
     const isPlatformMac = process.platform === 'darwin';
     const windowWidth = DEBUG ? 600 : (isPlatformMac ? 250 : 300); // Wider for Win/Linux
-    const windowHeight = DEBUG ? 600 : (isPlatformMac ? 450 : 480); // Slightly taller for Win/Linux
+    const windowHeight = DEBUG ? 600 : (isPlatformMac ? 400 : 450); // Slightly taller for Win/Linux
     
     mainWindow = new BrowserWindow({
       width: windowWidth,
@@ -779,10 +779,9 @@ function showWindowBelowTray() {
   
   let x, y;
   
-  // Linux-specific positioning logic
-  if (process.platform === 'linux') {
-    // On Linux, center in the primary display as a fallback
-    // since tray positioning can be unreliable
+  // Linux and Windows positioning logic - center by default with intelligent positioning
+  if (process.platform === 'linux' || process.platform === 'win32') {
+    // Center in the display as a fallback
     x = Math.round(workArea.x + (workArea.width / 2) - (windowBounds.width / 2));
     y = Math.round(workArea.y + (workArea.height / 2) - (windowBounds.height / 2));
     
@@ -798,26 +797,20 @@ function showWindowBelowTray() {
       }
     }
   } else {
-    // Position relative to tray for both macOS and Windows
+    // Position relative to tray for macOS
     // Calculate x position: center window horizontally relative to the tray icon
     x = Math.round(trayBounds.x + (trayBounds.width / 2) - (windowBounds.width / 2));
     
-    // For Windows, the tray is usually at the bottom
-    if (process.platform === 'win32') {
-      // Position above the taskbar/tray
-      y = trayBounds.y - windowBounds.height - 10; // 10px buffer
+    // For macOS, determine if tray is closer to top or bottom of display
+    const distanceToTop = trayBounds.y - workArea.y;
+    const distanceToBottom = (workArea.y + workArea.height) - (trayBounds.y + trayBounds.height);
+    
+    if (distanceToTop < distanceToBottom) {
+      // Tray is closer to top - position window below tray
+      y = trayBounds.y + trayBounds.height;
     } else {
-      // For macOS, determine if tray is closer to top or bottom of display
-      const distanceToTop = trayBounds.y - workArea.y;
-      const distanceToBottom = (workArea.y + workArea.height) - (trayBounds.y + trayBounds.height);
-      
-      if (distanceToTop < distanceToBottom) {
-        // Tray is closer to top - position window below tray
-        y = trayBounds.y + trayBounds.height;
-      } else {
-        // Tray is closer to bottom - position window above tray
-        y = trayBounds.y - windowBounds.height;
-      }
+      // Tray is closer to bottom - position window above tray
+      y = trayBounds.y - windowBounds.height;
     }
   }
   
