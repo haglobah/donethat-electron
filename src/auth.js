@@ -240,10 +240,13 @@ onAuthStateChanged(auth, async (user) => {
       }, 45 * 60 * 1000); // Refresh every 45 minutes
 
       if (loadUserSettingsCallback) {
+        // Keep spinner visible - loadUserSettingsCallback will hide it when done
         loadUserSettingsCallback();
+        // Do not hide spinner here, let loadUserSettingsCallback handle it
+        return;
       }
       
-      // Hide spinner after successful login
+      // Only hide spinner if loadUserSettingsCallback is not called
       hideSpinner();
     } else {
       // User is signed out

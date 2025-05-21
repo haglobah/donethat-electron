@@ -122,47 +122,60 @@ function navigateToView(viewName) {
 }
 
 async function loadUserSettingsCallback() {
-  const result = await loadUserSettings();
-  if (!result) return; // Exit if no result (user not logged in)
-  
-  // Check if user has any active teams
-  const teams = result.data?.teams || {};
-  
-  // Use lowercase team status
-  const hasActiveTeam = Object.values(teams).some(team => 
-    team.status === 'active');
-  
-  const hasActiveSubscription = result.data?.subscription?.status === 'trialing' || result.data?.subscription?.status === 'active';
+  // Keep spinner visible during the entire process - no need to call showBlockingSpinner() again
+  try {
+    const result = await loadUserSettings();
+    if (!result) {
+      hideBlockingSpinner();
+      return; // Exit if no result (user not logged in)
+    }
+    
+    // Check if user has any active teams
+    const teams = result.data?.teams || {};
+    
+    // Use lowercase team status
+    const hasActiveTeam = Object.values(teams).some(team => 
+      team.status === 'active');
+    
+    const hasActiveSubscription = result.data?.subscription?.status === 'trialing' || result.data?.subscription?.status === 'active';
 
-  // Update all relevant state
-  updateSubscriptionState(result.data?.subscription?.status, hasActiveTeam);
-  updateStoreScreenshots(result.data?.storeScreenshots || false);
-  updateDateCreated(result.data?.analytics?.createdAt);
+    // Update all relevant state
+    updateSubscriptionState(result.data?.subscription?.status, hasActiveTeam);
+    updateStoreScreenshots(result.data?.storeScreenshots || false);
+    updateDateCreated(result.data?.analytics?.createdAt);
 
-  // Update subscription UI with current data and wait for it to complete
-  await subscriptionUpdateUI({
-    active: hasActiveSubscription || hasActiveTeam,
-    source: hasActiveTeam ? 'team' : 'individual',
-    status: hasActiveTeam ? 'active' : result.data?.subscription?.status || null,
-    trialActive: result.data?.subscription?.status === 'trialing',
-    trialDaysRemaining: result.data?.subscription?.trialDaysRemaining,
-    trialEndsAt: result.data?.subscription?.trialEndsAt,
-    paidActive: result.data?.subscription?.status === 'active',
-    currentPeriodEnd: result.data?.subscription?.currentPeriodEnd
-  });
+    // Update subscription UI with current data and wait for it to complete
+    await subscriptionUpdateUI({
+      active: hasActiveSubscription || hasActiveTeam,
+      source: hasActiveTeam ? 'team' : 'individual',
+      status: hasActiveTeam ? 'active' : result.data?.subscription?.status || null,
+      trialActive: result.data?.subscription?.status === 'trialing',
+      trialDaysRemaining: result.data?.subscription?.trialDaysRemaining,
+      trialEndsAt: result.data?.subscription?.trialEndsAt,
+      paidActive: result.data?.subscription?.status === 'active',
+      currentPeriodEnd: result.data?.subscription?.currentPeriodEnd
+    });
 
-  // Fetch initial pause state from main process
-  const initialIsPaused = await ipcRenderer.invoke('getInitialPauseState');
-  
-  // Update app-state with the initial value
-  updatePauseState(initialIsPaused);
+    // Fetch initial pause state from main process
+    const initialIsPaused = await ipcRenderer.invoke('getInitialPauseState');
+    
+    // Update app-state with the initial value
+    updatePauseState(initialIsPaused);
 
-  // Refresh dashboard notes now that state is loaded
-  refreshDashboardNotes();
+    // Refresh dashboard notes now that state is loaded
+    refreshDashboardNotes();
 
-  // Only navigate if we're not already in the settings view
-  if (getCurrentView() !== 'settings') {
-    navigateToView('signup-next');
+    // Only navigate if we're not already in the settings view
+    if (getCurrentView() !== 'settings') {
+      // Now hide spinner only after we've prepared everything for navigation
+      navigateToView('signup-next');
+    }
+    
+    // Hide spinner after everything is complete, including view transition
+    hideBlockingSpinner();
+  } catch (error) {
+    console.error("Error loading user settings:", error);
+    hideBlockingSpinner();
   }
 }
 
