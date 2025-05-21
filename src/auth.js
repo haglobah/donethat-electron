@@ -87,6 +87,17 @@ function showAuthErrorNotification(message) {
     const displayMessage = message || 'Connection issue. Try logging in again.';
     authErrorMessage.textContent = displayMessage;
     authErrorNotification.classList.remove('hidden');
+    
+    // Store the active element before showing notification
+    const activeElement = document.activeElement;
+    
+    // Return focus to the previously active element after a short delay
+    // This helps prevent Windows from losing input focus
+    setTimeout(() => {
+      if (activeElement && typeof activeElement.focus === 'function') {
+        activeElement.focus();
+      }
+    }, 100);
   }
 }
 
@@ -287,6 +298,9 @@ onAuthStateChanged(auth, async (user) => {
       if (loadUserSettingsCallback) {
         loadUserSettingsCallback();
       }
+      
+      // Hide spinner after successful login
+      hideSpinner();
     } else {
       // User is signed out
       updateAuthState(false, null);
@@ -388,6 +402,12 @@ signInForm.addEventListener("submit", (e) => {
         });
         alert(getErrorMessage(error));
         console.error("Sign in error:", error);
+        
+        // Reset form fields and focus to ensure they're usable after error
+        const emailField = document.getElementById("signInEmail");
+        const passwordField = document.getElementById("signInPassword");
+        passwordField.value = "";  // Clear password on error
+        emailField.focus();  // Return focus to the email field
       });
   });
   
@@ -414,6 +434,12 @@ signInForm.addEventListener("submit", (e) => {
         });
         alert(getErrorMessage(error));
         console.error("Sign up error:", error);
+        
+        // Reset form fields and focus to ensure they're usable after error
+        const emailField = document.getElementById("signUpEmail");
+        const passwordField = document.getElementById("signUpPassword");
+        passwordField.value = "";  // Clear password on error
+        emailField.focus();  // Return focus to the email field
       });
   });
   
@@ -441,6 +467,10 @@ signInForm.addEventListener("submit", (e) => {
         });
         alert(getErrorMessage(error));
         console.error("Password reset error:", error);
+        
+        // Reset form field and focus to ensure it's usable after error
+        const emailField = document.getElementById("resetEmail");
+        emailField.focus();  // Return focus to the email field
       });
   });
   

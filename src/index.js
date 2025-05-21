@@ -184,6 +184,15 @@ document.addEventListener('DOMContentLoaded', () => {
       shell.openExternal('https://app.donethat.ai/settings');
     });
   }
+
+  // Add event listener for support link
+  const supportLink = document.querySelector('.support-link');
+  if (supportLink) {
+    supportLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      shell.openExternal('https://donethat.ai/support');
+    });
+  }
 });
 
 // Function to create an overlay that blocks interactions

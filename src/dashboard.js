@@ -165,7 +165,7 @@ function showSummaryGeneratedState() {
     // Reset headline
     const headlineElement = document.getElementById('dashboardHeadline');
     if (headlineElement) {
-      headlineElement.textContent = "DoneThat";
+      headlineElement.textContent = "Today";
     }
     
     dashboardNote();

@@ -368,6 +368,24 @@
   text-decoration: underline;
 }
 
+/* Neutral gray link styling */
+.app-settings-link, .support-link {
+  text-decoration: underline !important;
+  transition: color 0.2s ease;
+}
+.app-settings-link:hover, .support-link:hover {
+  color: var(--color-neutral-900) !important;
+}
+
+/* Consistent spacing for settings sections */
+#settingsView .form-group > div {
+  margin-top: 1.5rem;
+}
+
+#settingsView .form-group > div:first-child {
+  margin-top: 0;
+}
+
 /* Custom Bullet Points Styles */
 .custom-bullets-container {
   @apply flex flex-col;
