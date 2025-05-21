@@ -60,25 +60,49 @@ function showLinuxPermissionHelp(permissionType) {
   
   const modalContent = document.createElement('div');
   modalContent.className = 'bg-white rounded-lg p-6 max-w-lg mx-4';
-  modalContent.innerHTML = `
-    <h3 class="text-lg font-medium mb-4">${title}</h3>
-    <p class="mb-3">${message}</p>
-    
-    <div class="p-4 bg-gray-100 rounded-lg mb-4">
-      <p>On Linux, you may need to:</p>
-      <ul class="list-disc pl-5 mt-2 space-y-1">
-        <li>Install required packages: <code>wmctrl</code>, <code>xdotool</code>, or <code>evtest</code></li>
-        <li>Ensure DoneThat has appropriate permissions</li>
-        <li>For Wayland sessions, some features may have limited functionality</li>
-      </ul>
-    </div>
-    
-    <div class="flex justify-end">
-      <button id="permHelpCloseBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
-        Got it
-      </button>
-    </div>
-  `;
+  
+  // For keystrokes permission, include clear instructions for running with sudo
+  if (permissionType === 'keystrokes') {
+    modalContent.innerHTML = `
+      <h3 class="text-lg font-medium mb-4">${title}</h3>
+      <p class="mb-3">Keystroke tracking is currently not supported on Linux.</p>
+      
+      <div class="p-4 bg-gray-100 rounded-lg mb-4">
+        <p class="font-medium mb-2">Limitations on Linux:</p>
+        <ul class="list-disc pl-5 mt-2 space-y-1">
+          <li>Keystroke tracking is not available when running as an AppImage on Linux</li>
+          <li>Other features of DoneThat will continue to work normally</li>
+          <li>You can still use window tracking and audio recording features</li>
+        </ul>
+      </div>
+      
+      <div class="flex justify-end">
+        <button id="permHelpCloseBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
+          Got it
+        </button>
+      </div>
+    `;
+  } else {
+    modalContent.innerHTML = `
+      <h3 class="text-lg font-medium mb-4">${title}</h3>
+      <p class="mb-3">${message}</p>
+      
+      <div class="p-4 bg-gray-100 rounded-lg mb-4">
+        <p>On Linux, you may need to:</p>
+        <ul class="list-disc pl-5 mt-2 space-y-1">
+          <li>Install required packages: <code>wmctrl</code>, <code>xdotool</code>, or <code>evtest</code></li>
+          <li>Ensure DoneThat has appropriate permissions</li>
+          <li>For Wayland sessions, some features may have limited functionality</li>
+        </ul>
+      </div>
+      
+      <div class="flex justify-end">
+        <button id="permHelpCloseBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
+          Got it
+        </button>
+      </div>
+    `;
+  }
   
   modalBackground.appendChild(modalContent);
   document.body.appendChild(modalBackground);

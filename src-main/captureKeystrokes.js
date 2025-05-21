@@ -15,11 +15,30 @@ const MAX_KEYSTROKE_HISTORY = 1000; // Limit keystroke history to avoid memory i
  */
 async function checkPermissions() {
   try {
-    // Attempt to create a keyboard listener - this will fail if permissions aren't granted
+    // For Linux systems, try creating a listener with options to prevent pkexec errors
+    if (process.platform === 'linux') {
+      try {
+        // Try with allowChmod: false to prevent errors
+        const testListener = new GlobalKeyboardListener({ allowChmod: false });
+        testListener.kill();
+        return true;
+      } catch (linuxError) {
+        log.error('Linux keystroke check failed:', linuxError);
+        
+        // Send notice to renderer about Linux keystrokes permission
+        const { BrowserWindow } = require('electron');
+        const mainWindow = BrowserWindow.getAllWindows().find(w => !w.isDestroyed());
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('linux-keystrokes-permission-notice');
+        }
+        
+        // Return false to let the capture system handle disabling
+        return false;
+      }
+    }
+
+    // For non-Linux platforms, normal check
     const testListener = new GlobalKeyboardListener();
-    
-    // If we get here, we likely have permissions
-    // Clean up test listener
     testListener.kill();
     return true;
   } catch (error) {
@@ -204,7 +223,8 @@ async function startTracking() {
   }
 
   // Check if we have permission to track keystrokes
-  if (!await checkPermissions()) {
+  const hasPermission = await checkPermissions();
+  if (!hasPermission) {
     log.warn('Keystroke tracking permission not granted');
     return false;
   }
@@ -214,8 +234,54 @@ async function startTracking() {
   lastKeyTime = {};
 
   try {
-    // Initialize keystroke listener
-    keyboardListener = new GlobalKeyboardListener();
+    // For Linux (AppImage), try with options to prevent pkexec errors
+    const options = process.platform === 'linux' ? { allowChmod: false } : {};
+    
+    // Create the keyboard listener
+    keyboardListener = new GlobalKeyboardListener(options);
+    
+    // Add unhandledRejection handler specifically for the pkexec error on Linux
+    if (process.platform === 'linux') {
+      const rejectionHandler = (reason) => {
+        if (reason && reason.message && reason.message.includes('pkexec') && 
+            reason.message.includes('X11KeyServer')) {
+          log.error('Caught pkexec error for X11KeyServer:', reason);
+          // Clean up this specific listener - we've handled it
+          process.removeListener('unhandledRejection', rejectionHandler);
+          
+          // Clean up keyboard listener if it was created
+          if (keyboardListener) {
+            try {
+              keyboardListener.kill();
+            } catch (cleanupError) {
+              log.error('Error cleaning up keyboard listener:', cleanupError);
+            }
+          }
+          
+          // Reset tracking state
+          keyboardListener = null;
+          isTracking = false;
+          
+          // Find main window to notify
+          try {
+            const { BrowserWindow } = require('electron');
+            const mainWindow = BrowserWindow.getAllWindows().find(w => !w.isDestroyed());
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              // Notify renderer to disable keystrokes
+              mainWindow.webContents.send('disable-capture-features', { keystrokes: false });
+            }
+          } catch (notifyError) {
+            log.error('Error notifying about keystrokes disabling:', notifyError);
+          }
+        }
+      };
+      
+      // Add the handler - will be removed after first match or when stopTracking is called
+      process.on('unhandledRejection', rejectionHandler);
+      
+      // Store reference to remove later
+      keyboardListener._rejectionHandler = rejectionHandler;
+    }
     
     // Handle key events
     keyboardListener.addListener(function (e, down) {
@@ -246,6 +312,12 @@ function stopTracking() {
   
   try {
     if (keyboardListener) {
+      // Remove any rejection handler we added
+      if (keyboardListener._rejectionHandler) {
+        process.removeListener('unhandledRejection', keyboardListener._rejectionHandler);
+        keyboardListener._rejectionHandler = null;
+      }
+      
       keyboardListener.kill();
       keyboardListener = null;
     }
