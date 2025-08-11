@@ -391,6 +391,43 @@
             </div>
           </div>
 
+          <!-- Gemini API Key Section -->
+          <div class="mt-6">
+            <label class="form-label mb-1 font-semibold">
+              Gemini API Key
+            </label>
+            <p class="text-xs text-gray-500 mb-3">
+              Optional: Add your Google Gemini API key to process raw data directly with Gemini. Your key is encrypted and stored locally on your device. Your raw data will never be shared with DoneThat.
+            </p>
+            <div class="relative w-full">
+              <input
+                type="password"
+                id="geminiApiKeyInput"
+                class="form-input pr-6 text-xs py-1.5"
+                placeholder="Enter your Gemini API key"
+                autocomplete="new-password"
+              />
+              <button
+                id="toggleGeminiKeyBtn"
+                class="add-email-btn cursor-pointer"
+                aria-label="Toggle API key visibility"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
+            <div class="flex items-center mt-2">
+              <button
+                id="clearGeminiKeyBtn"
+                class="text-xs text-gray-500 hover:text-gray-700 underline"
+              >
+                Clear API key
+              </button>
+            </div>
+          </div>
+
           <!-- More Settings Section -->
           <div class="mt-6">
             <label class="form-label mb-1 font-semibold">

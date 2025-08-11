@@ -725,7 +725,9 @@ function createWindow() {
         enableRemoteModule: false,
         sandbox: false,
         // This is important for IndexedDB persistence
-        backgroundThrottling: false
+        backgroundThrottling: false,
+        // Enable context menus and copy-paste
+        spellcheck: false
       }
     })
 
@@ -767,6 +769,25 @@ function createWindow() {
         return false;
       }
       return true;
+    });
+
+    // Enable context menus
+    mainWindow.webContents.on('context-menu', (event, params) => {
+      // Allow default context menu behavior
+      event.preventDefault();
+      // Create a simple context menu with copy/paste
+      const { Menu, MenuItem } = require('electron');
+      const contextMenu = new Menu();
+      
+      if (params.selectionText) {
+        contextMenu.append(new MenuItem({ label: 'Copy', role: 'copy' }));
+      }
+      if (params.isEditable) {
+        contextMenu.append(new MenuItem({ label: 'Paste', role: 'paste' }));
+        contextMenu.append(new MenuItem({ label: 'Cut', role: 'cut' }));
+      }
+      
+      contextMenu.popup({ window: mainWindow });
     });
   }
 }

@@ -1,6 +1,7 @@
 const log = require('electron-log');
 const { captureScreenshot, getPreviousScreenshots } = require('./captureScreenshots');
 const { ipcMain } = require('electron');
+const { isLocalProcessingAvailable, processDataLocally } = require('./processLocal');
 
 // Firebase URL constant
 const FIREBASE_CAPTURE_URL = 'https://europe-west1-donethat.cloudfunctions.net/captureScreenshot';
@@ -623,90 +624,113 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
   }
 
   try {
-    const fetch = await import('node-fetch').then(module => module.default);
+    // Check if local processing is available
+    const localProcessingAvailable = await isLocalProcessingAvailable();
     
-    // Get the previous screenshots scaled down to the configured scale factor
-    const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
-    
-    // Create payload with screenshots and timestamp
-    const payload = {
-      timestamp: Date.now(),
-      screenshots: screenshots
-    };
-    
-    // Add previous screenshot data if available
-    if (previousScreenshotData) {
-      payload.previousScreenshotData = previousScreenshotData;
-    }
-    
-    // Add input data if provided
-    if (inputData) {
-      if (inputData.audio) {
-        payload.audio = inputData.audio;
+    if (localProcessingAvailable) {
+      log.info('Using local processing for data analysis');
+      
+      // Get the previous screenshots scaled down to the configured scale factor
+      const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
+      
+      // Process data locally
+      const result = await processDataLocally(
+        idToken,
+        screenshots,
+        previousScreenshotData,
+        inputData
+      );
+      
+      return result;
+    } else {
+      log.info('Using cloud processing for data analysis');
+      
+      // Fall back to cloud processing
+      const fetch = await import('node-fetch').then(module => module.default);
+      
+      // Get the previous screenshots scaled down to the configured scale factor
+      const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
+      
+      // Create payload with screenshots and timestamp
+      const payload = {
+        timestamp: Date.now(),
+        screenshots: screenshots
+      };
+      
+      // Add previous screenshot data if available
+      if (previousScreenshotData) {
+        payload.previousScreenshotData = previousScreenshotData;
       }
       
-      if (inputData.activity && inputData.activity.length > 0) {
-        // Format all timestamps to local time in activity data
-        payload.activity = inputData.activity.map(item => {
-          // Create a new object without start/end times for the API
-          const apiItem = {
-            ...item,
-            formattedDuration: `${Math.round(item.duration / 1000)}s`  // Duration in seconds
-          };
-          
-          // Remove start/end times from the API payload
-          delete apiItem.startTime;
-          delete apiItem.endTime;
-          delete apiItem.duration;
-          
-          return apiItem;
-        });
-      }
-    }
-     
-    // Send data to Firebase
-    const response = await fetch(FIREBASE_CAPTURE_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${idToken}`
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      // If response is not ok, check the detailed error
-      const errorData = await response.json().catch(() => ({}));
-
-      // Check specifically for token expiration
-      if (response.status === 401 && errorData.error === 'token_expired') {
-        log.warn('_sendToServer: Token expired error detected.'); // Keep this
-        // Call the reauthenticate callback if available
-        if (reauthenticateCallback) {
-          log.warn('_sendToServer: Calling reauthenticate callback with tokenExpired.'); // Keep this
-          reauthenticateCallback({ tokenExpired: true });
+      // Add input data if provided
+      if (inputData) {
+        if (inputData.audio) {
+          payload.audio = inputData.audio;
         }
-        return { tokenExpired: true };
-      }
-      
-      // Log other error details
-      log.error(`_sendToServer: Data upload failed with status ${response.status}`, errorData);
-
-      // For unauthorized errors (not token expired), return auth error
-      if (response.status === 401 || response.status === 403) {
-        log.warn('_sendToServer: Unauthorized error detected (not token expired).');
-        // Call the reauthenticate callback if available
-        if (reauthenticateCallback) {
-          log.warn('_sendToServer: Calling reauthenticate callback with authError.'); // Keep this
-          reauthenticateCallback({ authError: true });
+        
+        if (inputData.activity && inputData.activity.length > 0) {
+          // Format all timestamps to local time in activity data
+          payload.activity = inputData.activity.map(item => {
+            // Create a new object without start/end times for the API
+            const apiItem = {
+              ...item,
+              formattedDuration: `${Math.round(item.duration / 1000)}s`  // Duration in seconds
+            };
+            
+            // Remove start/end times from the API payload
+            delete apiItem.startTime;
+            delete apiItem.endTime;
+            delete apiItem.duration;
+            
+            return apiItem;
+          });
         }
-        return { authError: true };
+      }
+       
+      // Send data to Firebase
+      const response = await fetch(FIREBASE_CAPTURE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        // If response is not ok, check the detailed error
+        const errorData = await response.json().catch(() => ({}));
+
+        // Check specifically for token expiration
+        if (response.status === 401 && errorData.error === 'token_expired') {
+          log.warn('_sendToServer: Token expired error detected.'); // Keep this
+          // Call the reauthenticate callback if available
+          if (reauthenticateCallback) {
+            log.warn('_sendToServer: Calling reauthenticate callback with tokenExpired.'); // Keep this
+            reauthenticateCallback({ tokenExpired: true });
+          }
+          return { tokenExpired: true };
+        }
+        
+        // Log other error details
+        log.error(`_sendToServer: Data upload failed with status ${response.status}`, errorData);
+
+        // For unauthorized errors (not token expired), return auth error
+        if (response.status === 401 || response.status === 403) {
+          log.warn('_sendToServer: Unauthorized error detected (not token expired).');
+          // Call the reauthenticate callback if available
+          if (reauthenticateCallback) {
+            log.warn('_sendToServer: Calling reauthenticate callback with authError.'); // Keep this
+            reauthenticateCallback({ authError: true });
+          }
+          return { authError: true };
+        }
+        
+        throw new Error(`Server error: ${response.status}`);
       }
       
-      throw new Error(`Server error: ${response.status}`);
+      return true;
     }
-    
-    return true;
   } catch (error) {
     log.error('_sendToServer: Error during data sending:', error.message, error.stack);
     console.error('Data upload failed:', error);

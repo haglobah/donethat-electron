@@ -1,6 +1,7 @@
 const { ipcMain, Notification, app, dialog } = require('electron');
 const log = require('electron-log');
 const path = require('path');
+const { encryptData, decryptData } = require('./encryption');
 
 // State variables
 let store = null;
@@ -744,6 +745,75 @@ function setupIPCHandlers() {
       log.error('Received invalid autoSubmit value:', value);
     }
   });
+
+  // Gemini API key handlers
+  ipcMain.handle('save-gemini-api-key', async (event, apiKey) => {
+    try {
+      if (!apiKey || typeof apiKey !== 'string') {
+        throw new Error('Invalid API key provided');
+      }
+
+      // Encrypt the API key
+      const encryptedKey = encryptData(apiKey);
+      
+      // Save encrypted key to store
+      safeStoreOperation(() => {
+        if (store) {
+          store.set('geminiApiKey', encryptedKey);
+        } else {
+          throw new Error('Store not initialized');
+        }
+      }, 'save encrypted Gemini API key');
+
+      log.info('Gemini API key saved successfully');
+      return { success: true };
+    } catch (error) {
+      log.error('Error saving Gemini API key:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('get-gemini-api-key', async (event) => {
+    try {
+      const encryptedKey = safeStoreOperation(() => {
+        if (store) {
+          return store.get('geminiApiKey');
+        } else {
+          return null;
+        }
+      }, 'get encrypted Gemini API key');
+
+      if (!encryptedKey) {
+        return { success: true, apiKey: null };
+      }
+
+      // Decrypt the API key
+      const decryptedKey = decryptData(encryptedKey);
+      
+      return { success: true, apiKey: decryptedKey };
+    } catch (error) {
+      log.error('Error retrieving Gemini API key:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('clear-gemini-api-key', async (event) => {
+    try {
+      safeStoreOperation(() => {
+        if (store) {
+          store.delete('geminiApiKey');
+        } else {
+          throw new Error('Store not initialized');
+        }
+      }, 'delete Gemini API key');
+
+      log.info('Gemini API key cleared successfully');
+      return { success: true };
+    } catch (error) {
+      log.error('Error clearing Gemini API key:', error);
+      throw error;
+    }
+  });
 }
 
 /**
@@ -895,7 +965,51 @@ function clearIdToken() {
   }
 }
 
+/**
+ * Get Gemini API key (for internal use)
+ */
+async function getGeminiApiKey() {
+  try {
+    const encryptedKey = safeStoreOperation(() => {
+      if (store) {
+        return store.get('geminiApiKey');
+      } else {
+        return null;
+      }
+    }, 'get encrypted Gemini API key');
+
+    if (!encryptedKey) {
+      return { success: true, apiKey: null };
+    }
+
+    // Decrypt the API key
+    const decryptedKey = decryptData(encryptedKey);
+    
+    return { success: true, apiKey: decryptedKey };
+  } catch (error) {
+    log.error('Error retrieving Gemini API key:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   initState,
+  resume,
+  isPaused,
+  isWorkday,
+  isWithinWorkHours,
+  isActiveWorkPeriod,
+  pauseRecording,
+  pauseUntilNextWorkPeriod,
+  recordingStarted,
+  loadWorkSettings,
+  loadSummaryTimestamp,
+  updateWaylandStatus,
+  updateScreenCapturePermission,
+  setupIPCHandlers,
+  cleanupOnQuit,
+  setIdToken,
+  clearIdToken,
+  getGeminiApiKey,
   getAutoSubmit: () => autoSubmit
 }
