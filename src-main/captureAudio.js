@@ -1,8 +1,6 @@
 const log = require('electron-log')
-const os = require('os')
-const fs = require('fs')
-const path = require('path')
 const { ipcMain } = require('electron')
+const voiceToText = require('./voiceToText')
 
 // Variables to track audio capture
 let isRecording = false
@@ -27,8 +25,8 @@ function initialize(window, config = {}) {
   mainWindow = window;
   
   // Set up IPC handlers
-  ipcMain.handle('audio-capture-result', (event, audioData) => {
-    return processAudioFromRenderer(audioData);
+  ipcMain.handle('audio-capture-result', async (event, audioData) => {
+    return await processAudioFromRenderer(audioData);
   });
   
   // Listen for audio device changes from renderer
@@ -51,20 +49,19 @@ function initialize(window, config = {}) {
 /**
  * Process audio data from renderer
  * @param {Object} audioData Audio data
- * @returns {string} Path to saved file
+ * @returns {Promise<{transcript: string}>} Audio processing result
  */
-function processAudioFromRenderer(audioData) {
+async function processAudioFromRenderer(audioData) {
   try {
-    // Create a temp file to store the audio
-    const outputDir = os.tmpdir();
-    const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '');
-    const filePath = path.join(outputDir, `mic_recording_${timestamp}.webm`);
-    
-    // Convert base64 to buffer and save
+    // Convert base64 to buffer for transcription
     const audioBuffer = Buffer.from(audioData.base64Data.split(',')[1], 'base64');
-    fs.writeFileSync(filePath, audioBuffer);
     
-    return filePath;
+    // Transcribe audio locally
+    const transcript = await voiceToText.transcribeAudioBuffer(audioBuffer);
+    
+    return {
+      transcript
+    };
   } catch (error) {
     log.error('Error processing audio from renderer:', error);
     return null;
@@ -167,16 +164,16 @@ async function stopRecording() {
       return null;
     }
     
-    // Process audio data and save to file
-    const filePath = audioData ? processAudioFromRenderer(audioData) : null;
+    // Process audio data for transcription
+    const audioResult = audioData ? await processAudioFromRenderer(audioData) : null;
     
-    if (!filePath) {
+    if (!audioResult) {
       log.warn('Failed to process audio data from renderer');
       return null;
     }    
     // Return recording information
     return {
-      filePath,
+      transcript: audioResult.transcript,
       duration: audioData.timeMs
     };
   } catch (error) {
@@ -221,7 +218,8 @@ async function shutdownRecording() {
  */
 function getStatus() {
   return {
-    recording: isRecording
+    recording: isRecording,
+    voiceToTextAvailable: voiceToText.getStatus().available
   };
 }
 

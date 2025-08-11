@@ -1,3 +1,7 @@
+// Suppress ONNX runtime warnings - must be set before any imports
+process.env.ORT_LOGGING_LEVEL = '4'
+process.env.ORT_LOGGING_VERBOSE = '0'
+
 const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification, powerMonitor } = require('electron')
 const path = require('path')
 const { autoUpdater } = require('electron-updater')

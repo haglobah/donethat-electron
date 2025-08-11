@@ -473,23 +473,16 @@ async function collectInputData(resetBuffers = true) {
     windows: false
   };
   
-  // Get audio data
+  // Get audio transcript
   if (inputDataSettings.audio) {
     try {
       const audioInfo = await audioCapture.stopRecording();
-      if (audioInfo && audioInfo.filePath) {
-        const fs = require('fs');
-        const audioBuffer = fs.readFileSync(audioInfo.filePath);
-        inputData.audio = {
-          base64Data: `data:audio/wav;base64,${audioBuffer.toString('base64')}`,
-          mimeType: 'audio/wav',
-          timeMs: audioInfo.duration || 0
-        };
-        fs.unlinkSync(audioInfo.filePath);
+      if (audioInfo && audioInfo.transcript) {
+        inputData.audioTranscript = audioInfo.transcript;
       }
     } catch (error) {
       captureErrors.audio = true;
-      log.error('Error capturing audio data:', error);
+      log.error('Error capturing audio transcript:', error);
     }
   }
   
@@ -664,8 +657,8 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
       
       // Add input data if provided
       if (inputData) {
-        if (inputData.audio) {
-          payload.audio = inputData.audio;
+        if (inputData.audioTranscript) {
+          payload.audioTranscript = inputData.audioTranscript;
         }
         
         if (inputData.activity && inputData.activity.length > 0) {

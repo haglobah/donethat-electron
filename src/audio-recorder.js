@@ -11,21 +11,9 @@ let MAX_BUFFER_DURATION_MS;
  * @returns {string} Best supported MIME type
  */
 function getBestSupportedMimeType() {
-  const types = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus',
-    'audio/mp4',
-    'audio/mpeg'
-  ];
-  
-  for (const type of types) {
-    if (MediaRecorder.isTypeSupported(type)) {
-      return type;
-    }
-  }
-  
-  return ''; // Fall back to browser default
+  // Use WebM format directly since we're using temp files
+  console.log('Using WebM format with temp file processing');
+  return 'audio/webm;codecs=opus';
 }
 
 /**

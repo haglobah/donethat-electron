@@ -170,7 +170,7 @@ function buildPrompt(applicationActivity, audioTranscript = 'No audio transcript
 /**
  * Analyze screenshots using local LLM processing
  */
-async function analyzeScreenshots(screenshots, previousScreenshots, activity, idToken) {
+async function analyzeScreenshots(screenshots, previousScreenshots, activity, audioTranscript, idToken) {
   try {
     // Validate current screenshots - this is critical
     if (!screenshots || screenshots.length === 0) {
@@ -190,7 +190,7 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, id
     }
     
     // Build the prompt
-    const enhancedPrompt = buildPrompt(activity);
+    const enhancedPrompt = buildPrompt(activity, audioTranscript);
     
     // Build content blocks for LangChain
     const blocks = [
@@ -294,11 +294,18 @@ async function processDataLocally(idToken, screenshots, previousScreenshots, inp
       ).join(', ');
     }
 
+    // Get audio transcript
+    let audioTranscript = 'No audio transcript available';
+    if (inputData.audioTranscript) {
+      audioTranscript = inputData.audioTranscript;
+    }
+
     // Analyze screenshots locally
     const llmResponse = await analyzeScreenshots(
       screenshots,
       previousScreenshots,
       applicationActivity,
+      audioTranscript,
       idToken
     );
 
