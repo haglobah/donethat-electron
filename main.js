@@ -40,6 +40,14 @@ app.on('second-instance', (event, commandLine, workingDirectory) => {
       mainWindow.focus();
     }
   }
+  // Also ensure overlay is shown
+  try {
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow();
+    }
+    positionOverlayWindow();
+    overlayWindow.show();
+  } catch (e) {}
 });
 
 // Handle macOS reactivation (when user clicks dock icon or reopens app)
@@ -71,6 +79,7 @@ let iconErrorPath = path.join(__dirname, 'resources', 'icon_error.png')
 let stateManager = null
 let tray = null
 let mainWindow = null
+let overlayWindow = null
 let screenshotInterval = null
 
 if (DEBUG) {
@@ -345,6 +354,9 @@ app.whenReady().then(async () => {
   // Create window but don't show it yet
   createWindow()
 
+  // Create overlay window (hidden initially)
+  createOverlayWindow()
+
   // Check for updates with proper error handling
   try {
     setupAutoUpdater();
@@ -370,6 +382,46 @@ app.whenReady().then(async () => {
 
   // Add daily auth check
   scheduleDailyAuthCheck();
+})
+
+////// OVERLAY IPC //////
+
+ipcMain.handle('overlay:get-state', () => {
+  return {
+    isPaused: stateManager?.isPaused() ?? false,
+    hasPermission: stateManager?.hasScreenCapturePermission() ?? false,
+    isAuthenticated: stateManager?.isAuthenticated() ?? false
+  }
+})
+
+ipcMain.on('overlay:hide', () => {
+  try {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.hide()
+    }
+  } catch (e) {}
+})
+
+ipcMain.on('overlay:open-main', (event, view) => {
+  if (typeof view === 'string') {
+    navigateToView(view)
+  } else {
+    navigateToView('signup-next')
+  }
+})
+
+// Overlay dynamic resize
+ipcMain.on('overlay:resize', (event, height) => {
+  try {
+    if (overlayWindow && typeof height === 'number' && isFinite(height)) {
+      const bounds = overlayWindow.getBounds();
+      const MAX_H = 600
+      const clamped = Math.max(40, Math.min(MAX_H, Math.floor(height)));
+      overlayWindow.setSize(bounds.width, clamped, false);
+      // Keep bottom-left anchoring when height changes
+      positionOverlayWindow();
+    }
+  } catch (e) {}
 })
 
 // Handle OS-level quit events properly - especially important for macOS
@@ -560,9 +612,22 @@ function createApplicationMenu() {
       }
     ]
   };
+  // Add standard Edit menu for system-wide copy/paste/dictation support
+  const editMenu = {
+    label: 'Edit',
+    submenu: [
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'separator' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      { role: 'selectAll' },
+    ]
+  };
   
   // Push menus to template
-  template.push(fileMenu, recordingMenu, accountMenu, helpMenu);
+  template.push(fileMenu, editMenu, recordingMenu, accountMenu, helpMenu);
   
   // Set as application menu
   const menu = Menu.buildFromTemplate(template);
@@ -583,6 +648,17 @@ function buildContextMenu() {
     label: 'Open App',
     click: () => navigateToView('signup-next')
   }, 
+  {
+    label: 'Open Overlay',
+    click: () => {
+      if (!overlayWindow || overlayWindow.isDestroyed()) {
+        createOverlayWindow()
+      }
+      positionOverlayWindow()
+      try { overlayWindow.show() } catch (e) {}
+      try { overlayWindow.focus() } catch (e) {}
+    }
+  },
   // Add Open Settings option (renamed from Setup)
   {
     label: 'Open Settings',
@@ -681,6 +757,7 @@ function checkAndAdjustRecording() {
     // but not recording it's not triggering above function because
     // isCurrentlyRecording is false
     updateTrayIcon(isCurrentlyRecording && shouldBeRecording);
+    sendOverlayState();
     
     // Update application menu when recording state changes
     createApplicationMenu();
@@ -691,6 +768,8 @@ function checkAndAdjustRecording() {
     } else if (!isCurrentlyRecording && shouldBeRecording) {
       startRecording();
     }
+  // Notify overlay about state for icon updates
+  sendOverlayState();
 }
 
 // Add IPC handler for resume action
@@ -778,22 +857,135 @@ function createWindow() {
     // Enable context menus
     mainWindow.webContents.on('context-menu', (event, params) => {
       // Allow default context menu behavior
-      event.preventDefault();
-      // Create a simple context menu with copy/paste
-      const { Menu, MenuItem } = require('electron');
-      const contextMenu = new Menu();
-      
-      if (params.selectionText) {
-        contextMenu.append(new MenuItem({ label: 'Copy', role: 'copy' }));
-      }
-      if (params.isEditable) {
-        contextMenu.append(new MenuItem({ label: 'Paste', role: 'paste' }));
-        contextMenu.append(new MenuItem({ label: 'Cut', role: 'cut' }));
-      }
-      
+    event.preventDefault();
+    // Create a simple context menu with copy/paste
+    const { Menu, MenuItem } = require('electron');
+    const contextMenu = new Menu();
+    
+    if (params.selectionText) {
+      contextMenu.append(new MenuItem({ role: 'copy' }));
+    }
+    if (params.isEditable) {
+      contextMenu.append(new MenuItem({ role: 'paste' }));
+      contextMenu.append(new MenuItem({ role: 'cut' }));
+      contextMenu.append(new MenuItem({ role: 'selectAll' }));
+    }
+    
+    if (contextMenu.items.length > 0) {
       contextMenu.popup({ window: mainWindow });
+    }
     });
   }
+}
+
+// Minimal overlay window setup
+function createOverlayWindow() {
+  if (!overlayWindow) {
+    const isPlatformMac = process.platform === 'darwin';
+    overlayWindow = new BrowserWindow({
+      width: 260,
+      height: 40,
+      frame: false,
+      resizable: false,
+      movable: true,
+      show: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      focusable: true,
+      fullscreenable: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+        partition: 'persist:donethat',
+        sandbox: false,
+        backgroundThrottling: false,
+        spellcheck: true
+      },
+      ...(isPlatformMac ? { visibleOnAllWorkspaces: true, acceptFirstMouse: true } : {})
+    })
+
+    overlayWindow.loadFile('./src/overlay.html')
+
+    overlayWindow.once('ready-to-show', () => {
+      positionOverlayWindow()
+      overlayWindow.showInactive()
+      sendOverlayState()
+    })
+
+    overlayWindow.on('blur', () => {
+      try { overlayWindow.setAlwaysOnTop(true) } catch (e) {}
+      try { overlayWindow.webContents.send('overlay:collapse') } catch (e) {}
+    })
+
+    overlayWindow.on('focus', () => {
+      try { overlayWindow.webContents.send('overlay:maybeExpand') } catch (e) {}
+    })
+
+    overlayWindow.on('closed', () => {
+      overlayWindow = null
+    })
+
+    // Enable context menus (copy/paste) for overlay window
+    overlayWindow.webContents.on('context-menu', (event, params) => {
+      event.preventDefault();
+      const { Menu, MenuItem } = require('electron');
+      const cm = new Menu();
+      if (params.selectionText && params.selectionText.length > 0) {
+        cm.append(new MenuItem({ role: 'copy' }));
+      }
+      if (params.isEditable) {
+        cm.append(new MenuItem({ role: 'paste' }));
+        cm.append(new MenuItem({ role: 'cut' }));
+        cm.append(new MenuItem({ role: 'selectAll' }));
+      }
+      if (cm.items.length > 0) {
+        cm.popup({ window: overlayWindow });
+      }
+    });
+
+    screen.on('display-metrics-changed', () => {
+      if (overlayWindow && overlayWindow.isVisible()) {
+        positionOverlayWindow()
+      }
+    })
+  }
+}
+
+function positionOverlayWindow() {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return
+  const margin = 16
+
+  const allDisplays = screen.getAllDisplays()
+  const trayBounds = tray?.getBounds()
+  let targetDisplay = screen.getPrimaryDisplay()
+
+  if (trayBounds) {
+    const found = allDisplays.find(d => {
+      const b = d.bounds
+      return trayBounds.x >= b.x && trayBounds.x < b.x + b.width && trayBounds.y >= b.y && trayBounds.y < b.y + b.height
+    })
+    if (found) targetDisplay = found
+  }
+
+  const work = targetDisplay.workArea
+  const winBounds = overlayWindow.getBounds()
+  // Bottom-center within the work area
+  const x = Math.floor(work.x + (work.width / 2) - (winBounds.width / 2))
+  const y = Math.floor(work.y + work.height - winBounds.height - margin)
+  try { overlayWindow.setPosition(x, y, false) } catch (e) {}
+}
+
+function sendOverlayState() {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return
+  try {
+    overlayWindow.webContents.send('overlay:state', {
+      isPaused: stateManager?.isPaused() ?? false,
+      hasPermission: stateManager?.hasScreenCapturePermission() ?? false,
+      isAuthenticated: stateManager?.isAuthenticated() ?? false
+    })
+  } catch (e) {}
 }
 
 // Intelligently positions the window relative to the tray icon
@@ -918,6 +1110,7 @@ function startRecording() {
   
   updateTrayIcon(true) // Show recording state
   createApplicationMenu(); // Update menu when recording starts
+  sendOverlayState();
 
   if (mainWindow) {
     mainWindow.webContents.send('pauseStateChanged', false)
@@ -939,6 +1132,7 @@ function stopRecording() {
 
   updateTrayIcon(false) // Update icon to non-recording state
   createApplicationMenu(); // Update menu when recording stops
+  sendOverlayState();
   
   // Send state updates
   if (mainWindow) {
@@ -966,6 +1160,7 @@ async function checkScreenCapturePermission() {
   
   // Update application menu when permission changes
   createApplicationMenu();
+  sendOverlayState();
   
   return hasPermission;
 }
@@ -1015,6 +1210,7 @@ ipcMain.on('requestScreenCapturePermission', async () => {
 
       // Re-evaluate recording state based on permission change
       checkAndAdjustRecording();
+      sendOverlayState();
     }
   };
   
