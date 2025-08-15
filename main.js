@@ -417,9 +417,16 @@ ipcMain.on('overlay:resize', (event, height) => {
       const bounds = overlayWindow.getBounds();
       const MAX_H = 600
       const clamped = Math.max(40, Math.min(MAX_H, Math.floor(height)));
+      const heightDiff = clamped - bounds.height;
+      
+      // Set new size
       overlayWindow.setSize(bounds.width, clamped, false);
-      // Keep bottom-left anchoring when height changes
-      positionOverlayWindow();
+      
+      // Adjust Y position to keep top edge fixed (shrink from bottom)
+      if (heightDiff !== 0) {
+        const newY = bounds.y - heightDiff;
+        overlayWindow.setPosition(bounds.x, newY, false);
+      }
     }
   } catch (e) {}
 })
@@ -919,9 +926,7 @@ function createOverlayWindow() {
       try { overlayWindow.webContents.send('overlay:collapse') } catch (e) {}
     })
 
-    overlayWindow.on('focus', () => {
-      try { overlayWindow.webContents.send('overlay:maybeExpand') } catch (e) {}
-    })
+    // Removed focus event that was causing auto-expansion on drag
 
     overlayWindow.on('closed', () => {
       overlayWindow = null

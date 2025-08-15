@@ -27,12 +27,12 @@
   </head>
   <body class="w-[260px] h-full overflow-visible">
     <div id="overlayRoot" class="overlay-root relative w-full h-full">
-      <div class="overlay-card w-full p-2 relative flex flex-col">
-        <div id="chatContainer" class="z-chat space-y-1 overflow-y-auto pb-16 flex-1"></div>
+      <div class="overlay-card w-full p-2 relative flex flex-col justify-center drag-region">
+        <div id="chatContainer" class="z-chat space-y-1 overflow-y-auto pb-2 flex-1"></div>
         <div class="z-input">
           <div class="relative max-w-full mx-auto">
             <textarea id="chatInput" rows="1" class="no-drag tiny-text leading-tight py-2 px-2 w-full resize-none" placeholder="Ask me anything" style="background: rgba(245,245,245,0.95); border: 1px solid rgba(0,0,0,0.05); border-radius: 6px; -webkit-user-select: text; user-select: text;"></textarea>
-            <div class="absolute top-2 right-2 flex items-center gap-1">
+            <div class="absolute top-2 right-1 flex items-center gap-1">
             <button id="clearBtn" class="no-drag icon-btn" title="Clear">⌫</button>
             <button id="openAppBtn" class="no-drag icon-btn" title="Open App">⌂</button>
             <button id="closeOverlayBtn" class="no-drag icon-btn" title="Close">×</button>

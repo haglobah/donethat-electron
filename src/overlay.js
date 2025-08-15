@@ -98,17 +98,15 @@ function animateResize(toHeight, opts = {}) {
 
 function collapseChatAnimated() {
   if (!chatVisible) return
-  // Shrink only the chat area height; keep the input row fixed by not hiding chat until after animation
+  // Immediately collapse without animation
   const inputH = input0.offsetHeight || 18
   const chrome = 16
-  // Temporarily set a maxHeight to current chat height to animate via JS window resize
   const targetH = inputH + chrome
-  chatContainer.style.overflowY = 'hidden'
-  animateResize(targetH, { duration: 160, onDone: () => {
-    chatVisible = false
-    chatContainer.style.display = 'none'
-    chatContainer.style.overflowY = ''
-  }})
+  chatVisible = false
+  chatContainer.style.display = 'none'
+  chatContainer.style.overflowY = ''
+  lastSentHeight = targetH
+  ipcRenderer.send('overlay:resize', targetH)
 }
 
 function showOrGrowChat() {
@@ -132,8 +130,6 @@ function showSystemMessage(text) {
 function addMessageFromInput(el) {
   const v = (el.value || '').trim()
   if (!v) return
-  // Keep only the latest message for "right now"
-  messages = [{ title: v, createdAt: Date.now(), eta: null }]
   el.value = ''
   // Append to chat as our own message
   messages.push({ role: 'user', text: v, ts: Date.now() })
@@ -179,10 +175,37 @@ openAppBtn.addEventListener('click', () => {
   collapseChatAnimated()
 })
 
-// Collapse when clicking outside the overlay card/input
+// Handle click vs drag on overlay card
+let isDragging = false
+let dragStartTime = 0
+
 document.addEventListener('pointerdown', (e) => {
   const within = e.target.closest('.overlay-card')
-  if (!within) collapseChatAnimated()
+  if (!within) {
+    collapseChatAnimated()
+    return
+  }
+  
+  // Start tracking for drag detection
+  isDragging = false
+  dragStartTime = Date.now()
+  
+  const handlePointerMove = () => {
+    isDragging = true
+  }
+  
+  const handlePointerUp = () => {
+    // If it was a short click (not drag) and we have messages, expand
+    if (!isDragging && Date.now() - dragStartTime < 200 && messages.length > 0) {
+      showOrGrowChat()
+    }
+    
+    document.removeEventListener('pointermove', handlePointerMove)
+    document.removeEventListener('pointerup', handlePointerUp)
+  }
+  
+  document.addEventListener('pointermove', handlePointerMove)
+  document.addEventListener('pointerup', handlePointerUp)
 }, true)
 
 ipcRenderer.on('overlay:collapse', () => {
