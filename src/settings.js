@@ -184,16 +184,7 @@ function setupPermissionResultListener() {
 
 // Helper function to update screenshots container visibility
 function updateScreenshotsContainerVisibility(show) {
-  const screenshotsContainer = document.getElementById('screenshotsContainer');
-  if (screenshotsContainer) {
-    if (show) {
-      screenshotsContainer.classList.remove('hidden');
-      screenshotsContainer.classList.add('flex');
-    } else {
-      screenshotsContainer.classList.add('hidden');
-      screenshotsContainer.classList.remove('flex');
-    }
-  }
+  // No-op: screenshots/local processing row removed
 }
 
 // Set up version click handler
@@ -204,17 +195,7 @@ function setupVersionClickHandler() {
     try {
       // Try to get version from package.json first
       versionElement.textContent = `v${packageInfo.version}`;
-      
-      // Add click handler for version number
-      versionElement.style.cursor = 'pointer'; // Make it look clickable
-      versionElement.addEventListener('click', (e) => {
-        const screenshotsCheckbox = document.getElementById('screenshotsCheckbox');
-        if (screenshotsCheckbox && !screenshotsCheckbox.checked) {
-          // Only toggle if checkbox is unchecked
-          const isHidden = document.getElementById('screenshotsContainer').classList.contains('hidden');
-          updateScreenshotsContainerVisibility(isHidden);
-        }
-      });
+      // Remove click easter egg
     } catch (error) {
       // If we can't get the version, just show a placeholder
       versionElement.textContent = 'v?.?.?';
@@ -704,23 +685,43 @@ function setupGeminiApiKeyListeners() {
   const geminiApiKeyInput = document.getElementById('geminiApiKeyInput');
   const toggleGeminiKeyBtn = document.getElementById('toggleGeminiKeyBtn');
   const clearGeminiKeyBtn = document.getElementById('clearGeminiKeyBtn');
+  const MASK = '************************'; // long placeholder for masked key
+  let hasStoredKey = false;
+  let isShowing = false;
   
   if (geminiApiKeyInput) {
-    // Load existing API key on focus (if any)
-    geminiApiKeyInput.addEventListener('focus', async () => {
+    // On mount, check if a key exists and show masked
+    (async () => {
       try {
         const result = await ipcRenderer.invoke('get-gemini-api-key');
-        if (result.success && result.apiKey) {
-          geminiApiKeyInput.value = result.apiKey;
+        hasStoredKey = !!(result && result.success && result.apiKey);
+        if (hasStoredKey) {
+          storedKeyCached = result.apiKey || '';
+        }
+        if (hasStoredKey) {
+          geminiApiKeyInput.value = MASK;
+          geminiApiKeyInput.type = 'password';
         }
       } catch (error) {
-        console.error('Error loading Gemini API key:', error);
+        console.error('Error checking Gemini API key:', error);
+      }
+    })();
+    
+    // If user focuses and currently masked, temporarily reveal only when toggled via button
+    geminiApiKeyInput.addEventListener('focus', async () => {
+      if (!isShowing && hasStoredKey) {
+        // Keep masked on focus; do nothing
       }
     });
     
     // Save API key on blur
     geminiApiKeyInput.addEventListener('blur', async () => {
-      const apiKey = geminiApiKeyInput.value.trim();
+      const raw = geminiApiKeyInput.value.trim();
+      if (hasStoredKey && !isShowing && raw === MASK) {
+        // Still masked, don't save
+        return;
+      }
+      const apiKey = raw;
       
       try {
         if (apiKey) {
@@ -728,11 +729,19 @@ function setupGeminiApiKeyListeners() {
           logAnalyticsEvent('gemini_api_key_saved', {
             has_key: true
           });
+          hasStoredKey = true;
+          storedKeyCached = apiKey;
+          if (!isShowing) {
+            geminiApiKeyInput.value = MASK;
+            geminiApiKeyInput.type = 'password';
+          }
         } else {
           await ipcRenderer.invoke('clear-gemini-api-key');
           logAnalyticsEvent('gemini_api_key_cleared', {
             has_key: false
           });
+          hasStoredKey = false;
+          storedKeyCached = '';
         }
       } catch (error) {
         console.error('Error saving Gemini API key:', error);
@@ -746,6 +755,19 @@ function setupGeminiApiKeyListeners() {
       const input = geminiApiKeyInput;
       if (input.type === 'password') {
         input.type = 'text';
+        isShowing = true;
+        // Populate with real key if we have a stored one and field currently masked
+        if (hasStoredKey && input.value === MASK) {
+          // Always refetch to ensure fresh value
+          ipcRenderer.invoke('get-gemini-api-key').then((res) => {
+            if (res && res.success && res.apiKey) {
+              storedKeyCached = res.apiKey;
+              input.value = res.apiKey;
+            } else {
+              input.value = '';
+            }
+          }).catch(() => { input.value = ''; });
+        }
         toggleGeminiKeyBtn.innerHTML = `
           <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
             <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
@@ -754,6 +776,10 @@ function setupGeminiApiKeyListeners() {
         `;
       } else {
         input.type = 'password';
+        isShowing = false;
+        if (hasStoredKey) {
+          input.value = MASK;
+        }
         toggleGeminiKeyBtn.innerHTML = `
           <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -769,6 +795,9 @@ function setupGeminiApiKeyListeners() {
       try {
         await ipcRenderer.invoke('clear-gemini-api-key');
         geminiApiKeyInput.value = '';
+        hasStoredKey = false;
+        isShowing = false;
+        storedKeyCached = '';
         logAnalyticsEvent('gemini_api_key_cleared', {
           has_key: false
         });

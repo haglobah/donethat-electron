@@ -427,6 +427,10 @@ signInForm.addEventListener("submit", (e) => {
     e.preventDefault();
     
     try {
+      // Show spinner while we wait for the browser SSO flow and callback
+      showSpinner();
+      // Guard against double-clicks
+      try { googleSignInBtn.disabled = true; googleSignInBtn.classList.add('disabled-btn'); } catch (_) {}
       // Call the Firebase function to start Google Sign In
       const { httpsCallable } = require('firebase/functions');
       const { functions } = require('./firebase.js');
@@ -444,6 +448,8 @@ signInForm.addEventListener("submit", (e) => {
           } else {
             console.error('No URL found in result:', JSON.stringify(result.data, null, 2));
             showErrorModal('No URL returned from Google Sign In function.');
+            hideSpinner();
+            try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
           }
         })
         .catch((error) => {
@@ -453,10 +459,14 @@ signInForm.addEventListener("submit", (e) => {
             error_message: error.message
           });
           showErrorModal(`Failed to start Google Sign In: ${error.message}`);
+          hideSpinner();
+          try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
         });
     } catch (error) {
       console.error('Google Sign In setup error:', error);
       showErrorModal(`Failed to setup Google Sign In: ${error.message}`);
+      hideSpinner();
+      try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
     }
   });
 
@@ -468,6 +478,8 @@ signInForm.addEventListener("submit", (e) => {
     signInWithCustomToken(auth, token)
       .then((userCredential) => {
         logAnalyticsEvent('google_sign_in_success');
+        hideSpinner();
+        try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
       })
       .catch((error) => {
         logAnalyticsEvent('google_sign_in_token_error', {
@@ -476,6 +488,8 @@ signInForm.addEventListener("submit", (e) => {
         });
         showErrorModal('Failed to complete Google Sign In. Please try again.');
         console.error("Firebase custom token sign-in error:", error);
+        hideSpinner();
+        try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
       });
   });
   

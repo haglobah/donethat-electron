@@ -2,7 +2,7 @@
 process.env.ORT_LOGGING_LEVEL = '4'
 process.env.ORT_LOGGING_VERBOSE = '0'
 
-const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification, powerMonitor } = require('electron')
+const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification, powerMonitor, globalShortcut } = require('electron')
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
@@ -268,6 +268,24 @@ ipcMain.handle('get-app-version', () => {
   return app.getVersion();
 });
 
+// Expose debug flag to renderer
+ipcMain.handle('get-debug-flag', () => {
+  return DEBUG === true;
+});
+
+// Recording control handlers for renderer topbar
+ipcMain.on('pauseForMs', (event, ms) => {
+  try { stateManager?.pauseRecording(Number(ms), mainWindow); } catch (e) {}
+});
+ipcMain.on('pauseForToday', () => {
+  try { stateManager?.pauseUntilNextWorkPeriod(mainWindow); } catch (e) {}
+});
+ipcMain.on('logout-request', () => {
+  if (mainWindow) {
+    mainWindow.webContents.send('logout');
+  }
+});
+
 // Add IPC handler for custom token
 ipcMain.on('firebase-custom-token', (event, token) => {
   if (mainWindow) {
@@ -404,6 +422,29 @@ app.whenReady().then(async () => {
     log.error('Error setting up updater:', error);
   }
 
+  // Register global shortcut for Open Chat
+  try {
+    const ok = globalShortcut.register('CommandOrControl+Shift+D', () => {
+      try {
+        if (!overlayWindow || overlayWindow.isDestroyed()) {
+          createOverlayWindow();
+        }
+        if (overlayWindow.isVisible()) {
+          overlayWindow.hide();
+        } else {
+          positionOverlayWindow();
+          overlayWindow.show();
+          overlayWindow.focus();
+        }
+      } catch (e) {}
+    });
+    if (!ok) {
+      log.warn('Failed to register global shortcut for Open Chat');
+    }
+  } catch (e) {
+    log.error('Error registering global shortcut:', e);
+  }
+
   // Also check permissions when the app is activated
   app.on('activate', async () => {
     await checkScreenCapturePermission();
@@ -472,6 +513,29 @@ ipcMain.on('overlay:open-main', (event, view) => {
     navigateToView('signup-next')
   }
 })
+
+// Toggle overlay visibility
+ipcMain.on('overlay:toggle', () => {
+  try {
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow();
+    }
+    positionOverlayWindow();
+    overlayWindow.show();
+    overlayWindow.focus();
+  } catch (e) {}
+});
+
+ipcMain.on('overlay:show', () => {
+  try {
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow();
+    }
+    positionOverlayWindow();
+    overlayWindow.show();
+    overlayWindow.focus();
+  } catch (e) {}
+});
 
 // Overlay dynamic resize
 ipcMain.on('overlay:resize', (event, height) => {
@@ -583,6 +647,7 @@ function createApplicationMenu() {
   const isLoggedIn = stateManager?.isAuthenticated() ?? false;
   const isPaused = stateManager?.isPaused() ?? false;
   const hasPermission = stateManager?.hasScreenCapturePermission() ?? false;
+  const isMac = process.platform === 'darwin';
   
   const template = [];
   
@@ -674,6 +739,20 @@ function createApplicationMenu() {
     label: 'Help',
     submenu: [
       {
+        label: `Open Chat (${isMac ? 'Cmd' : 'Ctrl'}+Shift+D)`,
+        accelerator: 'CmdOrCtrl+Shift+D',
+        click: () => {
+          try {
+            if (!overlayWindow || overlayWindow.isDestroyed()) {
+              createOverlayWindow();
+            }
+            positionOverlayWindow();
+            overlayWindow.show();
+            overlayWindow.focus();
+          } catch (e) {}
+        }
+      },
+      {
         label: 'Support',
         click: () => {
           const { shell } = require('electron');
@@ -719,7 +798,7 @@ function buildContextMenu() {
     click: () => navigateToView('signup-next')
   }, 
   {
-    label: 'Open Overlay',
+    label: `Open Chat (${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+Shift+D)`,
     click: () => {
       if (!overlayWindow || overlayWindow.isDestroyed()) {
         createOverlayWindow()
@@ -728,12 +807,6 @@ function buildContextMenu() {
       try { overlayWindow.show() } catch (e) {}
       try { overlayWindow.focus() } catch (e) {}
     }
-  },
-  // Add Open Settings option (renamed from Setup)
-  {
-    label: 'Open Settings',
-    click: () => navigateToView('settings'),
-    enabled: isLoggedIn
   },
   { type: 'separator' },
   // Add "Open Web Portal" option
@@ -853,27 +926,30 @@ ipcMain.on('resumeRecording', (event) => {
 // Separate window creation from showing
 function createWindow() {
   if (!mainWindow) {
-    // Platform-specific window configurations
-    const isPlatformMac = process.platform === 'darwin';
-    const windowWidth = DEBUG ? 600 : (isPlatformMac ? 250 : 300); // Wider for Win/Linux
-    const windowHeight = DEBUG ? 600 : (isPlatformMac ? 420 : 475); // Slightly taller for Win/Linux
+    // Use a standard, larger default size for all platforms
+    const windowWidth = 1024;
+    const windowHeight = 720;
     
     mainWindow = new BrowserWindow({
       width: windowWidth,
       height: windowHeight,
-      // Add frame on Linux/Windows, keep frameless on macOS
-      frame: !isPlatformMac,
-      resizable: false, // No resizing on any platform
-      // Make window movable on Linux/Windows, keep it fixed on macOS
-      movable: !isPlatformMac,
+      // Use a standard framed window on all platforms
+      frame: true,
+      resizable: true,
+      minWidth: 800,
+      minHeight: 560,
+      // Make window movable on all platforms
+      movable: true,
       show: false,
-      skipTaskbar: true, // Hide from taskbar on all platforms
+      // Show in taskbar/dock so it's a normal app window
+      skipTaskbar: false,
       fullscreenable: false, // Prevent full screen toggle
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,
         partition: 'persist:donethat',
         webSecurity: true,
+        webviewTag: true,
         // Add these to ensure proper persistence
         enableRemoteModule: false,
         sandbox: false,
@@ -906,12 +982,7 @@ function createWindow() {
       initCapture(mainWindow, handleCaptureAuthErrors, stateManager.getIdToken);
     })
 
-    // Only auto-hide on blur for macOS (popup style)
-    mainWindow.on('blur', () => {
-      if (process.platform === 'darwin' && mainWindow && mainWindow.isVisible()) {
-        mainWindow.hide()
-      }
-    })
+    // Remove macOS-specific auto-hide on blur to behave like a normal window
     
     // Handle close event for Windows/Linux - don't quit the app, just hide the window
     mainWindow.on('close', (event) => {
@@ -1059,83 +1130,10 @@ function sendOverlayState() {
 // Intelligently positions the window relative to the tray icon
 // with support for multiple displays
 function showWindowBelowTray() {
-  const isPlatformMac = process.platform === 'darwin';
-  
-  // Get window size
-  const windowBounds = mainWindow.getBounds();
-  
-  // Get tray icon bounds
-  const trayBounds = tray.getBounds();
-  
-  // Get all displays
-  const allDisplays = screen.getAllDisplays();
-  
-  // Find which display contains the tray icon
-  const trayDisplay = allDisplays.find(display => {
-    const { x, y, width, height } = display.bounds;
-    return (
-      trayBounds.x >= x && trayBounds.x < x + width &&
-      trayBounds.y >= y && trayBounds.y < y + height
-    );
-  }) || screen.getPrimaryDisplay(); // Fall back to primary if not found
-  
-  // For Windows, use the built-in center method which is more reliable
-  if (process.platform === 'win32') {
-    mainWindow.center();
-    mainWindow.show();
-    mainWindow.focus();
-    return;
-  }
-  
-  // Use the working area of the display containing the tray
-  const { workArea } = trayDisplay;
-  
-  let x, y;
-  
-  // Linux positioning logic
-  if (process.platform === 'linux') {
-    // Center in the display - calculate with integer positions
-    x = Math.floor(workArea.x + (workArea.width / 2) - (windowBounds.width / 2));
-    y = Math.floor(workArea.y + (workArea.height / 2) - (windowBounds.height / 2));
-    
-    // If we have valid tray bounds, try to position near it
-    if (trayBounds.width > 0 && trayBounds.height > 0) {
-      // Position at the bottom of the screen if the tray appears to be at the bottom
-      // Common for panels at bottom of screen
-      if (trayBounds.y > workArea.y + (workArea.height / 2)) {
-        y = Math.floor(workArea.y + workArea.height - windowBounds.height - 50); // 50px buffer
-      } else {
-        // Otherwise position at top with offset
-        y = Math.floor(workArea.y + 50);
-      }
-    }
-  } else {
-    // Position relative to tray for macOS
-    // Calculate x position: center window horizontally relative to the tray icon
-    x = Math.floor(trayBounds.x + (trayBounds.width / 2) - (windowBounds.width / 2));
-    
-    // For macOS, determine if tray is closer to top or bottom of display
-    const distanceToTop = trayBounds.y - workArea.y;
-    const distanceToBottom = (workArea.y + workArea.height) - (trayBounds.y + trayBounds.height);
-    
-    if (distanceToTop < distanceToBottom) {
-      // Tray is closer to top - position window below tray
-      y = Math.floor(trayBounds.y + trayBounds.height);
-    } else {
-      // Tray is closer to bottom - position window above tray
-      y = Math.floor(trayBounds.y - windowBounds.height);
-    }
-  }
-  
-  // Ensure window doesn't go off-screen horizontally
-  x = Math.floor(Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - windowBounds.width)));
-  
-  // Ensure window doesn't go off-screen vertically
-  y = Math.floor(Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - windowBounds.height)));
-  
-  mainWindow.setPosition(x, y, false);
-  mainWindow.show();
-  mainWindow.focus(); // Ensure window gets focus
+  // Show the main window centered and focused on all platforms
+  try { mainWindow.center(); } catch (e) {}
+  try { mainWindow.show(); } catch (e) {}
+  try { mainWindow.focus(); } catch (e) {}
 }
 
 // Modify the window-all-closed handler to respect system quit
@@ -1145,6 +1143,11 @@ app.on('window-all-closed', (event) => {
     event.preventDefault();
   }
   // Otherwise let the app quit normally
+});
+
+// Unregister shortcuts on quit
+app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch (e) {}
 });
 
 // Update the focus handler to use state manager

@@ -1,6 +1,8 @@
 const {
   browserLocalPersistence,
   setPersistence,
+  onAuthStateChanged,
+  onIdTokenChanged,
 } = require("firebase/auth");
 const { ipcRenderer } = require('electron');
 const { shell } = require('electron');
@@ -27,6 +29,45 @@ const {
 require('./audio-recorder');
 
 const coreViews = ['settings', 'dashboard'];
+
+// Reference to embedded portal webview
+let portalView = null;
+let lastPortalTokenSent = null;
+let lastPortalTokenTs = 0;
+
+// Global updater for the Settings/Dashboard toggle button label
+function updateSettingsToggleLabelGlobal() {
+  try {
+    const settingsToggleBtn = document.getElementById('openSettingsViewBtn');
+    if (!settingsToggleBtn) return;
+    const v = getCurrentView();
+    if (v === 'settings') settingsToggleBtn.textContent = 'Dashboard';
+    else settingsToggleBtn.textContent = 'Recording Settings';
+  } catch (_) {}
+}
+
+// Proactively send token to the embedded portal when available
+async function sendPortalLoginIfPossible() {
+  try {
+    if (!portalView) return;
+    if (!isAuthenticated() || !auth?.currentUser?.getIdToken) return;
+    const token = await auth.currentUser.getIdToken();
+    // Debounce: avoid spamming the portal with the same token too frequently
+    const now = Date.now();
+    const sameToken = lastPortalTokenSent && lastPortalTokenSent === token;
+    const withinCooldown = now - lastPortalTokenTs < 10000; // 10s
+    if (sameToken && withinCooldown) {
+      console.log('[PortalSync] Skipping token send (debounced)');
+      return;
+    }
+    console.log('[PortalSync] Sending auth token to webview');
+    try { portalView.send('auth:setToken', token); } catch (e) { console.error('[PortalSync] Error sending token', e); }
+    lastPortalTokenSent = token;
+    lastPortalTokenTs = now;
+    lastPortalAuthResponseType = 'token';
+    lastPortalAuthResponseTs = now;
+  } catch (e) {}
+}
 
 // Set persistence to browser local storage
 setPersistence(auth, browserLocalPersistence)
@@ -111,8 +152,22 @@ function navigateToView(viewName) {
     allViews.forEach(view => view.classList.add('hidden'));
     // Show the requested view
     viewToShow.classList.remove('hidden');
+    // Toggle shared topbar visibility (hide on auth screens)
+    const appTopbar = document.getElementById('appTopbar');
+    const isAuthScreen = (viewName === 'signin' || viewName === 'signup' || viewName === 'reset');
+    if (appTopbar) {
+      if (isAuthScreen) appTopbar.classList.add('hidden');
+      else appTopbar.classList.remove('hidden');
+    }
+    // If opening dashboard, proactively attempt login message to portal
+    if (viewName === 'dashboard') {
+      sendPortalLoginIfPossible();
+    }
     // Update the current view state
     updateCurrentView(viewName);
+
+    // Update labels for settings button (global updater)
+    updateSettingsToggleLabelGlobal();
     
     // Track page view in analytics with all necessary details
     trackPageView(viewName);
@@ -189,6 +244,201 @@ document.addEventListener('DOMContentLoaded', () => {
   initializePermissions(navigateToView);
   initializeAnalytics();
 
+  // Grab the portal webview if present
+  portalView = document.getElementById('portalView');
+  const openChatBtn = document.getElementById('openChatBtn');
+  const openSettingsViewBtn = document.getElementById('openSettingsViewBtn');
+  
+  function activateSettingsSection(targetId) {
+    const sections = [
+      'section-recording',
+      'section-schedule',
+      'section-subscription',
+      'section-advanced',
+      'section-about'
+    ];
+    // Hide all
+    sections.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.add('hidden');
+    });
+    // Show target
+    const target = document.getElementById(targetId);
+    if (target) target.classList.remove('hidden');
+    // Update active tab
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+      tab.classList.remove('active');
+      const href = (tab.getAttribute('href') || '').replace('#','');
+      if (href === targetId) tab.classList.add('active');
+    });
+  }
+  
+  function setupSettingsNav() {
+    document.querySelectorAll('.settings-tab').forEach(tab => {
+      tab.addEventListener('click', (e) => {
+        e.preventDefault();
+        const href = (tab.getAttribute('href') || '').replace('#','');
+        if (href) activateSettingsSection(href);
+      });
+    });
+  }
+  if (openChatBtn) {
+    try {
+      const isMac = process.platform === 'darwin';
+      openChatBtn.textContent = `Open Chat (${isMac ? 'Cmd' : 'Ctrl'}+Shift+D)`;
+    } catch (e) {}
+    openChatBtn.addEventListener('click', () => {
+      try { ipcRenderer.send('overlay:show'); } catch (e) {}
+    });
+  }
+  if (openSettingsViewBtn) {
+    openSettingsViewBtn.addEventListener('click', () => {
+      const current = getCurrentView();
+      if (current === 'settings') {
+        navigateToView('dashboard');
+      } else {
+        navigateToView('settings');
+      }
+    });
+  }
+  // Settings/back icon swap
+  const settingsOrBackBtn = document.getElementById('settingsOrBackBtn');
+  const settingsOrBackIcon = document.getElementById('settingsOrBackIcon');
+  function updateSettingsIcon() {
+    const v = getCurrentView();
+    if (v === 'settings') {
+      settingsOrBackBtn?.setAttribute('title', 'Back');
+      if (settingsOrBackIcon) settingsOrBackIcon.textContent = '←';
+    } else {
+      settingsOrBackBtn?.setAttribute('title', 'Settings');
+      if (settingsOrBackIcon) settingsOrBackIcon.textContent = '⚙︎';
+    }
+  }
+  settingsOrBackBtn?.addEventListener('click', () => {
+    const v = getCurrentView();
+    if (v === 'settings') navigateToView('dashboard'); else navigateToView('settings');
+  });
+
+  // Recording dropdown
+  const recordingBtn = document.getElementById('recordingStateBtn');
+  const recordingIcon = document.getElementById('recordingStateIcon');
+  const recordingMenu = document.getElementById('recordingMenu');
+  const pauseTodayBtn = document.getElementById('pauseTodayBtn');
+  const resumeNowBtn = document.getElementById('resumeNowBtn');
+
+  function toggleRecordingMenu(open) {
+    if (!recordingMenu) return;
+    if (open === true) recordingMenu.classList.remove('hidden');
+    else if (open === false) recordingMenu.classList.add('hidden');
+    else recordingMenu.classList.toggle('hidden');
+  }
+
+  // Enable/disable menu entries based on pause state
+  function updateRecordingMenuState(isPaused) {
+    if (!recordingMenu) return;
+    // Disable resume when already recording; disable pause durations when paused
+    recordingMenu.querySelectorAll('[data-pause]')?.forEach(el => {
+      if (isPaused) el.classList.add('disabled'); else el.classList.remove('disabled');
+    });
+    if (resumeNowBtn) {
+      if (isPaused) resumeNowBtn.classList.remove('disabled'); else resumeNowBtn.classList.add('disabled');
+    }
+    if (pauseTodayBtn) {
+      if (isPaused) pauseTodayBtn.classList.add('disabled'); else pauseTodayBtn.classList.remove('disabled');
+    }
+  }
+
+  recordingBtn?.addEventListener('click', () => toggleRecordingMenu());
+  document.addEventListener('click', (e) => {
+    if (!recordingMenu || !recordingBtn) return;
+    if (!recordingMenu.contains(e.target) && !recordingBtn.contains(e.target)) {
+      recordingMenu.classList.add('hidden');
+    }
+  });
+  // Pause durations
+  recordingMenu?.querySelectorAll('[data-pause]')?.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ms = Number(btn.getAttribute('data-pause')) || 0;
+      if (ms > 0) ipcRenderer.send('pauseForMs', ms);
+      toggleRecordingMenu(false);
+    });
+  });
+  pauseTodayBtn?.addEventListener('click', () => { if (!pauseTodayBtn.classList.contains('disabled')) { ipcRenderer.send('pauseForToday'); toggleRecordingMenu(false); } });
+  resumeNowBtn?.addEventListener('click', () => { if (!resumeNowBtn.classList.contains('disabled')) { ipcRenderer.send('resumeRecording'); toggleRecordingMenu(false); } });
+
+  // Update recording icon on pause/resume changes
+  function setRecordingIcon(isPaused) {
+    if (!recordingIcon || !recordingBtn) return;
+    if (isPaused) {
+      recordingIcon.textContent = '||';
+      recordingIcon.classList.remove('active');
+      recordingBtn?.setAttribute('title', 'Paused');
+    } else {
+      recordingIcon.textContent = '●';
+      recordingIcon.classList.add('active'); // orange dot when recording
+      recordingBtn?.setAttribute('title', 'Recording');
+    }
+    updateRecordingMenuState(isPaused);
+  }
+  // Reflect initial state (will be updated on next IPC) by assuming recording unless told otherwise
+  updateRecordingMenuState(false);
+
+  // Change settings button label on view change
+  // use global updater
+
+  ipcRenderer.on('pauseStateChanged', (event, isPaused) => {
+    setRecordingIcon(isPaused);
+  });
+
+  // Initialize settings nav handlers
+  setupSettingsNav();
+
+  // Sync initial labels
+  updateSettingsToggleLabelGlobal();
+
+  // Keep settings/back icon accurate on load
+  updateSettingsIcon();
+
+  if (portalView) {
+    // When the webview is ready, optionally inject further config
+    portalView.addEventListener('dom-ready', () => {
+      // Proactively send login token whenever portal becomes ready
+      sendPortalLoginIfPossible();
+      // Open devtools only when DEBUG flag is true
+      (async () => {
+        try {
+          const isDebug = await ipcRenderer.invoke('get-debug-flag');
+          if (isDebug) {
+            try { portalView.openDevTools(); } catch (e) {}
+          }
+        } catch (e) {}
+      })();
+    });
+
+    // Also send token on internal navigations
+    try { portalView.addEventListener('did-navigate', sendPortalLoginIfPossible); } catch (e) {}
+    try { portalView.addEventListener('did-frame-finish-load', sendPortalLoginIfPossible); } catch (e) {}
+
+    // Pipe webview console to renderer for visibility
+    try {
+      portalView.addEventListener('console-message', (e) => {
+        console.log('[Webview]', e.level, e.message);
+      });
+    } catch (e) {}
+
+    // Handle portal-initiated logout only; we broadcast auth state proactively
+    portalView.addEventListener('ipc-message', async (event) => {
+      if (event.channel === 'portal:logout') {
+        // Web app initiated logout -> perform desktop logout flow
+        try {
+          const { auth } = require('./firebase.js');
+          const { signOut } = require('firebase/auth');
+          await signOut(auth);
+        } catch (e) {}
+      }
+    });
+  }
+
   // Add event listener for app settings link
   const appSettingsLink = document.querySelector('.app-settings-link');
   if (appSettingsLink) {
@@ -205,6 +455,46 @@ document.addEventListener('DOMContentLoaded', () => {
       e.preventDefault();
       shell.openExternal('https://donethat.ai/support');
     });
+  }
+});
+
+// Keep portal session in sync with desktop auth
+onAuthStateChanged(auth, async (user) => {
+  if (!portalView) return;
+  if (user) {
+    try {
+      const token = await user.getIdToken();
+      // Send token via IPC to the webview; web app will handle login via message
+      console.log('[PortalSync] Auth changed: sending token');
+      try { portalView.send('auth:setToken', token); } catch (e) { console.error('[PortalSync] Error sending token', e); }
+      lastPortalTokenSent = token;
+      lastPortalTokenTs = Date.now();
+      lastPortalAuthResponseType = 'token';
+      lastPortalAuthResponseTs = Date.now();
+    } catch (e) {}
+  } else {
+    // Notify webview to clear client-side session via message
+    console.log('[PortalSync] Auth changed: sending logout');
+    try { portalView.send('auth:logout'); } catch (e) { console.error('[PortalSync] Error sending logout', e); }
+    lastPortalTokenSent = null;
+    lastPortalTokenTs = 0;
+    lastPortalAuthResponseType = 'logout';
+    lastPortalAuthResponseTs = Date.now();
+  }
+});
+
+onIdTokenChanged(auth, async (user) => {
+  if (!portalView) return;
+  if (user) {
+    try {
+      const token = await user.getIdToken();
+      console.log('[PortalSync] Token refreshed: sending token');
+      portalView.send('auth:setToken', token);
+      lastPortalTokenSent = token;
+      lastPortalTokenTs = Date.now();
+      lastPortalAuthResponseType = 'token';
+      lastPortalAuthResponseTs = Date.now();
+    } catch (e) {}
   }
 });
 
