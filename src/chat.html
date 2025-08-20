@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';" />
+    <link href="../build/output.css" rel="stylesheet" />
+    <link href="../styles.css" rel="stylesheet" />
+    <title>Chat</title>
+    <style>
+      html, body { height: 100%; }
+      body { background: transparent; }
+      .overlay-root { }
+      .drag-region { -webkit-app-region: drag; cursor: grab; }
+      .no-drag { -webkit-app-region: no-drag; }
+      .overlay-card { backdrop-filter: blur(6px); background: rgba(245,245,245,0.95); box-shadow: 0 6px 18px rgba(0,0,0,0.10); border-radius: 10px; }
+      .speech { position: absolute; right: 0; bottom: 60px; max-width: 220px; background: #111; color: #fff; border-radius: 8px; padding: 6px 8px; box-shadow: 0 8px 20px rgba(0,0,0,0.22); font-size: 11px; }
+      .speech:after { content: ''; position: absolute; right: 10px; bottom: -6px; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid #111; }
+      .icon-btn { width: 16px; height: 16px; text-align: center; border-radius: 4px; font-size: 0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+      /* Toggle color only (no bg) */
+      .icon-btn.active { background: transparent; color: var(--color-primary); }
+      #includeScreenBtn { color: #111; pointer-events: auto; background: transparent; }
+      /* Robust centering using flex */
+      .input-row { display: flex; align-items: center; gap: 6px; }
+      .input-wrap { position: relative; flex: 1 1 auto; }
+      .input-wrap textarea { padding-right: 24px !important; padding-top: 5px !important; padding-bottom: 5px !important; border: 1px solid var(--color-neutral-300) !important; min-height: 28px; height: auto; line-height: 18px; display: block; resize: none; }
+      .input-wrap textarea:focus { outline: none !important; box-shadow: none !important; border-color: var(--color-neutral-300) !important; }
+      .screen-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; z-index: 10; }
+      .icon-btn svg { width: 16px; height: 16px; }
+      .tiny-text { font-size: 12px; }
+      .text-btn { font-size: 12px; background: transparent; color: #111; border: none; padding: 0 2px; line-height: 18px; }
+      .bubble { max-width: 85%; border-radius: 10px; padding: 6px 8px; font-size: 12px; line-height: 1.25; }
+      .bubble-user { background: #ffffff; color: #111; }
+      .bubble-system { background: rgba(255, 182, 35, 0.18); color: #111; }
+      .z-chat { position: relative; z-index: 1; }
+      .z-input { position: relative; z-index: 2; }
+    </style>
+  </head>
+  <body class="w-[260px] h-full overflow-visible">
+    <div id="overlayRoot" class="overlay-root relative w-full h-full">
+      <div class="overlay-card w-full p-2 relative flex flex-col justify-center drag-region">
+        <div id="chatContainer" class="z-chat space-y-2 overflow-y-auto pb-2 flex-1"></div>
+        <div class="z-input">
+          <div class="max-w-full mx-auto input-row">
+            <div class="input-wrap flex-1 no-drag">
+              <button id="includeScreenBtn" class="no-drag icon-btn screen-toggle" title="Include screenshot" aria-pressed="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="3" y="5" width="18" height="12" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
+                  <rect x="9" y="19" width="6" height="2" rx="1" fill="currentColor"/>
+                </svg>
+              </button>
+              <textarea id="chatInput" rows="1" class="tiny-text leading-tight py-2 px-2 w-full resize-none" placeholder="Ask me anything" style="background: rgba(245,245,245,0.95); border: 1px solid rgba(0,0,0,0.05); border-radius: 6px; -webkit-user-select: text; user-select: text;"></textarea>
+            </div>
+            <div class="flex items-center gap-1">
+              <button id="clearBtn" class="no-drag icon-btn" title="New chat" aria-label="New chat">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 4a8 8 0 108 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M12 2v6m0 0l3-3m-3 3L9 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <button id="openAppBtn" class="no-drag icon-btn" title="Dashboard" aria-label="Dashboard">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M3 12l9-9 9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M5 10v10h14V10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <button id="closeOverlayBtn" class="no-drag icon-btn" title="Close chat (Esc, Cmd/Ctrl+Shift+D)" aria-label="Close chat">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      
+    </div>
+
+    <script src="./chat.js"></script>
+  </body>
+  </html>
