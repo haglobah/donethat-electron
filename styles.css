@@ -151,6 +151,13 @@
   border-top-color: var(--color-primary-dark);
 }
 
+/* Small spinner for buttons */
+.spinner-small {
+  @apply w-4 h-4 border-2 rounded-full animate-spin inline-block mr-2;
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+}
+
 /* Spinner overlay */
 .spinner-overlay {
   @apply absolute inset-0 bg-white/80 flex items-center justify-center z-10;
@@ -875,6 +882,14 @@ body {
 
 .summary-submit-btn:disabled {
   @apply bg-gray-300 cursor-not-allowed;
+}
+
+.summary-pause-note {
+  @apply px-4 pb-4;
+}
+
+.summary-pause-text {
+  @apply text-xs text-gray-500 text-right;
 }
 
 .summary-note {

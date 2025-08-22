@@ -251,7 +251,9 @@ if (summaryCustomInput && summaryAddCustomBtn) {
 
 if (summarySubmitBtn) {
   summarySubmitBtn.addEventListener('click', () => {
-    summaryLoadingSpinner.classList.remove('hidden');
+    // Show loading state
+    summarySubmitBtn.disabled = true;
+    summarySubmitBtn.innerHTML = '<div class="spinner-small"></div> Submitting...';
 
     // Filter to only include checked bullet points
     const selectedBullets = bulletPoints.filter((_, index) => bulletPointsChecked[index]);
@@ -264,7 +266,9 @@ if (summarySubmitBtn) {
       customBullets: customBullets.map(bullet => bullet.text || bullet),
       comment: commentText
     }).then(() => {
-      summaryLoadingSpinner.classList.add('hidden');
+      // Reset button state
+      summarySubmitBtn.disabled = false;
+      summarySubmitBtn.textContent = 'Submit';
 
       const now = new Date();
       const isRecentSummary = currentPeriodEndTime && (now.getTime() - currentPeriodEndTime < (60 * 60 * 1000));
@@ -297,7 +301,9 @@ if (summarySubmitBtn) {
       resetSummaryState();
 
     }).catch((error) => {
-      summaryLoadingSpinner.classList.add('hidden');
+      // Reset button state on error
+      summarySubmitBtn.disabled = false;
+      summarySubmitBtn.textContent = 'Submit';
       console.error("Error submitting summary:", error);
       showErrorModal(`Error submitting summary: ${error.message}`);
       
