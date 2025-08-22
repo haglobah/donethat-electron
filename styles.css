@@ -199,18 +199,6 @@
   background-color: var(--color-primary-dark);
 }
 
-/* Time input container styling */
-.time-input-container {
-  @apply relative w-full;
-}
-
-/* Summary period display */
-.summary-period {
-  @apply text-xs text-center py-2 mb-3 border-b;
-  color: var(--color-neutral-600);
-  border-color: var(--color-neutral-200);
-}
-
 /* Disabled button styling */
 .disabled-btn {
   background-color: #9ca3af !important;
@@ -224,8 +212,6 @@
   background-color: #9ca3af !important;
   transform: none;
 }
-
-
 
 /* Linux installation section styling */
 #linuxInstallSection {
@@ -291,39 +277,6 @@
   background-size: 16px 16px;
 }
 
-/* Price display container styling */
-.price-display-container {
-  @apply w-full mb-4 mt-2;
-}
-
-/* Price display box */
-.price-display {
-  @apply border border-gray-300 rounded-lg p-3 text-center;
-  background-color: var(--color-neutral-50);
-}
-
-/* Price amount */
-.price-amount {
-  @apply text-2xl font-bold inline-block mr-1;
-  color: var(--color-primary);
-}
-
-/* Price period */
-.price-period {
-  @apply text-sm inline-block;
-  color: var(--color-neutral-600);
-}
-
-/* Add these styles */
-#payment-element {
-  min-height: 300px;
-  margin-bottom: 1rem;
-}
-
-.StripeElement {
-  width: 100%;
-}
-
 /* Add custom utilities using CSS variables */
 .bg-primary {
   background-color: var(--color-primary);
@@ -368,72 +321,6 @@
 
 #settingsView .form-group > div:first-child {
   margin-top: 0;
-}
-
-/* Custom Bullet Points Styles */
-.custom-bullets-container {
-  @apply flex flex-col;
-}
-
-/* Spacer between original bullets and custom bullets */
-.bullets-spacer {
-  height: 1rem;
-}
-
-/* Style for custom bullets */
-.custom-bullet {
-  @apply flex items-center py-1;
-}
-
-/* Style for the add and delete icons */
-.delete-icon, .add-bullet-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-right: 0.5rem;
-  width: 1rem;
-  height: 1rem;
-  color: #9ca3af; /* Gray-400 */
-  font-size: 1.25rem;
-  cursor: pointer;
-  transition: color 0.2s ease-in-out;
-  flex-shrink: 0;
-}
-
-.delete-icon:hover, .add-bullet-icon:hover {
-  color: var(--color-primary);
-}
-
-/* Bullet input row */
-.bullet-input-row {
-  @apply flex items-center py-1;
-}
-
-/* Full-width custom bullet input */
-.custom-bullet-input {
-  flex: 1;
-  border: 1px solid #d1d5db;
-  border-radius: 0.375rem;
-  padding: 0.375rem 0.5rem;
-  font-size: 0.875rem;
-  color: #374151;
-  background-color: #fff;
-  outline: none;
-  transition: border-color 0.2s ease-in-out;
-  margin-left: 0.25rem;
-}
-
-.custom-bullet-input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 1px var(--color-primary-focus);
-}
-
-.custom-bullet-italic {
-  @apply italic;
-}
-
-.custom-bullet-input::placeholder {
-  color: #9ca3af;
 }
 
 /* Custom checkbox styles */
@@ -492,114 +379,6 @@
   @apply text-gray-400 line-through;
 }
 
-/* Heart icon styles */
-.heart-icon {
-  @apply ml-auto cursor-pointer transition-colors duration-200 text-base;
-  color: var(--color-neutral-500);
-}
-.heart-icon:hover {
-  color: var(--color-neutral-700);
-}
-
-.heart-icon.active {
-  color: var(--color-primary);
-}
-.heart-icon.active:hover {
-  color: var(--color-primary-dark);
-}
-
-/* Disabled heart icon when item is crossed out */
-.heart-icon.opacity-50.pointer-events-none {
-  @apply cursor-default;
-}
-
-/* Comment input field styling */
-.comment-input {
-  @apply w-full border border-gray-300 p-2 rounded-lg text-sm focus:outline-none focus:ring-1 transition duration-200 mt-3;
-  --tw-ring-color: var(--color-primary);
-  min-height: 60px;
-  resize: none;
-}
-
-.comment-input::placeholder {
-  @apply text-gray-400;
-}
-
-/* Summary container */
-.summary-container {
-  @apply h-68 mb-3 border border-gray-200 rounded p-2 overflow-y-auto text-sm;
-}
-
-/* Make borders consistent between inputs and containers */
-.form-input, .summary-container {
-  @apply border border-gray-300 rounded-lg;
-}
-
-/* Modal */
-.modal {
-  @apply fixed inset-0 bg-black/50 flex items-center justify-center z-50;
-}
-
-/* Modal content */
-.modal-content {
-  @apply max-w-xs w-full bg-white p-4 border border-black rounded-lg shadow-xl;
-}
-
-/* Auth page layout */
-.auth-page {
-  min-height: calc(100vh - 0px);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  padding: 48px 24px;
-  background: linear-gradient(to bottom, #ffffff, #f9fafb);
-  overflow-y: auto;
-}
-
-.auth-header {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 24px;
-}
-
-.auth-logo {
-  width: 40px;
-  height: 40px;
-}
-
-.auth-title {
-  margin-left: 12px;
-  font-size: 24px;
-  font-weight: 700;
-  color: #111827;
-}
-
-.auth-container {
-  width: 100%;
-  max-width: 520px;
-  margin: 0 auto;
-  padding-left: 12px;
-  padding-right: 12px;
-}
-
-.auth-card {
-  background: #fff;
-  border: 1px solid #f3f4f6;
-  border-radius: 14px;
-  padding: 28px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
-  margin-bottom: 24px; /* modest whitespace below tile */
-}
-
-.auth-legal {
-  margin-top: 12px;
-  font-size: 12px;
-  color: #6b7280;
-  text-align: center;
-}
-
 /* Layout: top bar + fill remainder with dashboard */
 body {
   display: flex;
@@ -655,16 +434,6 @@ body {
   background: var(--color-neutral-50);
 }
 
-.icon-rotate {
-  display: inline-block;
-  font-size: 14px;
-}
-
-.icon-gear {
-  display: inline-block;
-  font-size: 14px;
-}
-
 /* Recording dropdown */
 .recording-control { position: relative; }
 .recording-control button {
@@ -716,17 +485,6 @@ body {
   pointer-events: none;
   color: #9ca3af;
 }
-
-/* Settings layout */
-.settings-page {
-  min-height: calc(100vh - 0px);
-  display: flex;
-  flex-direction: column;
-  padding: 24px;
-}
-
-.section-block { margin-bottom: 18px; }
-.section-title { font-weight: 600; font-size: 14px; margin-bottom: 8px; }
 
 .topbar-actions {
   display: flex;
@@ -1035,47 +793,6 @@ body {
   flex: 1 1 auto;
 }
 
-.linux-permission-help {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: white;
-  padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-  max-width: 500px;
-  width: 90%;
-  z-index: 1000;
-}
-
-.linux-permission-help h3 {
-  margin: 0 0 15px 0;
-  color: #333;
-  font-size: 18px;
-}
-
-.linux-permission-help p {
-  margin: 0 0 20px 0;
-  color: #666;
-  line-height: 1.5;
-  white-space: pre-line;
-}
-
-.linux-permission-help button {
-  background: #007bff;
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 4px;
-  cursor: pointer;
-  float: right;
-}
-
-.linux-permission-help button:hover {
-  background: #0056b3;
-}
-
 /* Toggle switch */
 .toggle {
   position: relative;
@@ -1162,4 +879,59 @@ body {
   font-size: 14px;
   color: #111827;
   line-height: 1;
+}
+
+/* Auth page layout */
+.auth-page {
+  min-height: calc(100vh - 0px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 48px 24px;
+  background: linear-gradient(to bottom, #ffffff, #f9fafb);
+  overflow-y: auto;
+}
+
+.auth-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.auth-logo {
+  width: 40px;
+  height: 40px;
+}
+
+.auth-title {
+  margin-left: 12px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.auth-container {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.auth-card {
+  background: #fff;
+  border: 1px solid #f3f4f6;
+  border-radius: 14px;
+  padding: 28px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  margin-bottom: 24px; /* modest whitespace below tile */
+}
+
+.auth-legal {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #6b7280;
+  text-align: center;
 }
