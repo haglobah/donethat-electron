@@ -1,17 +1,22 @@
 const { ipcRenderer } = require("electron");
-const { updateScreenCapturePermission } = require('./app-state.js');
+const { updateScreenCapturePermission, hasScreenCapturePermission } = require('./app-state.js');
 const { logAnalyticsEvent } = require('./analytics.js');
 
 const openSettingsBtn = document.getElementById("openSettingsBtn");
 
 let navigateToView;
+let getCurrentView;
 
 // Initialize permissions module
-function initializePermissions(viewNavigator) {
+function initializePermissions(viewNavigator, currentViewGetter) {
   navigateToView = viewNavigator;
+  getCurrentView = currentViewGetter;
   
   // Set up event listeners for platform-specific permission issues
   setupPlatformSpecificListeners();
+  
+  // Set up screen capture checkbox behavior
+  setupScreenCaptureCheckboxBehavior();
 }
 
 // Set up event listeners for platform-specific permission troubleshooting
@@ -82,17 +87,37 @@ function showLinuxPermissionHelp(permissionType) {
         </button>
       </div>
     `;
-  } else {
+  } else if (permissionType === 'audio') {
     modalContent.innerHTML = `
       <h3 class="text-lg font-medium mb-4">${title}</h3>
       <p class="mb-3">${message}</p>
       
       <div class="p-4 bg-gray-100 rounded-lg mb-4">
-        <p>On Linux, you may need to:</p>
+        <p class="font-medium mb-2">On Linux:</p>
         <ul class="list-disc pl-5 mt-2 space-y-1">
-          <li>Install required packages: <code>wmctrl</code>, <code>xdotool</code>, or <code>evtest</code></li>
-          <li>Ensure DoneThat has appropriate permissions</li>
-          <li>For Wayland sessions, some features may have limited functionality</li>
+          <li>Grant microphone access in your system settings</li>
+          <li>For Wayland sessions, ensure your browser/Electron has audio permissions</li>
+          <li>Check that your microphone is not being used by other applications</li>
+        </ul>
+      </div>
+      
+      <div class="flex justify-end">
+        <button id="permHelpCloseBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
+          Got it
+        </button>
+      </div>
+    `;
+  } else if (permissionType === 'windows') {
+    modalContent.innerHTML = `
+      <h3 class="text-lg font-medium mb-4">${title}</h3>
+      <p class="mb-3">${message}</p>
+      
+      <div class="p-4 bg-gray-100 rounded-lg mb-4">
+        <p class="font-medium mb-2">On Linux:</p>
+        <ul class="list-disc pl-5 mt-2 space-y-1">
+          <li>Grant accessibility permissions in your system settings</li>
+          <li>For Wayland sessions, some window tracking features may be limited</li>
+          <li>Ensure DoneThat has permission to access window information</li>
         </ul>
       </div>
       
@@ -137,8 +162,16 @@ ipcRenderer.on('screenCapturePermission', (event, data) => {
     if (!hasPermission && process.platform === 'linux' && isWaylandSession !== null) {
           updateLinuxInstructions(isWaylandSession);     
     }
-    navigateToView('signup-next');
-  });
+    
+    // Update screen capture checkbox in settings if we're on settings view
+    updateScreenCaptureCheckbox(hasPermission);
+    
+    // Only navigate if we're not already on settings view
+    const currentView = getCurrentView ? getCurrentView() : null;
+    if (currentView !== 'settings') {
+      navigateToView('signup-next');
+    }
+});
 
 // Add listeners for other permission types
 ipcRenderer.on('audioPermission', (event, hasPermission) => {
@@ -176,40 +209,97 @@ ipcRenderer.on('windowsPermission', (event, hasPermission) => {
 
 // Simplified function to update Linux installation instructions
 function updateLinuxInstructions(isWaylandSession) {
-
-    const standardPermissionSection = document.getElementById('standardPermissionSection');
     const linuxInstallSection = document.getElementById('linuxInstallSection');
   
     // Show Linux install instructions
-    standardPermissionSection.classList.add('hidden');
-    linuxInstallSection.classList.remove('hidden');
+    if (linuxInstallSection) {
+      linuxInstallSection.classList.remove('hidden');
+    }
   
     // Hide all instruction sets first
     const waylandInstructions = document.getElementById('waylandInstructions');
     const x11Instructions = document.getElementById('x11Instructions');
   
-    waylandInstructions.classList.add('hidden');
-    x11Instructions.classList.add('hidden');
+    if (waylandInstructions) waylandInstructions.classList.add('hidden');
+    if (x11Instructions) x11Instructions.classList.add('hidden');
   
     // Show appropriate instructions based on session type
     if (isWaylandSession) {
-      waylandInstructions.classList.remove('hidden');
+      if (waylandInstructions) waylandInstructions.classList.remove('hidden');
     } else {
-      x11Instructions.classList.remove('hidden');
+      if (x11Instructions) x11Instructions.classList.remove('hidden');
     }
+}
+
+// Function to update screen capture checkbox in settings
+function updateScreenCaptureCheckbox(hasPermission) {
+  const checkbox = document.getElementById('screenCheckbox');
+  if (!checkbox) return;
+  
+  const toggleLabel = checkbox.closest('.toggle');
+  
+  try {
+    // Show checked when we have permission; unchecked when not.
+    checkbox.checked = !!hasPermission;
+    
+    if (!hasPermission) {
+      // Permission missing: enable toggle and make it look clickable
+      checkbox.disabled = false;
+      if (toggleLabel) {
+        toggleLabel.style.opacity = '1';
+        toggleLabel.style.cursor = 'pointer';
+        toggleLabel.title = 'Grant screen recording permission';
+      }
+    } else {
+      // Permission granted: disable toggle and make it look active but disabled
+      checkbox.disabled = true;
+      if (toggleLabel) {
+        toggleLabel.style.opacity = '0.7';
+        toggleLabel.style.cursor = 'not-allowed';
+        toggleLabel.title = 'Screen recording enabled (managed by system)';
+      }
+    }
+  } catch (error) {
+    console.error('Error updating screen capture checkbox:', error);
+  }
+}
+
+// Set up screen capture checkbox behavior
+function setupScreenCaptureCheckboxBehavior() {
+  const checkbox = document.getElementById('screenCheckbox');
+  if (!checkbox) return;
+  
+  const toggleLabel = checkbox.closest('.toggle');
+
+  // When user clicks the toggle area, open system settings
+  if (toggleLabel) {
+    toggleLabel.addEventListener('click', (e) => {
+      if (!hasScreenCapturePermission()) {
+        e.preventDefault();
+        e.stopPropagation();
+        // Log and request permission via system settings
+        logAnalyticsEvent('screen_capture_requested', {
+          status: 'requested',
+          platform: process.platform
+        });
+        ipcRenderer.send('requestScreenCapturePermission');
+      }
+      // When permission exists, the toggle is disabled so clicks are ignored
+    });
   }
 
-    // Handle permission buttons
-    if (openSettingsBtn) {
-        openSettingsBtn.addEventListener("click", () => {
-          // Log that user requested screen capture permission
-          logAnalyticsEvent('screen_capture_requested', {
-            status: 'requested',
-            platform: process.platform
-          });
-          ipcRenderer.send("requestScreenCapturePermission");
-        });
-      }
+  // Handle permission buttons
+  if (openSettingsBtn) {
+    openSettingsBtn.addEventListener("click", () => {
+      // Log that user requested screen capture permission
+      logAnalyticsEvent('screen_capture_requested', {
+        status: 'requested',
+        platform: process.platform
+      });
+      ipcRenderer.send("requestScreenCapturePermission");
+    });
+  }
+}
 
 // Functions to request permissions for each capture type
 function requestAudioPermission() {

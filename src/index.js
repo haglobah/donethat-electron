@@ -246,7 +246,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeDashboard(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   subscriptionInitialize(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   initializeSettings(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
-  initializePermissions(navigateToView);
+  initializePermissions(navigateToView, getCurrentView);
   initializeAnalytics();
 
   // Grab the portal webview if present

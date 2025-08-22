@@ -304,6 +304,32 @@
                 </div>
                 <label class="toggle"><input type="checkbox" id="screenCheckbox" checked><span class="slider"></span></label>
               </div>
+
+              <!-- Linux-specific installation instructions (hidden by default) -->
+              <div id="linuxInstallSection" class="hidden mt-4">
+                <h3 class="linux-section-heading">Screenshot Tool Required</h3>
+                
+                <!-- Wayland instructions -->
+                <div id="waylandInstructions" class="hidden linux-install-instructions">
+                  <p class="instruction-text font-medium">For Wayland:</p>
+                  <div class="code-block">
+                    <input type="text" value="sudo apt install gnome-screenshot" readonly class="code-input" onclick="this.select()" />
+                  </div>
+                </div>
+                
+                <!-- X11 instructions -->
+                <div id="x11Instructions" class="hidden linux-install-instructions">
+                  <p class="instruction-text font-medium">For X11:</p>
+                  <div class="code-block">
+                    <input type="text" value="sudo apt install scrot" readonly class="code-input" onclick="this.select()" />
+                  </div>
+                  <p class="instruction-text text-xs mt-2">Alternative:</p>
+                  <div class="code-block">
+                    <input type="text" value="sudo apt install maim" readonly class="code-input" onclick="this.select()" />
+                  </div>
+                </div>
+              </div>
+
               <div class="flex items-center justify-between">
                 <div>
                   <div class="text-base font-semibold text-gray-800">Active applications</div>

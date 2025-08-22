@@ -91,8 +91,7 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   setupInputDataCheckboxListeners();
   // Set up permission result listener
   setupPermissionResultListener();
-  // Set up screen capture toggle behavior
-  setupScreenCheckboxBehavior();
+  // Note: Screen capture toggle behavior is now handled in permissions.js
   // Set up listener for disable-capture-features message
   setupDisableCaptureListener();
   // Set up work hours change listeners
@@ -102,63 +101,7 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   // Set up dependency: disable screenshots in meetings requires microphone enabled
   setupMeetingScreenshotsDependency();
 }
-// Handle screen capture checkbox: disable when no permission; clicking opens system settings
-function setupScreenCheckboxBehavior() {
-  const checkbox = document.getElementById('screenCheckbox');
-  if (!checkbox) return;
-  const toggleLabel = checkbox.closest('.toggle');
-
-  const applyState = (hasPerm) => {
-    try {
-      // Show checked when we have permission; unchecked when not.
-      checkbox.checked = !!hasPerm;
-      
-      if (!hasPerm) {
-        // Permission missing: enable toggle and make it look clickable (like microphone when OFF)
-        checkbox.disabled = false;
-        if (toggleLabel) {
-          toggleLabel.style.opacity = '1';
-          toggleLabel.style.cursor = 'pointer';
-          toggleLabel.title = 'Grant screen recording permission';
-        }
-      } else {
-        // Permission granted: disable toggle and make it look active but disabled (like active applications when ON)
-        checkbox.disabled = true;
-        if (toggleLabel) {
-          toggleLabel.style.opacity = '0.7';
-          toggleLabel.style.cursor = 'not-allowed';
-          toggleLabel.title = 'Screen recording enabled (managed by system)';
-        }
-      }
-    } catch (_) {}
-  };
-
-  // Initial state based on current permission
-  applyState(hasScreenCapturePermission());
-
-  // When user clicks the toggle area, open system settings
-  if (toggleLabel) {
-    toggleLabel.addEventListener('click', (e) => {
-      if (!hasScreenCapturePermission()) {
-        e.preventDefault();
-        e.stopPropagation();
-        // Log and request permission via system settings
-        logAnalyticsEvent('screen_capture_requested', {
-          status: 'requested',
-          platform: process.platform
-        });
-        ipcRenderer.send('requestScreenCapturePermission');
-      }
-      // When permission exists, the toggle is disabled so clicks are ignored
-    });
-  }
-
-  // React to permission updates from main process
-  ipcRenderer.on('screenCapturePermission', (_event, data) => {
-    const hasPerm = typeof data === 'object' ? !!data.hasPermission : !!data;
-    applyState(hasPerm);
-  });
-}
+// Note: Screen capture checkbox behavior is now handled in permissions.js
 
 
 // Set up listener for errors from main process
