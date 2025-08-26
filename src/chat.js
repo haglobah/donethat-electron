@@ -75,69 +75,271 @@ function parseMarkdown(text) {
   const htmlParts = []
 
   let currentList = null // { type: 'ul'|'ol', items: [] }
+  let currentQuote = null // { items: [] }
+  let currentCode = null // { lang: string|undefined, lines: [] }
+  let currentSubListType = null // 'ul' | 'ol' | null
+  
   function flushList() {
     if (currentList && currentList.items.length > 0) {
-      const items = currentList.items.map(it => `<li>${inlineFormat(it)}</li>`).join('')
-      htmlParts.push(`<${currentList.type}>${items}</${currentList.type}>`)
+      // Close any open sublist appended to the last item
+      if (currentSubListType && currentList.items.length > 0) {
+        const lastIdx = currentList.items.length - 1
+        currentList.items[lastIdx] += `</${currentSubListType}>`
+        currentSubListType = null
+      }
+      // Items already have inline formatting applied; do not reformat here
+      const items = currentList.items.map(it => `<li>${it}</li>`).join('')
+      const startAttr = currentList.type === 'ol' && currentList.start && currentList.start !== 1 ? ` start=\"${currentList.start}\"` : ''
+      htmlParts.push(`<${currentList.type}${startAttr}>${items}</${currentList.type}>`)
     }
     currentList = null
+    currentSubListType = null
+  }
+  
+  function flushQuote() {
+    if (currentQuote && currentQuote.items.length > 0) {
+      const items = currentQuote.items.map(it => `<div>${inlineFormat(it)}</div>`).join('')
+      htmlParts.push(`<blockquote class="border-l-4 border-gray-300 pl-4 my-2 text-gray-700">${items}</blockquote>`)
+    }
+    currentQuote = null
+  }
+
+  function flushCode() {
+    if (currentCode && currentCode.lines.length > 0) {
+      const codeText = currentCode.lines.join('\n')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+      const langClass = currentCode.lang ? ` class="language-${currentCode.lang}"` : ''
+      htmlParts.push(`<pre><code${langClass}>${codeText}</code></pre>`)
+    }
+    currentCode = null
   }
 
   function inlineFormat(s) {
     return String(s)
-      // Escape basic HTML first to avoid injection; allow simple markup to be reintroduced below
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
+      // Backslash escapes for special markdown punctuation
+      .replace(/\\([\\`*_{}\[\]()#+\-.!>~|])/g, '$1')
+      // Images: ![alt](url) -> render alt text only
+      .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1')
+      // Angle links: <https://...> or <mailto:...>
+      .replace(/<((?:https?:\/\/|mailto:)[^\s>]+)>/g, '<a href="$1" class="chat-link" data-url="$1">$1</a>')
+      // Plain emails -> mailto links
+      .replace(/\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g, '<a href="mailto:$1" class="chat-link" data-url="mailto:$1">$1</a>')
+      // Markdown links: [text](url) FIRST
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="chat-link" data-url="$2">$1</a>')
+      // Plain URLs (including donethat://) AFTER markdown links, avoid matching inside attributes
+      .replace(/(^|[^"'>=])((?:https?:\/\/|donethat:\/\/)[^\s]+)/g, (m, p1, url) => `${p1}<a href="${url}" class="chat-link" data-url="${url}">${url}</a>`)
       // Bold: **text** or __text__
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/__(.*?)__/g, '<strong>$1</strong>')
       // Italic: *text* or _text_
       .replace(/(^|[^*])\*(.*?)\*(?!\*)/g, '$1<em>$2</em>')
       .replace(/(^|[^_])_(.*?)_(?!_)/g, '$1<em>$2</em>')
+      // Strikethrough: ~~text~~
+      .replace(/~~(.*?)~~/g, '<del>$1</del>')
       // Code: `text`
       .replace(/`([^`]+)`/g, '<code>$1</code>')
-      // Markdown links: [text](url)
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="chat-link" data-url="$2">$1</a>')
-      // Plain URLs (including donethat://)
-      .replace(/(https?:\/\/[^\s]+|donethat:\/\/[^\s]+)/g, '<a href="$1" class="chat-link" data-url="$1">$1</a>')
+      // Escape basic HTML last to avoid escaping our generated tags
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      // Unescape only our generated safe tags
+      .replace(/&lt;(strong)&gt;([\s\S]*?)&lt;\/\1&gt;/g, '<strong>$2</strong>')
+      .replace(/&lt;(em)&gt;([\s\S]*?)&lt;\/\1&gt;/g, '<em>$2</em>')
+      .replace(/&lt;(code)&gt;([\s\S]*?)&lt;\/\1&gt;/g, '<code>$2</code>')
+      .replace(/&lt;a href=\"([^\"]+)\" class=\"chat-link\" data-url=\"([^\"]+)\"&gt;([\s\S]*?)&lt;\/a&gt;/g, '<a href="$1" class="chat-link" data-url="$2">$3</a>')
   }
 
-  for (const rawLine of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i]
     const line = rawLine.trimEnd()
 
-    // Unordered list item: - item or * item
-    const ulMatch = line.match(/^[-*]\s+(.*)$/)
-    if (ulMatch) {
-      const content = ulMatch[1]
-      if (!currentList) currentList = { type: 'ul', items: [] }
-      if (currentList.type !== 'ul') { flushList(); currentList = { type: 'ul', items: [] } }
-      currentList.items.push(content)
+    // Fenced code blocks: ```lang? ... ``` (allow leading spaces)
+    const fenceMatch = line.match(/^\s*```\s*([\w-]+)?\s*$/)
+    if (fenceMatch) {
+      // Toggle code block state
+      if (currentCode) {
+        // Closing fence
+        flushList(); flushQuote();
+        flushCode();
+      } else {
+        // Opening fence
+        flushList(); flushQuote();
+        currentCode = { lang: fenceMatch[1], lines: [] }
+      }
       continue
     }
 
-    // Ordered list item: 1. item
-    const olMatch = line.match(/^\d+\.\s+(.*)$/)
+    if (currentCode) {
+      // Inside code block: preserve verbatim
+      currentCode.lines.push(rawLine)
+      continue
+    }
+
+    // Tables: header | header; separator line; rows (with alignment)
+    const headerMatch = line.match(/^\s*\|(.+?)\|\s*$/)
+    const sepMatch = i + 1 < lines.length ? lines[i + 1].match(/^\s*\|([\s:|-]+)\|\s*$/) : null
+    if (headerMatch && sepMatch) {
+      flushList(); flushQuote();
+      const headers = headerMatch[1].split('|').map(h => inlineFormat(h.trim()))
+      // Determine alignment per column from separator cells
+      const alignParts = sepMatch[1].split('|').map(s => s.trim())
+      const aligns = alignParts.map(s => {
+        const left = s.startsWith(':')
+        const right = s.endsWith(':')
+        if (left && right) return 'center'
+        if (right) return 'right'
+        if (left) return 'left'
+        return ''
+      })
+      i += 1 // consume separator
+      const rows = []
+      while (i + 1 < lines.length) {
+        const rowLine = lines[i + 1]
+        const rowMatch = rowLine.match(/^\s*\|(.+?)\|\s*$/)
+        if (!rowMatch) break
+        rows.push(rowMatch[1].split('|').map(c => inlineFormat(c.trim())))
+        i += 1
+      }
+      const thead = `<thead><tr>${headers.map((h, idx) => `<th${aligns[idx] ? ` style=\"text-align:${aligns[idx]}\"` : ''}>${h}</th>`).join('')}</tr></thead>`
+      const tbody = rows.length ? `<tbody>${rows.map(r => `<tr>${r.map((c, idx) => `<td${aligns[idx] ? ` style=\"text-align:${aligns[idx]}\"` : ''}>${c}</td>`).join('')}</tr>`).join('')}</tbody>` : ''
+      htmlParts.push(`<table>${thead}${tbody}</table>`)
+      continue
+    }
+
+    // Headings: # .. ###### (allow up to 3 leading spaces)
+    const headingMatch = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/)
+    if (headingMatch) {
+      const level = Math.min(6, headingMatch[1].length)
+      const content = headingMatch[2]
+      flushList(); flushQuote();
+      htmlParts.push(`<h${level}>${inlineFormat(content)}</h${level}>`)
+      continue
+    }
+
+    // Horizontal rule: --- *** ___ (3 or more)
+    const hrMatch = line.match(/^\s{0,3}((?:-{3,})|(?:\*{3,})|(?:_{3,}))\s*$/)
+    if (hrMatch) {
+      flushList(); flushQuote();
+      htmlParts.push('<hr>')
+      continue
+    }
+
+    // Quote: > text (allow up to 3 leading spaces)
+    const quoteMatch = line.match(/^\s{0,3}>\s+(.*)$/)
+    if (quoteMatch) {
+      const content = quoteMatch[1]
+      flushList() // Flush any current list before starting quote
+      if (!currentQuote) currentQuote = { items: [] }
+      currentQuote.items.push(content)
+      continue
+    }
+
+    // Empty line within quote block (continue quote)
+    if (line.trim() === '' && currentQuote) {
+      currentQuote.items.push('')
+      continue
+    }
+
+    // Unordered list item: - item or * item (allow up to 3 leading spaces), support task boxes
+    const ulMatch = line.match(/^(\s*)([-*])\s+(.*)$/)
+    if (ulMatch) {
+      const leading = ulMatch[1].length
+      let contentRaw = ulMatch[3]
+      // Task box: [ ] or [x]
+      const task = contentRaw.match(/^\[( |x|X)\]\s+(.*)$/)
+      let content = task ? `<input type=\"checkbox\" disabled ${task[1].toLowerCase()==='x' ? 'checked' : ''}> ${inlineFormat(task[2])}` : inlineFormat(contentRaw)
+      const isSub = leading >= 2
+      flushQuote() // Flush any current quote before starting list
+      if (!currentList) currentList = { type: 'ul', items: [] }
+      if (currentList.type !== 'ul') { flushList(); currentList = { type: 'ul', items: [] } }
+      if (isSub) {
+        if (currentList.items.length === 0) { currentList.items.push('') }
+        if (!currentSubListType) {
+          currentSubListType = 'ul'
+          const lastIdx = currentList.items.length - 1
+          currentList.items[lastIdx] += '<ul>'
+        } else if (currentSubListType !== 'ul') {
+          const lastIdx = currentList.items.length - 1
+          currentList.items[lastIdx] += '</ol><ul>'
+          currentSubListType = 'ul'
+        }
+        const lastIdx = currentList.items.length - 1
+        currentList.items[lastIdx] += `<li>${content}</li>`
+      } else {
+        // Closing any open sublist when returning to top-level
+        if (currentSubListType && currentList.items.length > 0) {
+          const lastIdx = currentList.items.length - 1
+          currentList.items[lastIdx] += `</${currentSubListType}>`
+          currentSubListType = null
+        }
+        currentList.items.push(content)
+      }
+      continue
+    }
+
+    // Ordered list item: 1. item (allow up to 3 leading spaces) with start value
+    const olMatch = line.match(/^(\s*)(\d+)\.\s+(.*)$/)
     if (olMatch) {
-      const content = olMatch[1]
-      if (!currentList) currentList = { type: 'ol', items: [] }
-      if (currentList.type !== 'ol') { flushList(); currentList = { type: 'ol', items: [] } }
-      currentList.items.push(content)
+      const leading = olMatch[1].length
+      const startVal = parseInt(olMatch[2], 10)
+      let contentRaw = olMatch[3]
+      // Task box in ordered list (rare but possible)
+      const task = contentRaw.match(/^\[( |x|X)\]\s+(.*)$/)
+      let content = task ? `<input type=\"checkbox\" disabled ${task[1].toLowerCase()==='x' ? 'checked' : ''}> ${inlineFormat(task[2])}` : inlineFormat(contentRaw)
+      const isSub = leading >= 2
+      flushQuote() // Flush any current quote before starting list
+      if (!currentList) currentList = { type: 'ol', items: [], start: startVal }
+      if (currentList.type !== 'ol') { flushList(); currentList = { type: 'ol', items: [], start: startVal } }
+      if (currentList.items.length === 0 && Number.isInteger(startVal) && startVal !== 1) {
+        currentList.start = startVal
+      }
+      if (isSub) {
+        if (currentList.items.length === 0) { currentList.items.push('') }
+        if (!currentSubListType) {
+          currentSubListType = 'ol'
+          const lastIdx = currentList.items.length - 1
+          currentList.items[lastIdx] += '<ol>'
+        } else if (currentSubListType !== 'ol') {
+          const lastIdx = currentList.items.length - 1
+          currentList.items[lastIdx] += '</ul><ol>'
+          currentSubListType = 'ol'
+        }
+        const lastIdx = currentList.items.length - 1
+        currentList.items[lastIdx] += `<li>${content}</li>`
+      } else {
+        if (currentSubListType && currentList.items.length > 0) {
+          const lastIdx = currentList.items.length - 1
+          currentList.items[lastIdx] += `</${currentSubListType}>`
+          currentSubListType = null
+        }
+        currentList.items.push(content)
+      }
       continue
     }
 
     // Blank line -> paragraph break
     if (line.trim() === '') {
       flushList()
+      flushQuote()
       htmlParts.push('<br>')
       continue
     }
 
     // Normal paragraph line
     flushList()
+    flushQuote()
     htmlParts.push(inlineFormat(line))
+    
+    // Add line break if this isn't the last line and the next line isn't blank
+    if (i < lines.length - 1 && lines[i + 1].trim() !== '') {
+      htmlParts.push('<br>')
+    }
   }
   flushList()
+  flushQuote()
+  flushCode()
 
   return htmlParts.join('\n')
 }
@@ -374,6 +576,12 @@ input0.addEventListener('input', () => {
 // IPC handlers for communication with main window
 ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
   messages = newMessages
+  
+  // If we're receiving an empty array, also clear pending messages to fully clear the chat
+  if (newMessages.length === 0) {
+    pendingMessages = []
+  }
+  
   renderChat()
   
   // Auto-show and expand if new messages arrive

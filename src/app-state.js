@@ -157,7 +157,7 @@ function subscribeToMessages(chatId) {
         status: m.status || 'sent'
       };
     });
-    try { ipcRenderer.send('chat:new-messages', messages); } catch (_) {}
+    try { ipcRenderer.send('chat:set-messages', messages); } catch (_) {}
   }, (error) => {
     console.error('[CHAT] Message listener error:', error);
   });
@@ -175,14 +175,21 @@ function startChatListeners() {
     const docs = snap.docs;
     if (!docs || docs.length === 0) {
       state.currentChatId = null;
-      try { ipcRenderer.send('chat:new-messages', []); } catch (_) {}
+      try { ipcRenderer.send('chat:set-messages', []); } catch (_) {}
       return;
     }
     const mostRecent = docs[0];
     const newChatId = mostRecent.id;
-    if (newChatId !== state.currentChatId) {
+    
+    // Check if this is a truly new chat (younger than 1 minute)
+    const chatData = mostRecent.data();
+    const chatCreatedAt = chatData?.createdAt?.toDate?.() || new Date(chatData?.createdAt);
+    const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
+    
+    if (newChatId !== state.currentChatId && chatCreatedAt > oneMinuteAgo) {
       state.currentChatId = newChatId;
-      // Trigger overlay to show when a new chat is detected
+      // Clear chat window first, then show overlay
+      try { ipcRenderer.send('chat:set-messages', []); } catch (_) {}
       try { ipcRenderer.send('overlay:show-if-hidden'); } catch (_) {}
       subscribeToMessages(state.currentChatId);
     }
@@ -230,7 +237,7 @@ function setupChatIpcBridge() {
   // Handle chat reset from overlay
   ipcRenderer.on('chat:reset-state', () => {
     state.currentChatId = null;
-    try { ipcRenderer.send('chat:new-messages', []); } catch (_) {}
+    try { ipcRenderer.send('chat:set-messages', []); } catch (_) {}
   });
 }
 

@@ -40,13 +40,25 @@
       /* Markdown styling */
       .bubble strong { font-weight: 600; }
       .bubble em { font-style: italic; }
+      .bubble del { text-decoration: line-through; }
       .bubble code { background: rgba(0, 0, 0, 0.08); padding: 1px 3px; border-radius: 3px; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: 11px; }
+      .bubble pre { background: rgba(0, 0, 0, 0.08); padding: 8px 10px; border-radius: 6px; overflow-x: auto; margin: 6px 0; }
+      .bubble pre code { background: transparent; padding: 0; border-radius: 0; display: block; white-space: pre; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: 11px; }
       .bubble br { display: block; height: 4px; content: ''; }
       .bubble ul { list-style: disc; padding-left: 18px; margin: 4px 0; }
       .bubble ol { list-style: decimal; padding-left: 18px; margin: 4px 0; }
       .bubble li { margin: 2px 0; }
-      .bubble a { color: var(--color-primary); text-decoration: underline; }
+      .bubble a { color: var(--color-primary); text-decoration: underline; word-break: break-all; }
 .bubble a:hover { text-decoration: underline; cursor: pointer; }
+      .bubble table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 12px; }
+      .bubble th, .bubble td { border: 1px solid rgba(0,0,0,0.12); padding: 4px 6px; text-align: left; }
+      .bubble thead th { background: rgba(0,0,0,0.06); font-weight: 600; }
+      .bubble h1, .bubble h2, .bubble h3, .bubble h4, .bubble h5, .bubble h6 { margin: 6px 0 4px; font-weight: 600; line-height: 1.2; }
+      .bubble h1 { font-size: 14px; }
+      .bubble h2 { font-size: 13px; }
+      .bubble h3 { font-size: 12px; }
+      .bubble h4 { font-size: 12px; font-weight: 600; opacity: 0.95; }
+      .bubble h5, .bubble h6 { font-size: 12px; font-weight: 600; opacity: 0.9; }
       .z-chat { position: relative; z-index: 1; }
       .z-input { position: relative; z-index: 2; }
     </style>
@@ -64,7 +76,7 @@
                   <rect x="9" y="19" width="6" height="2" rx="1" fill="currentColor"/>
                 </svg>
               </button>
-              <textarea id="chatInput" rows="1" class="tiny-text leading-tight py-2 px-2 w-full resize-none" placeholder="Ask me anything" style="background: rgba(245,245,245,0.95); border: 1px solid rgba(0,0,0,0.05); border-radius: 6px; -webkit-user-select: text; user-select: text;"></textarea>
+              <textarea id="chatInput" rows="1" class="tiny-text leading-tight py-2 px-2 w-full resize-none" placeholder="Ask me anything. Include a screenshot here ->" style="background: rgba(245,245,245,0.95); border: 1px solid rgba(0,0,0,0.05); border-radius: 6px; -webkit-user-select: text; user-select: text;"></textarea>
             </div>
             <div class="flex items-center gap-1">
               <button id="clearBtn" class="no-drag icon-btn" title="New chat" aria-label="New chat">

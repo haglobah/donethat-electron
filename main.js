@@ -550,8 +550,8 @@ ipcMain.handle('overlay:get-state', () => {
     }
   })
 
-  // Handle new chat messages from main window
-  ipcMain.on('chat:new-messages', (event, messages) => {
+  // Handle chat messages from main window
+  ipcMain.on('chat:set-messages', (event, messages) => {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.webContents.send('chat:receive-messages', messages)
     }
@@ -1256,7 +1256,9 @@ function createOverlayWindow() {
         const bounds = overlayWindow.getBounds()
         const bottom = y + bounds.height
         // Save both y and bottom for backward/forward compatibility
-        savedOverlayPosition = { x, y, bottom }
+        const display = screen.getDisplayNearestPoint({ x, y })
+        const displayId = display?.id
+        savedOverlayPosition = { x, y, bottom, displayId }
         overlayPositionUserSet = true
         clearTimeout(saveOverlayPositionDebounce)
         saveOverlayPositionDebounce = setTimeout(() => {
@@ -1295,43 +1297,35 @@ function positionOverlayWindow() {
   if (!overlayWindow || overlayWindow.isDestroyed()) return
   const margin = 16
 
-  const allDisplays = screen.getAllDisplays()
-  const trayBounds = tray?.getBounds()
-  // Prefer the display under the cursor as the active screen
+  // Determine the active (current cursor) display
   const cursorPoint = screen.getCursorScreenPoint()
-  let targetDisplay = screen.getDisplayNearestPoint(cursorPoint)
-
-  // Default target display is where the tray is, otherwise primary
-  if (trayBounds) {
-    const found = allDisplays.find(d => {
-      const b = d.bounds
-      return trayBounds.x >= b.x && trayBounds.x < b.x + b.width && trayBounds.y >= b.y && trayBounds.y < b.y + b.height
-    })
-    if (found) targetDisplay = found
-  }
+  const targetDisplay = screen.getDisplayNearestPoint(cursorPoint) || screen.getPrimaryDisplay()
+  const work = targetDisplay.workArea
 
   const winBounds = overlayWindow.getBounds()
   let x, y
 
-  if (overlayPositionUserSet && savedOverlayPosition && Number.isFinite(savedOverlayPosition.x) && (Number.isFinite(savedOverlayPosition.y) || Number.isFinite(savedOverlayPosition.bottom))) {
-    // Use the display nearest to the saved coordinates so restoring is stable across multi-displays
+  const hasSaved = savedOverlayPosition && Number.isFinite(savedOverlayPosition.x) && (Number.isFinite(savedOverlayPosition.y) || Number.isFinite(savedOverlayPosition.bottom))
+  const isSameDisplay = hasSaved && savedOverlayPosition.displayId && savedOverlayPosition.displayId === targetDisplay.id
+
+  if (overlayPositionUserSet && isSameDisplay) {
+    // Restore saved position on the same display, clamped to work area
     const hasBottom = Number.isFinite(savedOverlayPosition.bottom)
     const hasY = Number.isFinite(savedOverlayPosition.y)
     const virtualY = hasBottom ? savedOverlayPosition.bottom - winBounds.height : (hasY ? savedOverlayPosition.y : undefined)
-    const nearest = screen.getDisplayNearestPoint({ x: savedOverlayPosition.x, y: virtualY })
-    const work = nearest?.workArea || targetDisplay.workArea
     x = Math.round(savedOverlayPosition.x)
     y = Math.round(virtualY ?? (work.y + work.height - winBounds.height - margin))
+
     const maxX = work.x + work.width - winBounds.width
     const maxY = work.y + work.height - winBounds.height
     x = Math.min(Math.max(x, work.x), Math.max(work.x, maxX))
     y = Math.min(Math.max(y, work.y), Math.max(work.y, maxY))
   } else {
-    // Bottom-center within the work area of the tray/primary display
-    const work = targetDisplay.workArea
+    // Default: bottom-center on current cursor display
     x = Math.floor(work.x + (work.width / 2) - (winBounds.width / 2))
     y = Math.floor(work.y + work.height - winBounds.height - margin)
   }
+
   try { overlayWindow.setPosition(x, y, false) } catch (e) {}
 }
 
