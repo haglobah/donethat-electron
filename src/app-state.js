@@ -13,10 +13,8 @@ const state = {
   // Permission state
   hasScreenCapturePermission: false,
 
-  // Subscription state
-  hasValidAccess: false,
-  subscriptionStatus: null,
-  hasActiveTeam: false,
+  // User status
+  userStatus: 'active',
 
   // Settings state
   isPublic: false,
@@ -51,7 +49,7 @@ function hasScreenCapturePermission() {
 }
 
 function hasValidAccess() {
-  return state.hasValidAccess;
+  return state.userStatus === 'active';
 }
 
 function isPublic() {
@@ -88,12 +86,8 @@ function updateScreenCapturePermission(hasPermission) {
   state.hasScreenCapturePermission = hasPermission;
 }
 
-function updateSubscriptionState(subscriptionStatus, activeTeam) {
-  state.subscriptionStatus = subscriptionStatus;
-  state.hasActiveTeam = activeTeam;
-  state.hasValidAccess = activeTeam || 
-                        subscriptionStatus === 'trialing' || 
-                        subscriptionStatus === 'active';
+function updateUserStatus(status) {
+  state.userStatus = status;
 }
 
 function updateIsPublic(isPublic) {
@@ -269,7 +263,7 @@ module.exports = {
   getDateCreated,
   updateAuthState,
   updateScreenCapturePermission,
-  updateSubscriptionState,
+  updateUserStatus,
   updateIsPublic,
   updateStoreScreenshots,
   updateCurrentView,

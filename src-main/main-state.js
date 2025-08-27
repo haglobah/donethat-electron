@@ -19,8 +19,7 @@ let idToken = null; // User authentication token
 let workPeriodCheckTimeoutId = null; // For scheduling next workday/workhours check
 let autoSubmit = false;
 let hasShownStorageError = false; // Flag to prevent multiple error alerts
-let subscriptionStatus = null; // User subscription status
-let hasActiveTeam = false; // Whether user has active team membership
+let userStatus = 'active'; // User status - 'active' or 'inactive'
 
 // Function references that will be set by main.js
 let checkAndAdjustRecording = null;
@@ -125,13 +124,13 @@ async function initState(options = {}) {
       pauseUntilNextWorkPeriod,
       updateWaylandStatus,
       updateScreenCapturePermission,
-      updateSubscriptionState,
+      updateUserStatus,
       getUserWorkdays: () => userWorkdays,
       getUserWorkhours: () => userWorkhours,
       hasScreenCapturePermission: () => hasScreenCapturePermission,
       isWaylandSession: () => isWaylandSession,
       isAuthenticated: () => Boolean(idToken),
-      hasValidAccess: () => hasActiveTeam || subscriptionStatus === 'trialing' || subscriptionStatus === 'active',
+      hasValidAccess: () => userStatus === 'active',
       getIdToken: () => {
         return idToken;
       },
@@ -584,12 +583,11 @@ function updateScreenCapturePermission(permission) {
   hasScreenCapturePermission = permission;
 }
 
-// Update subscription state
-function updateSubscriptionState(newSubscriptionStatus, activeTeam) {
-  subscriptionStatus = newSubscriptionStatus;
-  hasActiveTeam = activeTeam;
+// Update user status
+function updateUserStatus(status) {
+  userStatus = status;
   
-  // Trigger recording state check when subscription state changes
+  // Trigger recording state check when status changes
   if (checkAndAdjustRecording) {
     checkAndAdjustRecording();
   }
@@ -745,9 +743,9 @@ function setupIPCHandlers() {
     }
   });
 
-  // Add IPC handler for subscription state updates
-  ipcMain.on('updateSubscriptionState', (event, subscriptionStatus, activeTeam) => {
-    updateSubscriptionState(subscriptionStatus, activeTeam);
+  // Add IPC handler for user status updates
+  ipcMain.on('updateUserStatus', (event, status) => {
+    updateUserStatus(status);
   });
 
   // Add IPC handler for auto submit setting

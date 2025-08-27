@@ -15,14 +15,14 @@ const { initializeAnalytics, trackPageView } = require('./analytics.js');
 const { routeLink } = require('./link-router.js');
 const { 
   hasScreenCapturePermission,
-  updateSubscriptionState,
   updateStoreScreenshots,
   updateCurrentView,
   getCurrentView,
   isAuthenticated,
   updatePauseState,
   updateDateCreated,
-  initializeChat
+  initializeChat,
+  updateUserStatus
 } = require('./app-state.js');
 
 require('./audio-recorder');
@@ -185,18 +185,17 @@ async function loadUserSettingsCallback() {
     // Check if user has any active teams
     const teams = result.data?.teams || {};
     
-    // Use lowercase team status
-    const hasActiveTeam = Object.values(teams).some(team => 
-      team.status === 'active');
+    // Use the status directly from settings - backend should send the correct status
+    const userStatus = result.data?.status || 'inactive';
 
     // Update all relevant state
-    updateSubscriptionState(result.data?.subscription?.status, hasActiveTeam);
+    updateUserStatus(userStatus);
     updateStoreScreenshots(result.data?.storeScreenshots || false);
     updateDateCreated(result.data?.analytics?.createdAt);
 
-    // Send subscription state to main process
+    // Send user status to main process
     const { ipcRenderer } = require('electron');
-    ipcRenderer.send('updateSubscriptionState', result.data?.subscription?.status, hasActiveTeam);
+    ipcRenderer.send('updateUserStatus', userStatus);
 
     // Fetch initial pause state from main process
     const initialIsPaused = await ipcRenderer.invoke('getInitialPauseState');

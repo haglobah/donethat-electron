@@ -786,7 +786,7 @@ function updateTrayIcon(isActuallyRecording) {
     tooltip = 'DoneThat - Not Logged In';
   } else if (!hasValidAccess) {
     iconPath = iconErrorPath;
-    tooltip = 'DoneThat - No Valid Subscription';
+    tooltip = 'DoneThat - Account Inactive';
   } else if (isPaused) {
     iconPath = iconPausedPath;
     tooltip = 'DoneThat - Paused';
