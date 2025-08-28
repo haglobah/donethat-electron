@@ -26,6 +26,8 @@ let chatVisible = false
 let lastSentHeight = null
 let includeScreenOnNextMessage = true
 const MIN_INPUT_HEIGHT = 28
+let typingTimer = null
+const TYPING_DELAY_MS = 300
 
 // Simple UI state
 let pendingMessages = []
@@ -41,7 +43,11 @@ function createRowForMessage(message) {
   row.className = 'w-full flex ' + (message.role === 'user' ? 'justify-end' : 'justify-start')
   const bubble = document.createElement('div')
   bubble.className = 'bubble no-drag ' + (message.role === 'user' ? 'bubble-user' : 'bubble-system')
-  bubble.innerHTML = parseMarkdown(message.text)
+  if (message.typing) {
+    bubble.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>'
+  } else {
+    bubble.innerHTML = parseMarkdown(message.text)
+  }
   row.appendChild(bubble)
   return row
 }
@@ -372,7 +378,7 @@ function renderChat() {
       const bubble = row.querySelector('.bubble')
       const desiredBubbleClass = 'bubble no-drag ' + (msg.role === 'user' ? 'bubble-user' : 'bubble-system')
       if (bubble.className !== desiredBubbleClass) bubble.className = desiredBubbleClass
-      const newHtml = parseMarkdown(msg.text)
+      const newHtml = msg.typing ? '<div class="typing"><span></span><span></span><span></span></div>' : parseMarkdown(msg.text)
       if (bubble.innerHTML !== newHtml) bubble.innerHTML = newHtml
     }
 
@@ -513,6 +519,17 @@ async function addMessageFromInput() {
       animateResize(computeDesiredHeight(), { overshoot: true })
     })
   }
+
+  // Schedule typing indicator after a short delay to avoid flicker
+  if (typingTimer) { try { clearTimeout(typingTimer) } catch (e) {} }
+  typingTimer = setTimeout(() => {
+    // Add typing indicator for the current pending reply if not already present
+    const hasTyping = pendingMessages.some(m => m && m.typing)
+    if (!hasTyping) {
+      pendingMessages.push({ role: 'assistant', typing: true, id: 'typing' })
+      renderChat()
+    }
+  }, TYPING_DELAY_MS)
 }
 
 // Event listeners
@@ -568,11 +585,17 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
   messages = newMessages
   
   // If we're receiving an empty array, also clear pending messages to fully clear the chat
+  // BUT avoid doing this if we currently have an optimistic user message pending,
+  // which can happen when the first message starts a new chat and the server briefly
+  // emits an empty snapshot before the message arrives (causing a flicker).
   if (newMessages.length === 0) {
-    pendingMessages = []
-    // Clear input field when a new chat is opened from system-side
-    input0.value = ''
-    input0.style.height = MIN_INPUT_HEIGHT + 'px'
+    const hasOptimisticUser = pendingMessages.some(m => m.status === 'pending' && m.role === 'user')
+    if (!hasOptimisticUser) {
+      pendingMessages = []
+      // Clear input field when a new chat is opened from system-side
+      input0.value = ''
+      input0.style.height = MIN_INPUT_HEIGHT + 'px'
+    }
   }
   
   // Only honor assistant requestScreen if it is NEWER than the last user message.
@@ -597,6 +620,23 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
     updateIncludeScreenBtn()
   }
   
+  // Remove typing indicator only when an assistant message newer than the last user message arrives
+  const hasAssistantAfterLastUser = (() => {
+    if (lastUserIdx === -1) return newMessages.some(m => m && m.role === 'assistant')
+    for (let i = lastUserIdx + 1; i < newMessages.length; i++) {
+      const m = newMessages[i]
+      if (m && m.role === 'assistant') return true
+    }
+    return false
+  })()
+  if (hasAssistantAfterLastUser) {
+    const idx = pendingMessages.findIndex(m => m && m.typing)
+    if (idx >= 0) {
+      pendingMessages.splice(idx, 1)
+    }
+    if (typingTimer) { try { clearTimeout(typingTimer) } catch (e) {} typingTimer = null }
+  }
+
   renderChat()
   
   // Auto-show and expand if new messages arrive
