@@ -220,6 +220,72 @@ async function loadUserSettingsCallback() {
   }
 }
 
+// Function to show webview error message
+function showWebviewError() {
+  const dashboardEmbed = document.querySelector('.dashboard-embed');
+  // Hide the webview while showing the error overlay
+  try {
+    if (portalView) portalView.classList.add('hidden');
+  } catch (_) {}
+  if (dashboardEmbed) {
+    // Create error message if it doesn't exist
+    let errorDiv = dashboardEmbed.querySelector('.webview-error');
+    if (!errorDiv) {
+      errorDiv = document.createElement('div');
+      errorDiv.className = 'webview-error';
+      errorDiv.innerHTML = `
+        <div class="flex flex-col items-center justify-center h-full p-8 text-center">
+          <div class="text-gray-500 mb-4">
+            <svg class="w-12 h-12 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <!-- Balanced, non-tilted no-wifi icon: wifi arcs + small X -->
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.004 11.803A15.5 15.5 0 0122 11.803"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.05 14.753a10.5 10.5 0 0113.9 0"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 17.804a5.5 5.5 0 017.778 0"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.75 19.25l2.5 2.5M13.25 19.25l-2.5 2.5"></path>
+            </svg>
+            <p class="text-lg font-medium mb-2">You seem to be offline</p>
+            <p class="text-sm text-gray-400 mb-4">Check your connection and try again</p>
+            <button id="webviewRetryBtn" class="btn-primary px-4 py-2 rounded-lg text-sm">
+              Try again
+            </button>
+          </div>
+        </div>
+      `;
+      dashboardEmbed.appendChild(errorDiv);
+      
+      // Add event listener for retry button
+      const retryBtn = errorDiv.querySelector('#webviewRetryBtn');
+      if (retryBtn) {
+        retryBtn.addEventListener('click', () => {
+          // Only attempt reload if back online
+          if (!navigator.onLine) return;
+          if (portalView) {
+            try {
+              hideWebviewError();
+              portalView.reload();
+            } catch (e) {
+              console.error('[Webview] Error reloading:', e);
+            }
+          }
+        });
+      }
+    }
+    errorDiv.classList.remove('hidden');
+  }
+}
+
+// Function to hide webview error message
+function hideWebviewError() {
+  const errorDiv = document.querySelector('.webview-error');
+  if (errorDiv) {
+    errorDiv.classList.add('hidden');
+  }
+  // Show the webview again
+  try {
+    if (portalView) portalView.classList.remove('hidden');
+  } catch (_) {}
+}
+
 // Update the document ready handler
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize all modules
@@ -231,6 +297,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Grab the portal webview if present
   portalView = document.getElementById('portalView');
+  
+  // Reload webview when window opens (only once)
+  if (portalView) {
+    try {
+      portalView.reload();
+    } catch (e) {
+      console.error('[Webview] Error reloading on window open:', e);
+    }
+  }
+  
+  // Initial offline/online UI state
+  if (!navigator.onLine) {
+    showWebviewError();
+  } else {
+    hideWebviewError();
+  }
+  
+  // Listen to connectivity changes
+  window.addEventListener('offline', () => {
+    showWebviewError();
+  });
+  window.addEventListener('online', () => {
+    hideWebviewError();
+    try { if (portalView) portalView.reload(); } catch (e) { console.error('[Webview] reload on online failed', e); }
+  });
   const openChatBtn = document.getElementById('openChatBtn');
   const openSettingsViewBtn = document.getElementById('openSettingsViewBtn');
   
@@ -362,8 +453,16 @@ document.addEventListener('DOMContentLoaded', () => {
   updateSettingsIcon();
 
   if (portalView) {
+    // Handle webview load errors
+    portalView.addEventListener('did-fail-load', (event) => {
+      console.error('[Webview] Failed to load:', event);
+      showWebviewError();
+    });
+
     // When the webview is ready, send login token and optionally open devtools
     portalView.addEventListener('dom-ready', () => {
+      // Hide any error message when webview loads successfully
+      hideWebviewError();
       // Proactively send login token whenever portal becomes ready
       sendPortalLoginIfPossible();
       
