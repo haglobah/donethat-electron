@@ -146,9 +146,12 @@ function subscribeToMessages(chatId) {
       const m = d.data() || {};
       return {
         id: d.id,
-        role: m.role === 'assistant' ? 'system' : 'user',
+        // Preserve assistant role so renderer logic can react (e.g., requestScreen)
+        role: m.role === 'assistant' ? 'assistant' : 'user',
         text: m.content || '',
-        status: m.status || 'sent'
+        status: m.status || 'sent',
+        // Pass through assistant request for next-user screenshot if present
+        requestScreen: typeof m.requestScreen === 'boolean' ? m.requestScreen : undefined
       };
     });
     try { ipcRenderer.send('chat:set-messages', messages); } catch (_) {}
