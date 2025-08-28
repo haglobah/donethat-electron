@@ -1,11 +1,9 @@
-const { getFunctions, httpsCallable } = require("firebase/functions");
-const { firebaseApp } = require('./firebase.js');
-const { ipcRenderer, shell } = require('electron');
+const { httpsCallable } = require("firebase/functions");
+const { functions } = require('./firebase.js');
+const { ipcRenderer } = require('electron');
 const { logAnalyticsEvent } = require('./analytics.js');
 const { getIsPaused } = require('./app-state.js');
 const { showBanner } = require('./notify.js');
-
-const functions = getFunctions(firebaseApp, "europe-west1");
 
 // Create callable function references
 const generateRawSummaryFunction = httpsCallable(functions, "generateRawSummary");

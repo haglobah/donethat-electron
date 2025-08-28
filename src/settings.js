@@ -1,8 +1,7 @@
-const { initializeApp } = require("firebase/app");
 const { getFirestore, doc, onSnapshot } = require("@firebase/firestore");
 const { getAuth } = require("firebase/auth");
-const { getFunctions, httpsCallable } = require("firebase/functions");
-const firebaseConfig = require("../firebase-config.js");
+const { httpsCallable } = require("firebase/functions");
+const { firebaseApp, functions } = require("./firebase.js");
 const { logAnalyticsEvent } = require('./analytics.js');
 const { ipcRenderer } = require("electron");
 const { updateIsPublic, hasScreenCapturePermission } = require('./app-state.js');
@@ -12,10 +11,8 @@ const os = require('os');
 const packageInfo = require('../package.json');
 const { showBanner } = require('./notify.js');
 
-// Initialize Firebase
-const firebaseApp = initializeApp(firebaseConfig);
+// Use shared Firebase app (with App Check) and regioned services
 const db = getFirestore(firebaseApp, "europe-west1");
-const functions = getFunctions(firebaseApp, "europe-west1");
 
 // Create callable function references
 const getUserSettingsFunction = httpsCallable(functions, "getUserSettings");

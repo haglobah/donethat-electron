@@ -1194,7 +1194,15 @@ function createWindow() {
       });
       
       // Initialize capture with auth error handler
-      initCapture(mainWindow, handleCaptureAuthErrors, stateManager.getIdToken);
+      // On-demand App Check token fetch from renderer
+      const getAppCheckToken = async () => {
+        try {
+          const script = 'window.getAppCheckToken ? window.getAppCheckToken() : null';
+          const token = await mainWindow.webContents.executeJavaScript(script, true);
+          return token || null;
+        } catch (_) { return null; }
+      };
+      initCapture(mainWindow, handleCaptureAuthErrors, stateManager.getIdToken, getAppCheckToken);
     })
 
     // Remove macOS-specific auto-hide on blur to behave like a normal window
