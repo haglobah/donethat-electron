@@ -345,8 +345,13 @@ async function handleDeviceSwitch(deviceInfo) {
  */
 async function processAudioFromRenderer(audioData) {
   try {
-    // Convert base64 to buffer for transcription
-    const audioBuffer = Buffer.from(audioData.base64Data.split(',')[1], 'base64');
+    // Basic validation
+    if (!audioData || !audioData.base64Data) {
+      return null;
+    }
+    
+    const base64Part = audioData.base64Data.split(',')[1];
+    const audioBuffer = Buffer.from(base64Part, 'base64');
     
     // Transcribe audio locally
     const transcript = await voiceToText.transcribeAudioBuffer(audioBuffer);
@@ -429,9 +434,16 @@ async function startRecordingInternal() {
         if (!isRecording || !mainWindow) return;
         const audioData = await mainWindow.webContents.executeJavaScript('window.stopAudioRecording && window.stopAudioRecording();')
         if (audioData) {
-          await processAudioFromRenderer(audioData)
+          const result = await processAudioFromRenderer(audioData)
+          if (!result) {
+            // Log warning but don't throw - this is expected sometimes
+            log.debug('Periodic transcription returned no result, continuing...')
+          }
         }
-      } catch (e) {}
+      } catch (e) {
+        // Log but don't throw - periodic transcription failures shouldn't stop recording
+        log.debug('Periodic transcription error (continuing):', e.message)
+      }
     }, TRANSCRIPTION_INTERVAL_MS)
     
     // Start periodic checks when recording starts

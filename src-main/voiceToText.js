@@ -55,6 +55,11 @@ async function initialize() {
  */
 function convertAudioBuffer(inputBuffer) {
   return new Promise((resolve, reject) => {
+    // Basic validation - just check for empty buffer
+    if (!inputBuffer || inputBuffer.length === 0) {
+      return reject(new Error('Empty audio buffer'))
+    }
+    
     const inputStream = new stream.PassThrough()
     inputStream.end(inputBuffer)
 
@@ -72,7 +77,10 @@ function convertAudioBuffer(inputBuffer) {
       .audioFrequency(16000) // Set sample rate to 16kHz (required by Whisper)
       .audioChannels(1) // Set to mono
       .toFormat('s16le') // Set output container format
-      .on('error', (err) => reject(err))
+      .on('error', (err) => {
+        log.error('FFmpeg conversion error:', err.message)
+        reject(err)
+      })
       .on('end', () => {
         const outputBuffer = Buffer.concat(chunks)
         resolve(outputBuffer)
@@ -96,6 +104,11 @@ async function transcribeAudioBuffer(audioBuffer) {
   }
 
   try {
+    // Basic validation
+    if (!audioBuffer || audioBuffer.length === 0) {
+      return 'No audio transcript available'
+    }
+    
     // 1. Decode the WebM/Opus buffer into a raw PCM buffer
     const rawPcmBuffer = await convertAudioBuffer(audioBuffer)
 
@@ -153,6 +166,12 @@ async function transcribeAudioBuffer(audioBuffer) {
     return transcription || 'No speech detected'
 
   } catch (error) {
+    // Handle ffmpeg errors gracefully
+    if (error.message && error.message.includes('ffmpeg exited with code 1')) {
+      log.warn('FFmpeg conversion failed:', error.message)
+      return 'No audio transcript available'
+    }
+    
     log.error('Error transcribing audio buffer:', error)
     return 'No audio transcript available'
   }

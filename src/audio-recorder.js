@@ -225,6 +225,11 @@ window.stopAudioRecording = async function() {
     const mimeType = mediaRecorder.mimeType || 'audio/webm';
     const blob = new Blob(audioChunks, { type: mimeType });
     
+    // Basic validation
+    if (blob.size === 0) {
+      return null;
+    }
+    
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.readAsDataURL(blob);
@@ -234,6 +239,10 @@ window.stopAudioRecording = async function() {
           mimeType: mimeType,
           timeMs: duration
         });
+      };
+      reader.onerror = () => {
+        console.error('Error reading audio blob');
+        resolve(null);
       };
     });
   } catch (error) {
