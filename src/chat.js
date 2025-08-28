@@ -47,8 +47,8 @@ function createRowForMessage(message) {
 }
 
 function computeDesiredHeight() {
-  // Use a stable input height to prevent flicker during typing
-  const inputH = Math.max(MIN_INPUT_HEIGHT, input0.scrollHeight || MIN_INPUT_HEIGHT)
+  // Keep input height fixed so icons and overlay don't shift while typing
+  const inputH = MIN_INPUT_HEIGHT
   const chrome = 16
   const chatH = chatContainer.scrollHeight
   return chatH + inputH + chrome
@@ -559,18 +559,8 @@ function updateIncludeScreenBtn() {
 }
 
 input0.addEventListener('input', () => {
-  // Update input height without triggering layout recalculations
-  const newHeight = Math.max(MIN_INPUT_HEIGHT, input0.scrollHeight)
-  if (Math.abs(parseInt(input0.style.height) - newHeight) > 1) {
-    input0.style.height = newHeight + 'px'
-    // Only resize if the height actually changed significantly
-    if (chatVisible) {
-      const desired = computeDesiredHeight()
-      if (Math.abs(desired - (lastSentHeight || 0)) > 5) {
-        animateResize(desired, { duration: 120 })
-      }
-    }
-  }
+  // Do not auto-resize the input; keep fixed height and let it scroll
+  // No overlay resize on typing to keep icons/overlay stable
 })
 
 // IPC handlers for communication with main window
