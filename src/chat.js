@@ -575,18 +575,24 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
     input0.style.height = MIN_INPUT_HEIGHT + 'px'
   }
   
-  // If the assistant explicitly requests screen data for the next reply,
-  // honor that by toggling the screenshot include state.
-  // Uses `requestScreen` on assistant messages; missing is treated as false.
+  // Only honor assistant requestScreen if it is NEWER than the last user message.
+  // This avoids stale assistant requests re-toggling after the user types.
+  let lastUserIdx = -1
+  for (let i = newMessages.length - 1; i >= 0; i--) {
+    const m = newMessages[i]
+    if (m && m.role === 'user') { lastUserIdx = i; break }
+  }
   let requested = null
+  let requestedIdx = -1
   for (let i = newMessages.length - 1; i >= 0; i--) {
     const m = newMessages[i]
     if (m && m.role === 'assistant' && typeof m.requestScreen === 'boolean') {
       requested = m.requestScreen
+      requestedIdx = i
       break
     }
   }
-  if (requested !== null) {
+  if (requested !== null && requestedIdx > lastUserIdx) {
     includeScreenOnNextMessage = !!requested
     updateIncludeScreenBtn()
   }
