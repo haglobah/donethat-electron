@@ -102,7 +102,7 @@ async function initState(options = {}) {
     }
 
     // Initialize store with fallback mechanism
-    initializeStore();
+    await initializeStore();
 
     // Load saved states
     loadWorkSettings();

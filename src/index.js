@@ -390,6 +390,9 @@ document.addEventListener('DOMContentLoaded', () => {
               console.error('[WEBVIEW] Error sending portal:open-link:', e);
             }
           };
+          
+          // Return a simple value to avoid cloning issues
+          true;
         `);
       } catch (e) {
         console.error('[Portal] Failed to inject ipcRenderer and link processing:', e);
@@ -410,12 +413,19 @@ document.addEventListener('DOMContentLoaded', () => {
     try { portalView.addEventListener('did-navigate', sendPortalLoginIfPossible); } catch (e) {}
     try { portalView.addEventListener('did-frame-finish-load', sendPortalLoginIfPossible); } catch (e) {}
 
-    // Pipe webview console to renderer for visibility
-    try {
-      portalView.addEventListener('console-message', (e) => {
-        console.log('[Webview]', e.level, e.message);
-      });
-    } catch (e) {}
+    // Pipe webview console to renderer for visibility (only in debug mode)
+    (async () => {
+      try {
+        const isDebug = await ipcRenderer.invoke('get-debug-flag');
+        if (isDebug) {
+          try {
+            portalView.addEventListener('console-message', (e) => {
+              console.log('[Webview]', e.level, e.message);
+            });
+          } catch (e) {}
+        }
+      } catch (e) {}
+    })();
 
     // Handle messages from webview (logout and link routing)
     portalView.addEventListener('ipc-message', async (event) => {
@@ -492,7 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
     inClose.onclick = () => hideInappNotification();
     inappEl.classList.remove('hidden');
     if (!sticky) {
-      inappTimer = setTimeout(() => hideInappNotification(), 8000);
+      inappTimer = setTimeout(() => hideInappNotification(), 10000);
     }
   }
 

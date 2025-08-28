@@ -371,7 +371,7 @@ async function checkPermission() {
   try {
     return await mainWindow.webContents.executeJavaScript(
       `new Promise(resolve => {
-        navigator.mediaDevices.getUserMedia({ audio: true })
+        navigator.mediaDevices.getUserMedia({ audio: true, video: false })
           .then(stream => {
             // Immediately stop all tracks to release the microphone
             const tracks = stream.getTracks();

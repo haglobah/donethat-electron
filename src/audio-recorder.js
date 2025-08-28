@@ -68,7 +68,8 @@ window.startAudioRecording = async function() {
         echoCancellation: true,
         noiseSuppression: true, 
         autoGainControl: true
-      } 
+      },
+      video: false
     });
     
     const mimeType = getBestSupportedMimeType();
@@ -131,7 +132,8 @@ async function restartAudioRecording() {
         echoCancellation: true,
         noiseSuppression: true, 
         autoGainControl: true
-      } 
+      },
+      video: false
     });
     
     const mimeType = getBestSupportedMimeType();

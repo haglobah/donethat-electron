@@ -580,6 +580,9 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
   // If we're receiving an empty array, also clear pending messages to fully clear the chat
   if (newMessages.length === 0) {
     pendingMessages = []
+    // Clear input field when a new chat is opened from system-side
+    input0.value = ''
+    input0.style.height = MIN_INPUT_HEIGHT + 'px'
   }
   
   // If the assistant explicitly requests screen data for the next reply,

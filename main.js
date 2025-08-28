@@ -130,10 +130,12 @@ if (app.isPackaged) {
   log.transports.file.level = 'silly'
 }
 
-// Global hook: surface ERROR logs as non-sticky in-app notifications (dev + prod)
+// Global hook: surface ERROR logs as non-sticky in-app notifications
+// Only enable this behavior in DEBUG mode to avoid disruptive overlays in production
 try {
   log.hooks.push((message) => {
     if (!message || message.level !== 'error') return message;
+    if (!DEBUG) return message;
     if (!app.isReady() || !mainWindow) return message;
     try {
       const data = Array.isArray(message.data) ? message.data : [message.data];
@@ -714,8 +716,23 @@ ipcMain.on('overlay:show-if-hidden', () => {
     // Only show if the window is currently hidden
     if (!overlayWindow.isVisible()) {
       positionOverlayWindow();
-      overlayWindow.show();
-      overlayWindow.focus();
+      if (process.platform === 'darwin') {
+        // macOS Spaces quirk: a window is associated with the Space/desktop it was last
+        // visible on. If we only reposition and call show(), macOS may switch the user to
+        // the window's previous Space instead of revealing it on the current Space.
+        //
+        // Workaround: temporarily enable visibility across all workspaces so showing the
+        // window binds it to the currently active Space/display, then immediately revert
+        // to normal behavior. This avoids Desktop switching while still respecting our
+        // positioning on the display under the current cursor.
+        try { overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (e) {}
+        try { overlayWindow.show(); } catch (e) {}
+        try { overlayWindow.focus(); } catch (e) {}
+        try { overlayWindow.setVisibleOnAllWorkspaces(false); } catch (e) {}
+      } else {
+        overlayWindow.show();
+        overlayWindow.focus();
+      }
       try { overlayWindow.webContents.send('overlay:focus-input') } catch (e) {}
     }
   } catch (e) {
@@ -1162,10 +1179,12 @@ function createWindow() {
     if (DEBUG) {
       mainWindow.webContents.openDevTools();
     }
-    // Log any webContents errors
-    mainWindow.webContents.on('console-message', (event) => {
-      console.log('Renderer Console:', event.message);
-    });
+    // Log any webContents errors (only in debug mode)
+    if (DEBUG) {
+      mainWindow.webContents.on('console-message', (event) => {
+        console.log('Renderer Console:', event.message);
+      });
+    }
 
     // Position the window once it's ready.
     mainWindow.once('ready-to-show', () => {
@@ -1189,6 +1208,26 @@ function createWindow() {
         return false;
       }
       return true;
+    });
+
+    // Ensure Dock icon is visible whenever the main window is shown (macOS)
+    mainWindow.on('show', () => {
+      if (process.platform === 'darwin') {
+        try { app.dock.show(); } catch (e) {}
+      } else {
+        // Ensure taskbar presence on Windows/Linux
+        try { mainWindow.setSkipTaskbar(false); } catch (e) {}
+      }
+    });
+
+    // Hide Dock icon when main window is hidden (macOS)
+    mainWindow.on('hide', () => {
+      if (process.platform === 'darwin') {
+        try { app.dock.hide(); } catch (e) {}
+      } else {
+        // Hide from taskbar on Windows/Linux when main window is hidden
+        try { mainWindow.setSkipTaskbar(true); } catch (e) {}
+      }
     });
 
     // Enable context menus
@@ -1276,10 +1315,12 @@ function createOverlayWindow() {
 
     overlayWindow.loadFile('./src/chat.html')
 
-    // Log any overlay webContents console messages
-    overlayWindow.webContents.on('console-message', (event) => {
-      console.log('Overlay Console:', event.message);
-    });
+    // Log any overlay webContents console messages (only in debug mode)
+    if (DEBUG) {
+      overlayWindow.webContents.on('console-message', (event) => {
+        console.log('Overlay Console:', event.message);
+      });
+    }
 
     overlayWindow.once('ready-to-show', () => {
       positionOverlayWindow()

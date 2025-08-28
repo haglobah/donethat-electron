@@ -659,8 +659,6 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
     const localProcessingAvailable = await isLocalProcessingAvailable();
     
     if (localProcessingAvailable) {
-      log.info('Using local processing for data analysis');
-      
       // Get the previous screenshots scaled down to the configured scale factor
       const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
       
@@ -673,9 +671,7 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
       );
       
       return result;
-    } else {
-      log.info('Using cloud processing for data analysis');
-      
+    } else {      
       // Fall back to cloud processing
       const fetch = await import('node-fetch').then(module => module.default);
       

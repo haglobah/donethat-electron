@@ -122,7 +122,9 @@
         "zip"
       ],
       "extendInfo": {
-        "LSUIElement": 1
+        "LSUIElement": 1,
+        "NSCameraUseContinuityCameraDeviceType": true,
+        "NSMicrophoneUsageDescription": "DoneThat needs microphone access to record audio for transcription and analysis."
       },
       "artifactName": "${productName}-${arch}.${ext}",
       "notarize": false
