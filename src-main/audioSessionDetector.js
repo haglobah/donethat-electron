@@ -320,7 +320,16 @@ class AudioSessionManager {
 
 const sessionManager = new AudioSessionManager();
 module.exports = {
-  ...sessionManager,
+  initialize: sessionManager.initialize.bind(sessionManager),
+  onSessionStart: sessionManager.onSessionStart.bind(sessionManager),
+  onSessionEnd: sessionManager.onSessionEnd.bind(sessionManager),
+  onDeviceSwitch: sessionManager.onDeviceSwitch.bind(sessionManager),
   configureWindowsDetection: sessionManager.configureWindowsDetection.bind(sessionManager),
-  getWindowsDetectionConfig: sessionManager.getWindowsDetectionConfig.bind(sessionManager)
+  getWindowsDetectionConfig: sessionManager.getWindowsDetectionConfig.bind(sessionManager),
+  checkMicrophoneUsage: sessionManager.checkMicrophoneUsage.bind(sessionManager),
+  detectWindowsMicrophoneUsage: sessionManager.detectWindowsMicrophoneUsage.bind(sessionManager),
+  detectMacOSMicrophoneUsage: sessionManager.detectMacOSMicrophoneUsage.bind(sessionManager),
+  detectLinuxMicrophoneUsage: sessionManager.detectLinuxMicrophoneUsage.bind(sessionManager),
+  detectMicrophoneUsage: sessionManager.detectMicrophoneUsage.bind(sessionManager),
+  shutdown: sessionManager.shutdown.bind(sessionManager)
 };

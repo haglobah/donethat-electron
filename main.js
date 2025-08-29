@@ -1,6 +1,4 @@
 // Suppress ONNX runtime warnings - must be set before any imports
-// Load environment variables from .env file
-require('dotenv').config();
 
 process.env.ORT_LOGGING_LEVEL = '4'
 process.env.ORT_LOGGING_VERBOSE = '0'
