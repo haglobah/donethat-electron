@@ -17,19 +17,7 @@ class AudioSessionManager {
     this.onDeviceSwitchCallback = null;
     this.platform = process.platform;
     this.isChecking = false;
-    this.config = {
-      enableRegistryMethod: true,
-      enableProcessMethod: true,
-      enableDeviceMethod: true,
-      enablePrivacyMethod: true,
-      enableNonPackagedMethod: true,
-      enableWindowActivityMethod: true
-    };
-
-    // No FFI init; macOS uses Swift helper
   }
-
-  // FFI setup removed
 
   initialize(options = 1000) {
     const intervalMs = typeof options === 'number' ? options : (options && options.checkIntervalMs ? options.checkIntervalMs : 1000);
@@ -41,11 +29,6 @@ class AudioSessionManager {
     }
     this.sessionCheckInterval = setInterval(() => this.checkMicrophoneUsage(), intervalMs);
     
-    // Log platform-specific initialization
-    if (this.platform === 'win32') {
-      log.info('Windows audio detection initialized with multiple fallback methods');
-    }
-    
     return true;
   }
 
@@ -53,37 +36,7 @@ class AudioSessionManager {
   onSessionEnd(callback) { this.onSessionEndCallback = callback; }
   onDeviceSwitch(callback) { this.onDeviceSwitchCallback = callback; }
 
-  /**
-   * Configure Windows detection methods
-   * @param {Object} options Configuration options
-   */
-  configureWindowsDetection(options) {
-    if (this.platform !== 'win32') {
-      log.warn('Windows detection configuration ignored on non-Windows platform');
-      return;
-    }
-    
-    if (options.enableRegistryMethod !== undefined) {
-      this.config.enableRegistryMethod = options.enableRegistryMethod;
-    }
-    if (options.enableProcessMethod !== undefined) {
-      this.config.enableProcessMethod = options.enableProcessMethod;
-    }
-    if (options.enableDeviceMethod !== undefined) {
-      this.config.enableDeviceMethod = options.enableDeviceMethod;
-    }
-    if (options.enablePrivacyMethod !== undefined) {
-      this.config.enablePrivacyMethod = options.enablePrivacyMethod;
-    }
-    if (options.enableNonPackagedMethod !== undefined) {
-      this.config.enableNonPackagedMethod = options.enableNonPackagedMethod;
-    }
-    if (options.enableWindowActivityMethod !== undefined) {
-      this.config.enableWindowActivityMethod = options.enableWindowActivityMethod;
-    }
-    
-    log.info('Windows detection configuration updated:', this.config);
-  }
+
 
   async checkMicrophoneUsage() {
     if (this.isChecking) return;
@@ -167,99 +120,35 @@ class AudioSessionManager {
   }
 
   /**
-   * Windows: Uses PowerShell to check the microphone privacy registry.
-   * This is reliable and microphone-specific.
+   * Windows: Uses PowerShell to check for actual microphone usage.
+   * Only returns true when an app is actually using the microphone.
    */
   async detectWindowsMicrophoneUsage() {
     try {
-      // Method 1: Check registry for active microphone usage
-      if (this.config.enableRegistryMethod) {
-        const registryCommand = `powershell -ExecutionPolicy Bypass -Command "Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\*\\*' | Where-Object { $_.LastUsedTimeStop -eq 0 } | Select-Object -First 1"`;
-        
-        try {
-          const { stdout } = await execAsync(registryCommand);
-          if (stdout.trim().length > 0) {
-            log.debug('Windows microphone detected via registry method');
-            return "Active Windows Device (Registry)";
-          }
-        } catch (registryError) {
-          log.debug('Registry method failed, trying alternative methods:', registryError.message);
+      // Method 1: Check registry for active microphone usage (most reliable)
+      const registryCommand = `powershell -ExecutionPolicy Bypass -Command "Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\*\\*' | Where-Object { $_.LastUsedTimeStop -eq 0 } | Select-Object -First 1"`;
+      
+      try {
+        const { stdout } = await execAsync(registryCommand);
+        if (stdout.trim().length > 0) {
+          log.debug('Windows microphone detected via registry method');
+          return "Active Windows Device (Registry)";
         }
+      } catch (registryError) {
+        log.debug('Registry method failed:', registryError.message);
       }
 
-      // Method 2: Check for active audio sessions using PowerShell
-      if (this.config.enableProcessMethod) {
-        const audioSessionCommand = `powershell -ExecutionPolicy Bypass -Command "Get-Process | Where-Object {$_.ProcessName -in @('Teams', 'Zoom', 'Discord', 'Skype', 'chrome', 'firefox', 'edge', 'msedge', 'opera', 'brave')} | Select-Object -First 1"`;
-        
-        try {
-          const { stdout } = await execAsync(audioSessionCommand);
-          if (stdout.trim().length > 0) {
-            log.debug('Windows microphone detected via process method');
-            return "Active Windows Device (Process)";
-          }
-        } catch (processError) {
-          log.debug('Process method failed:', processError.message);
+      // Method 2: Check for active audio sessions using a different registry path (fallback)
+      const audioSessionRegistryCommand = `powershell -ExecutionPolicy Bypass -Command "Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged\\*' | Where-Object { $_.LastUsedTimeStop -eq 0 } | Select-Object -First 1"`;
+      
+      try {
+        const { stdout } = await execAsync(audioSessionRegistryCommand);
+        if (stdout.trim().length > 0) {
+          log.debug('Windows microphone detected via non-packaged registry method');
+          return "Active Windows Device (NonPackaged)";
         }
-      }
-
-      // Method 3: Check Windows audio device status
-      if (this.config.enableDeviceMethod) {
-        const audioDeviceCommand = `powershell -ExecutionPolicy Bypass -Command "Get-WmiObject -Class Win32_SoundDevice | Where-Object {$_.Status -eq 'OK'} | Select-Object -First 1"`;
-        
-        try {
-          const { stdout } = await execAsync(audioDeviceCommand);
-          if (stdout.trim().length > 0) {
-            log.debug('Windows microphone detected via device method');
-            return "Active Windows Device (Device)";
-          }
-        } catch (deviceError) {
-          log.debug('Device method failed:', deviceError.message);
-        }
-      }
-
-      // Method 4: Check for microphone privacy settings
-      if (this.config.enablePrivacyMethod) {
-        const privacyCommand = `powershell -ExecutionPolicy Bypass -Command "Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone' -Name Value | Select-Object -ExpandProperty Value"`;
-        
-        try {
-          const { stdout } = await execAsync(privacyCommand);
-          if (stdout.trim() === '1') {
-            log.debug('Windows microphone detected via privacy settings');
-            return "Active Windows Device (Privacy)";
-          }
-        } catch (privacyError) {
-          log.debug('Privacy method failed:', privacyError.message);
-        }
-      }
-
-      // Method 5: Check for active audio sessions using a different registry path
-      if (this.config.enableNonPackagedMethod) {
-        const audioSessionRegistryCommand = `powershell -ExecutionPolicy Bypass -Command "Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\NonPackaged\\*' | Where-Object { $_.LastUsedTimeStop -eq 0 } | Select-Object -First 1"`;
-        
-        try {
-          const { stdout } = await execAsync(audioSessionRegistryCommand);
-          if (stdout.trim().length > 0) {
-            log.debug('Windows microphone detected via non-packaged registry method');
-            return "Active Windows Device (NonPackaged)";
-          }
-        } catch (nonPackagedError) {
-          log.debug('Non-packaged registry method failed:', nonPackagedError.message);
-        }
-      }
-
-      // Method 6: Check for microphone activity using Windows audio session API (simplified)
-      if (this.config.enableWindowActivityMethod) {
-        const audioActivityCommand = `powershell -ExecutionPolicy Bypass -Command "Get-Process | Where-Object {$_.MainWindowTitle -ne '' -and $_.ProcessName -in @('Teams', 'Zoom', 'Discord', 'Skype', 'chrome', 'firefox', 'edge', 'msedge', 'opera', 'brave', 'outlook', 'teams', 'slack')} | Select-Object -First 1"`;
-        
-        try {
-          const { stdout } = await execAsync(audioActivityCommand);
-          if (stdout.trim().length > 0) {
-            log.debug('Windows microphone detected via window activity method');
-            return "Active Windows Device (WindowActivity)";
-          }
-        } catch (windowActivityError) {
-          log.debug('Window activity method failed:', windowActivityError.message);
-        }
+      } catch (nonPackagedError) {
+        log.debug('Non-packaged registry method failed:', nonPackagedError.message);
       }
 
       log.debug('No Windows microphone activity detected');
@@ -301,12 +190,19 @@ class AudioSessionManager {
     }
   }
 
+
+
   /**
-   * Get current Windows detection configuration
-   * @returns {Object} Current configuration
+   * Get current status of the session detector
+   * @returns {Object} Status information
    */
-  getWindowsDetectionConfig() {
-    return { ...this.config };
+  getStatus() {
+    return {
+      initialized: !!this.sessionCheckInterval,
+      activeMicrophone: this.activeMicrophone,
+      platform: this.platform,
+      isChecking: this.isChecking
+    };
   }
 
   shutdown() {
@@ -324,8 +220,7 @@ module.exports = {
   onSessionStart: sessionManager.onSessionStart.bind(sessionManager),
   onSessionEnd: sessionManager.onSessionEnd.bind(sessionManager),
   onDeviceSwitch: sessionManager.onDeviceSwitch.bind(sessionManager),
-  configureWindowsDetection: sessionManager.configureWindowsDetection.bind(sessionManager),
-  getWindowsDetectionConfig: sessionManager.getWindowsDetectionConfig.bind(sessionManager),
+  getStatus: sessionManager.getStatus.bind(sessionManager),
   checkMicrophoneUsage: sessionManager.checkMicrophoneUsage.bind(sessionManager),
   detectWindowsMicrophoneUsage: sessionManager.detectWindowsMicrophoneUsage.bind(sessionManager),
   detectMacOSMicrophoneUsage: sessionManager.detectMacOSMicrophoneUsage.bind(sessionManager),

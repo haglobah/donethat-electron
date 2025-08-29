@@ -7,6 +7,9 @@ const audioSessionDetector = require('./audioSessionDetector')
 let isRecording = false
 let mainWindow = null
 
+// Permission state - check once, remember forever
+let hasMicrophonePermission = null
+
 // Periodic check and low audio detection
 let periodicCheckInterval = null
 let isPausedForCheck = false
@@ -58,8 +61,7 @@ function initialize(window, config = {}) {
     throw error; // Re-throw to propagate the error
   });
   
-  // Initialize session detection
-  initializeSessionDetection(config);
+  // Don't initialize session detection here - it will be initialized when audio is enabled
 }
 
 /**
@@ -96,19 +98,6 @@ function initializeSessionDetection(config) {
       });
     });
     
-    // Low audio detection removed (periodic checks suffice)
-    
-    // Lightweight periodic permission check during recording (less frequent)
-    setInterval(async () => {
-      if (!isRecording) return;
-      const hasPermission = await checkPermission();
-      if (!hasPermission) {
-        log.warn('Microphone permission revoked during recording, stopping');
-        stopRecordingInternal().catch(error => {
-          log.error('Failed to stop recording after permission loss:', error);
-        });
-      }
-    }, 30000);
     
     audioSessionDetector.onSessionEnd(() => {
       log.info('Audio session ended, stopping recording');
@@ -130,6 +119,17 @@ function initializeSessionDetection(config) {
     log.error('Failed to initialize audio session detection:', error);
     log.error('Error stack:', error.stack);
     // Continue without session detection - manual recording will still work
+  }
+}
+
+/**
+ * Initialize audio session detection when audio is enabled
+ * @param {Object} config Configuration
+ */
+function initializeSessionDetectionIfNeeded(config) {
+  // Only initialize if not already initialized
+  if (!audioSessionDetector.getStatus || !audioSessionDetector.getStatus().initialized) {
+    initializeSessionDetection(config);
   }
 }
 
@@ -176,8 +176,10 @@ async function performPeriodicCheck() {
     // Pause recording
     await pauseRecording();
     
-    // Wait a moment for CoreAudio/WebAudio state to settle
-    await new Promise(resolve => setTimeout(resolve, 1200));
+    // Platform-specific delay for registry/audio state to settle
+    // Windows registry updates are slower, so we need a longer delay
+    const settleDelay = process.platform === 'win32' ? 3000 : 1200;
+    await new Promise(resolve => setTimeout(resolve, settleDelay));
     
     // Check if other apps are still using the microphone
     const isOtherAppUsingMic = await checkIfOtherAppUsingMic();
@@ -215,8 +217,10 @@ async function performLowAudioCheck() {
     // Pause recording
     await pauseRecording();
     
-    // Wait a moment for CoreAudio/WebAudio state to settle
-    await new Promise(resolve => setTimeout(resolve, 1200));
+    // Platform-specific delay for registry/audio state to settle
+    // Windows registry updates are slower, so we need a longer delay
+    const settleDelay = process.platform === 'win32' ? 3000 : 1200;
+    await new Promise(resolve => setTimeout(resolve, settleDelay));
     
     // Check if other apps are still using the microphone
     const isOtherAppUsingMic = await checkIfOtherAppUsingMic();
@@ -385,15 +389,20 @@ async function processAudioFromRenderer(audioData) {
 }
 
 /**
- * Check microphone permission
+ * Check microphone permission once
  * @returns {Promise<boolean>} Permission status
  */
 async function checkPermission() {
   // We'll use the renderer to check permissions
   if (!mainWindow) return false;
   
+  // If we already checked, return the result
+  if (hasMicrophonePermission !== null) {
+    return hasMicrophonePermission;
+  }
+  
   try {
-    return await mainWindow.webContents.executeJavaScript(
+    const hasPermission = await mainWindow.webContents.executeJavaScript(
       `new Promise(resolve => {
         navigator.mediaDevices.getUserMedia({ audio: true, video: false })
           .then(stream => {
@@ -413,8 +422,13 @@ async function checkPermission() {
           });
       })`
     );
+    
+    // Remember the result forever
+    hasMicrophonePermission = hasPermission;
+    return hasPermission;
   } catch (error) {
     log.error('Error checking audio permission:', error);
+    hasMicrophonePermission = false;
     return false;
   }
 }
@@ -519,6 +533,26 @@ async function startRecording() {
 }
 
 /**
+ * Start audio tracking with session detection
+ * @param {Object} config Configuration
+ * @returns {Promise<boolean>} Success status
+ */
+async function startAudioTracking(config) {
+  // Initialize session detection when audio tracking is started
+  initializeSessionDetectionIfNeeded(config);
+  
+  // Check permission once
+  const hasPermission = await checkPermission();
+  if (!hasPermission) {
+    log.warn('No microphone permission, cannot start audio tracking');
+    return false;
+  }
+  
+  log.info('Audio tracking started with session detection');
+  return true;
+}
+
+/**
  * Get current buffer without stopping recording
  * @returns {Promise<{filePath: string, duration: number} | null>} Recording info
  */
@@ -602,6 +636,7 @@ module.exports = {
   initialize,
   checkPermission,
   startRecording,
+  startAudioTracking,
   stopRecording,
   shutdownRecording,
   getStatus,

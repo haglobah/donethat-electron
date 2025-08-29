@@ -108,11 +108,7 @@ async function transcribeAudioBuffer(audioBuffer) {
     }
     
     // 1. Decode the WebM/Opus buffer into a raw PCM buffer
-    const rawPcmBuffer = await convertAudioBuffer(audioBuffer)
-    
-    // Debug: Log buffer info
-    log.info(`Audio buffer: ${audioBuffer.length} bytes, PCM buffer: ${rawPcmBuffer.length} bytes`)
-    
+    const rawPcmBuffer = await convertAudioBuffer(audioBuffer)    
     // Validate PCM buffer
     if (rawPcmBuffer.length < 100) {
       log.warn('PCM buffer too small, likely invalid audio data')
@@ -127,10 +123,8 @@ async function transcribeAudioBuffer(audioBuffer) {
       }
     }
     const silenceRatio = 1 - (nonZeroCount / Math.min(500, rawPcmBuffer.length / 2))
-    log.info(`Silence ratio: ${silenceRatio.toFixed(2)} (${nonZeroCount} non-zero samples)`)
     
     if (silenceRatio > 0.95) {
-      log.warn('Audio buffer is mostly silence')
       return 'No speech detected'
     }
 

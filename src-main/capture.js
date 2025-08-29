@@ -72,9 +72,13 @@ async function _startAudioTracking() {
       );
       return false;
     }
-    // Ensure microphone permission is granted
-    const hasPermission = await audioCapture.checkPermission();
-    if (!hasPermission) {
+    
+    // Start audio tracking with session detection (this will check permission once)
+    const success = await audioCapture.startAudioTracking({
+      bufferDurationMs: captureIntervalMinutes * 60 * 1000
+    });
+    
+    if (!success) {
       handleCaptureError(
         new Error('Microphone permission not granted'),
         'audio-permission',
@@ -83,7 +87,7 @@ async function _startAudioTracking() {
       );
       return false;
     }
-    // Session detection will handle recording start/stop automatically
+    
     return true;
     
   } catch (error) {
