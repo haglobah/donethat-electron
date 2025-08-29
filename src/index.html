@@ -403,6 +403,20 @@
                 </div>
                 <label class="toggle"><input type="checkbox" id="windowsCheckbox"><span class="slider"></span></label>
               </div>
+              
+              <!-- Linux-specific windows permission notification (hidden by default) -->
+              <div id="linuxWindowsSection" class="hidden mt-4">
+                <h3 class="linux-section-heading">Window Tracking Permission Required</h3>
+                <p class="instruction-text">DoneThat needs permission to track active windows.</p>
+                <div class="p-4 bg-gray-100 rounded-lg">
+                  <p class="font-medium mb-2">On Linux:</p>
+                  <ul class="list-disc pl-5 mt-2 space-y-1 text-xs">
+                    <li>Grant accessibility permissions in your system settings</li>
+                    <li>For Wayland sessions, some window tracking features may be limited</li>
+                    <li>Ensure DoneThat has permission to access window information</li>
+                  </ul>
+                </div>
+              </div>
             </div>
 
             <div class="section-divider"><span class="section-divider-label">Optional</span></div>
@@ -413,6 +427,16 @@
                   <div class="text-xs text-gray-500">We check if your microphone is active to see if you are in a meeting. During meetings, we process your voice to understand what you are working on.</div>
                 </div>
                 <label class="toggle"><input type="checkbox" id="audioCheckbox"><span class="slider"></span></label>
+              </div>
+              
+              <!-- Linux-specific pactl missing notification (hidden by default) -->
+              <div id="linuxPactlSection" class="hidden mt-4">
+                <h3 class="linux-section-heading">Audio Session Detection Tool Required</h3>
+                <p class="instruction-text">DoneThat needs pactl to detect when your microphone is active.</p>
+                <div class="code-block">
+                  <input type="text" value="sudo apt install pulseaudio-utils" readonly class="code-input" onclick="this.select()" />
+                </div>
+                <p class="instruction-text text-xs mt-2">This tool is required for audio session detection on Linux. After installation, restart DoneThat.</p>
               </div>
               <div class="flex items-center justify-between">
                 <div>
@@ -427,6 +451,20 @@
                   <div class="text-xs text-gray-500">Similar to your voice in meetings, understanding what you type helps us understand your work. This is especially useful to understand which shortcuts you use so we can coach you better.</div>
                 </div>
                 <label class="toggle"><input type="checkbox" id="keystrokesCheckbox"><span class="slider"></span></label>
+              </div>
+              
+              <!-- Linux-specific keystrokes limitation notification (hidden by default) -->
+              <div id="linuxKeystrokesSection" class="hidden mt-4">
+                <h3 class="linux-section-heading">Keystroke Tracking Not Available</h3>
+                <p class="instruction-text">Keystroke tracking is currently not supported on Linux.</p>
+                <div class="p-4 bg-gray-100 rounded-lg">
+                  <p class="font-medium mb-2">Limitations on Linux:</p>
+                  <ul class="list-disc pl-5 mt-2 space-y-1 text-xs">
+                    <li>Keystroke tracking is not available when running as an AppImage on Linux</li>
+                    <li>Other features of DoneThat will continue to work normally</li>
+                    <li>You can still use window tracking and audio recording features</li>
+                  </ul>
+                </div>
               </div>
             </div>
 

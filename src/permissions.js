@@ -24,6 +24,14 @@ function setupPlatformSpecificListeners() {
   // Listen for Linux-specific permission notices
   ipcRenderer.on('linux-windows-permission-notice', () => {
     showLinuxPermissionHelp('windows');
+    // Uncheck the windows checkbox since permission is required
+    const windowsCheckbox = document.getElementById('windowsCheckbox');
+    if (windowsCheckbox) {
+      windowsCheckbox.checked = false;
+      // Don't disable - allow user to try again after granting permission
+    }
+    // Functionally disable windows tracking
+    ipcRenderer.send('updateInputDataSettings', { windows: false });
   });
   
   ipcRenderer.on('linux-audio-permission-notice', () => {
@@ -32,6 +40,26 @@ function setupPlatformSpecificListeners() {
   
   ipcRenderer.on('linux-keystrokes-permission-notice', () => {
     showLinuxPermissionHelp('keystrokes');
+    // Uncheck the keystrokes checkbox since it's not supported on Linux
+    const keystrokesCheckbox = document.getElementById('keystrokesCheckbox');
+    if (keystrokesCheckbox) {
+      keystrokesCheckbox.checked = false;
+      // Don't disable - allow user to try again if support is added
+    }
+    // Functionally disable keystrokes tracking
+    ipcRenderer.send('updateInputDataSettings', { keystrokes: false });
+  });
+  
+  ipcRenderer.on('linux-pactl-missing-notice', () => {
+    showLinuxPermissionHelp('pactl');
+    // Uncheck the audio checkbox since audio session detection won't work
+    const audioCheckbox = document.getElementById('audioCheckbox');
+    if (audioCheckbox) {
+      audioCheckbox.checked = false;
+      // Don't disable - allow user to try again after installing pactl
+    }
+    // Functionally disable audio tracking
+    ipcRenderer.send('updateInputDataSettings', { audio: false });
   });
 }
 
@@ -40,107 +68,31 @@ function showLinuxPermissionHelp(permissionType) {
   const platform = process.platform;
   if (platform !== 'linux') return;
   
-  let title, message;
-  
+  // Show inline notifications instead of modals
   switch (permissionType) {
     case 'audio':
-      title = 'Audio Permission Required';
-      message = 'DoneThat needs permission to access your microphone.';
+      showInlineLinuxNotification('linuxWindowsSection');
       break;
     case 'keystrokes':
-      title = 'Keystroke Logging Permission Required';
-      message = 'DoneThat needs permission to monitor keystrokes.';
+      showInlineLinuxNotification('linuxKeystrokesSection');
       break;
     case 'windows':
-      title = 'Window Tracking Permission Required';
-      message = 'DoneThat needs permission to track active windows.';
+      showInlineLinuxNotification('linuxWindowsSection');
+      break;
+    case 'pactl':
+      showInlineLinuxNotification('linuxPactlSection');
       break;
     default:
       return;
   }
-  
-  // Create modal dialog for detailed help
-  const modalBackground = document.createElement('div');
-  modalBackground.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
-  
-  const modalContent = document.createElement('div');
-  modalContent.className = 'bg-white rounded-lg p-6 max-w-lg mx-4';
-  
-  // For keystrokes permission, include clear instructions for running with sudo
-  if (permissionType === 'keystrokes') {
-    modalContent.innerHTML = `
-      <h3 class="text-lg font-medium mb-4">${title}</h3>
-      <p class="mb-3">Keystroke tracking is currently not supported on Linux.</p>
-      
-      <div class="p-4 bg-gray-100 rounded-lg mb-4">
-        <p class="font-medium mb-2">Limitations on Linux:</p>
-        <ul class="list-disc pl-5 mt-2 space-y-1">
-          <li>Keystroke tracking is not available when running as an AppImage on Linux</li>
-          <li>Other features of DoneThat will continue to work normally</li>
-          <li>You can still use window tracking and audio recording features</li>
-        </ul>
-      </div>
-      
-      <div class="flex justify-end">
-        <button id="permHelpCloseBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
-          Got it
-        </button>
-      </div>
-    `;
-  } else if (permissionType === 'audio') {
-    modalContent.innerHTML = `
-      <h3 class="text-lg font-medium mb-4">${title}</h3>
-      <p class="mb-3">${message}</p>
-      
-      <div class="p-4 bg-gray-100 rounded-lg mb-4">
-        <p class="font-medium mb-2">On Linux:</p>
-        <ul class="list-disc pl-5 mt-2 space-y-1">
-          <li>Grant microphone access in your system settings</li>
-          <li>For Wayland sessions, ensure your browser/Electron has audio permissions</li>
-          <li>Check that your microphone is not being used by other applications</li>
-        </ul>
-      </div>
-      
-      <div class="flex justify-end">
-        <button id="permHelpCloseBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
-          Got it
-        </button>
-      </div>
-    `;
-  } else if (permissionType === 'windows') {
-    modalContent.innerHTML = `
-      <h3 class="text-lg font-medium mb-4">${title}</h3>
-      <p class="mb-3">${message}</p>
-      
-      <div class="p-4 bg-gray-100 rounded-lg mb-4">
-        <p class="font-medium mb-2">On Linux:</p>
-        <ul class="list-disc pl-5 mt-2 space-y-1">
-          <li>Grant accessibility permissions in your system settings</li>
-          <li>For Wayland sessions, some window tracking features may be limited</li>
-          <li>Ensure DoneThat has permission to access window information</li>
-        </ul>
-      </div>
-      
-      <div class="flex justify-end">
-        <button id="permHelpCloseBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
-          Got it
-        </button>
-      </div>
-    `;
+}
+
+// Function to show inline Linux notifications
+function showInlineLinuxNotification(sectionId) {
+  const section = document.getElementById(sectionId);
+  if (section) {
+    section.classList.remove('hidden');
   }
-  
-  modalBackground.appendChild(modalContent);
-  document.body.appendChild(modalBackground);
-  
-  // Add event listener to close button
-  document.getElementById('permHelpCloseBtn').addEventListener('click', () => {
-    document.body.removeChild(modalBackground);
-    
-    // Also update the relevant setting
-    document.dispatchEvent(new CustomEvent('permissionResult', {
-      detail: { type: permissionType, hasPermission: false }
-    }));
-  });
 }
 
 // Modify the existing screenCapturePermission listener to include session type

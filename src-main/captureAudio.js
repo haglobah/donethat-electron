@@ -113,6 +113,15 @@ function initializeSessionDetection(config) {
       });
     });
     
+    // Set up callback for missing pactl on Linux
+    audioSessionDetector.onPactlMissing(() => {
+      log.warn('pactl not found on Linux - audio session detection will not work');
+      // Send notification to renderer process
+      if (mainWindow) {
+        mainWindow.webContents.send('linux-pactl-missing-notice');
+      }
+    });
+    
     log.info('Audio session detection callbacks configured successfully');
     
   } catch (error) {

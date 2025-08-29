@@ -11,6 +11,7 @@
     "build:prepare": "npm run build:css && npm run build:webpack",
     "postinstall": "node scripts/postinstall-macos-micstatus.js || electron-builder install-app-deps",
     "dev": "npm run build:prepare && electron .",
+    "dev:linux": "npm run build:prepare && electron . --no-sandbox",
     "build": "npm run build:prepare && electron-builder",
     "build:mac:x64": "npm run build:prepare && electron-builder --mac --x64",
     "build:mac:arm64": "npm run build:prepare && electron-builder --mac --arm64",

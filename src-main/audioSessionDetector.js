@@ -35,6 +35,7 @@ class AudioSessionManager {
   onSessionStart(callback) { this.onSessionStartCallback = callback; }
   onSessionEnd(callback) { this.onSessionEndCallback = callback; }
   onDeviceSwitch(callback) { this.onDeviceSwitchCallback = callback; }
+  onPactlMissing(callback) { this.onPactlMissingCallback = callback; }
 
 
 
@@ -169,6 +170,13 @@ class AudioSessionManager {
       const { stdout } = await execAsync('pactl list short source-outputs');
       return stdout.trim().length > 0 ? "Active Linux Device" : null;
     } catch (error) {
+      // Check if the error is due to pactl not being installed
+      if (error.code === 127) {
+        // pactl not found - notify the main process to show user help
+        if (this.onPactlMissingCallback) {
+          this.onPactlMissingCallback();
+        }
+      }
       return null;
     }
   }
@@ -220,6 +228,7 @@ module.exports = {
   onSessionStart: sessionManager.onSessionStart.bind(sessionManager),
   onSessionEnd: sessionManager.onSessionEnd.bind(sessionManager),
   onDeviceSwitch: sessionManager.onDeviceSwitch.bind(sessionManager),
+  onPactlMissing: sessionManager.onPactlMissing.bind(sessionManager),
   getStatus: sessionManager.getStatus.bind(sessionManager),
   checkMicrophoneUsage: sessionManager.checkMicrophoneUsage.bind(sessionManager),
   detectWindowsMicrophoneUsage: sessionManager.detectWindowsMicrophoneUsage.bind(sessionManager),
