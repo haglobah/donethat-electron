@@ -5,7 +5,7 @@ const {
 const { ipcRenderer } = require('electron');
 const { shell } = require('electron');
 
-const { auth } = require('./firebase.js');
+const { auth, getAppCheckToken } = require('./firebase.js');
 
 const { initializeSettings, loadUserSettings } = require('./settings.js');
 const { initializeAuth } = require('./auth.js');
@@ -649,6 +649,9 @@ onIdTokenChanged(auth, async (user) => {
       lastPortalTokenTs = Date.now();
       lastPortalAuthResponseType = 'token';
       lastPortalAuthResponseTs = Date.now();
+      
+      // Also refresh AppCheck token when ID token changes (with concise error)
+      try { await getAppCheckToken({ forceRefresh: true }); } catch (e) { console.error('AppCheck: refresh failed on ID token change', e?.code || '', e?.message || e); }
     } catch (e) {}
   }
 });

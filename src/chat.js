@@ -597,6 +597,18 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
       input0.style.height = MIN_INPUT_HEIGHT + 'px'
     }
   }
+
+  // If this looks like a system-initiated chat (assistant messages present but no user messages),
+  // clear any previous pending local state so we don't mix chats.
+  if (newMessages.length > 0) {
+    const hasAnyUser = newMessages.some(m => m && m.role === 'user')
+    const hasAnyAssistant = newMessages.some(m => m && m.role === 'assistant')
+    if (hasAnyAssistant && !hasAnyUser) {
+      pendingMessages = []
+      input0.value = ''
+      input0.style.height = MIN_INPUT_HEIGHT + 'px'
+    }
+  }
   
   // Only honor assistant requestScreen if it is NEWER than the last user message.
   // This avoids stale assistant requests re-toggling after the user types.

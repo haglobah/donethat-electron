@@ -12,11 +12,10 @@ let configCache = {
   fetchInterval: 60 * 60 * 1000 // 1 hour in milliseconds
 };
 
-// LLM models and config (will be initialized when needed)
+// LLM models (will be initialized when needed)
 let llmModels = null;
-let promptTemplate = null;
-let configParameters = null;
-let selectedCategories = null;
+// latest config snapshot for downstream use
+let latestConfig = null;
 
 /**
  * Check if local processing is available (has Gemini API key)
@@ -34,22 +33,27 @@ async function isLocalProcessingAvailable() {
 /**
  * Get configuration from Firebase with caching
  */
-async function getConfig(idToken) {
+async function getConfig(idToken, appCheckToken = null) {
   const now = Date.now();
   
   // Return cached config if still valid
   if (configCache.data && (now - configCache.lastFetch) < configCache.fetchInterval) {
-    return configCache.data;
+    latestConfig = configCache.data;
+    return latestConfig;
   }
 
   try {
     const fetch = await import('node-fetch').then(module => module.default);
     
+    const headers = {
+      'Authorization': `Bearer ${idToken}`
+    };
+    if (appCheckToken) {
+      headers['X-Firebase-AppCheck'] = appCheckToken;
+    }
     const response = await fetch(FIREBASE_CONFIG_URL, {
       method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${idToken}`
-      }
+      headers
     });
 
     if (!response.ok) {
@@ -65,8 +69,9 @@ async function getConfig(idToken) {
     // Cache the config
     configCache.data = config;
     configCache.lastFetch = now;
+    latestConfig = config;
     
-    return config;
+    return latestConfig;
   } catch (error) {
     log.error('Error fetching config:', error);
     throw error;
@@ -74,16 +79,11 @@ async function getConfig(idToken) {
 }
 
 /**
- * Initialize LLM models and prompt template
+ * Initialize LLM models with structured output
  */
-async function initializeLLM(idToken) {
+async function initializeLLM(idToken, appCheckToken = null) {
   try {
-    const config = await getConfig(idToken);
-    
-    // Store prompt template and config data
-    promptTemplate = config.promptTemplate;
-    configParameters = config.parameters;
-    selectedCategories = config.selectedCategories;
+    const config = await getConfig(idToken, appCheckToken);
     
     // Get Gemini API key
     const geminiResult = await getGeminiApiKey();
@@ -96,31 +96,17 @@ async function initializeLLM(idToken) {
     
     llmModels = config.llmModels
       .filter(modelConfig => modelConfig.provider === 'gemini')
-      .map(modelConfig => {
-        return new ChatGoogleGenerativeAI({
+      .map(modelConfig => new ChatGoogleGenerativeAI({
           apiKey: geminiResult.apiKey,
           model: modelConfig.model,
           maxOutputTokens: modelConfig.maxOutputTokens || 300
-        });
-      });
+        }).withStructuredOutput(config.outputSchema)
+      );
     
-    log.info(`Initialized ${llmModels.length} LLM models for local processing`);
   } catch (error) {
     log.error('Error initializing LLM:', error);
     throw error;
   }
-}
-
-/**
- * Extract text content from LLM response
- */
-function extractLLMResponseText(response) {
-  if (response && response.content) {
-    return typeof response.content === 'string' 
-      ? response.content 
-      : response.content[0]?.text || '';
-  }
-  return '';
 }
 
 /**
@@ -144,33 +130,46 @@ async function invokeWithFallback(messages) {
 }
 
 /**
- * Build prompt with application activity and audio transcript
+ * Build content blocks based on config spec
  */
-function buildPrompt(applicationActivity, audioTranscript = 'No audio transcript available') {
-  // Replace placeholders in the prompt template
-  let prompt = promptTemplate;
-  
-  // Replace all parameters from config
-  Object.keys(configParameters).forEach(key => {
-    let value = configParameters[key];
-    
-    // Override specific values with actual data
-    if (key === 'application_activity') {
-      value = applicationActivity || 'No application activity data available';
-    } else if (key === 'audio_transcript') {
-      value = audioTranscript;
-    }
-    
-    prompt = prompt.replace(`{${key}}`, value);
+function buildBlocks(config, validScreenshots, previousScreenshots, applicationActivity, audioTranscript) {
+  const spec = config.contentBlocksSpec || {};
+  const imageKey = spec.imagePartKey || 'image_url';
+  const blocks = [ { type: 'text', text: config.prefilledPrompt } ];
+
+  if (applicationActivity) {
+    blocks.push({ type: 'text', text: `Application Activity:\n${applicationActivity}` });
+  }
+  if (audioTranscript) {
+    blocks.push({ type: 'text', text: `Audio Transcript:\n${audioTranscript}` });
+  }
+
+  if (previousScreenshots && previousScreenshots.images && previousScreenshots.images.length > 0) {
+    blocks.push({ type: 'text', text: spec.previousLabel || 'PREVIOUS SCREENSHOTS (from 5 minutes ago):' });
+    previousScreenshots.images.forEach(img => {
+      if (img && img.base64Data) {
+        const url = img.base64Data.startsWith('data:image') ? img.base64Data : `data:image/jpeg;base64,${img.base64Data}`;
+        const imageBlock = { type: 'image_url' };
+        imageBlock[imageKey] = url;
+        blocks.push(imageBlock);
+      }
+    });
+    blocks.push({ type: 'text', text: spec.currentLabel || 'CURRENT SCREENSHOTS:' });
+  }
+
+  validScreenshots.forEach(img => {
+    const imageBlock = { type: 'image_url' };
+    imageBlock[imageKey] = img; // already a data URL
+    blocks.push(imageBlock);
   });
-  
-  return prompt;
+
+  return blocks;
 }
 
 /**
  * Analyze screenshots using local LLM processing
  */
-async function analyzeScreenshots(screenshots, previousScreenshots, activity, audioTranscript, idToken) {
+async function analyzeScreenshots(screenshots, previousScreenshots, activity, audioTranscript, idToken, appCheckToken = null) {
   try {
     // Validate current screenshots - this is critical
     if (!screenshots || screenshots.length === 0) {
@@ -186,38 +185,13 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, au
 
     // Initialize LLM if not already done
     if (!llmModels) {
-      await initializeLLM(idToken);
+      await initializeLLM(idToken, appCheckToken);
     }
     
-    // Build the prompt
-    const enhancedPrompt = buildPrompt(activity, audioTranscript);
-    
-    // Build content blocks for LangChain
-    const blocks = [
-      { type: "text", text: enhancedPrompt }
-    ];
-    
-    // Add previous screenshots if available (optional)
-    if (previousScreenshots && previousScreenshots.images && previousScreenshots.images.length > 0) {
-      blocks.push({ type: "text", text: "PREVIOUS SCREENSHOTS (from 5 minutes ago):" });
-      previousScreenshots.images.forEach(img => {
-        if (img && img.base64Data) {
-          blocks.push({
-            type: "image_url",
-            image_url: { url: img.base64Data }
-          });
-        }
-      });
-      blocks.push({ type: "text", text: "CURRENT SCREENSHOTS:" });
-    }
-    
-    // Add current screenshots (required)
-    validScreenshots.forEach(img => {
-      blocks.push({
-        type: "image_url", 
-        image_url: { url: img }
-      });
-    });
+    // Ensure we have up-to-date config
+    const config = latestConfig || await getConfig(idToken, appCheckToken);
+    // Build content blocks using spec
+    const blocks = buildBlocks(config, validScreenshots, previousScreenshots, activity, audioTranscript);
 
     // Import HumanMessage
     const { HumanMessage } = await import('@langchain/core/messages');
@@ -227,7 +201,8 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, au
       new HumanMessage({ content: blocks })
     ]);
 
-    return extractLLMResponseText(response);
+    // Structured object is returned directly by withStructuredOutput
+    return response;
   } catch (error) {
     log.error('Error in local screenshot analysis:', error);
     throw error;
@@ -239,23 +214,27 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, au
 /**
  * Submit processed results to Firebase
  */
-async function submitResults(idToken, timestamp, llmResponse) {
+async function submitResults(idToken, timestamp, structured, parameters, appCheckToken = null) {
   try {
     const fetch = await import('node-fetch').then(module => module.default);
     
     // Prepare payload for Firebase
     const payload = {
       timestamp: timestamp,
-      llmResponse: llmResponse,
-      selectedCategories: selectedCategories
+      structured: structured,
+      parameters: parameters
     };
     
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    };
+    if (appCheckToken) {
+      headers['X-Firebase-AppCheck'] = appCheckToken;
+    }
     const response = await fetch(FIREBASE_PROCESS_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${idToken}`
-      },
+      headers,
       body: JSON.stringify(payload)
     });
 
@@ -279,7 +258,7 @@ async function submitResults(idToken, timestamp, llmResponse) {
 /**
  * Main function to process data locally
  */
-async function processDataLocally(idToken, screenshots, previousScreenshots, inputData) {
+async function processDataLocally(idToken, screenshots, previousScreenshots, inputData, appCheckToken = null) {
   try {
     // Check if local processing is available
     if (!await isLocalProcessingAvailable()) {
@@ -301,22 +280,34 @@ async function processDataLocally(idToken, screenshots, previousScreenshots, inp
     }
 
     // Analyze screenshots locally
-    const llmResponse = await analyzeScreenshots(
+    const structured = await analyzeScreenshots(
       screenshots,
       previousScreenshots,
       applicationActivity,
       audioTranscript,
-      idToken
+      idToken,
+      appCheckToken
     );
 
-    // Submit results to Firebase
+    // Build parameters to send (based on config.parameters)
+    const config = latestConfig || await getConfig(idToken, appCheckToken);
+    const baseParams = config.parameters || {};
+    const paramsToSend = {
+      ...baseParams,
+      application_activity: applicationActivity || '',
+      audio_transcript: audioTranscript || ''
+    };
+
+    // Submit results to Firebase using current time
+    const originalTs = Date.now();
     const result = await submitResults(
       idToken,
-      Date.now(),
-      llmResponse
+      originalTs,
+      structured,
+      paramsToSend,
+      appCheckToken
     );
 
-    log.info('Local processing completed successfully');
     return result;
   } catch (error) {
     log.error('Error in local processing:', error);

@@ -1,4 +1,7 @@
 // Suppress ONNX runtime warnings - must be set before any imports
+// Load environment variables from .env file
+require('dotenv').config();
+
 process.env.ORT_LOGGING_LEVEL = '4'
 process.env.ORT_LOGGING_VERBOSE = '0'
 
@@ -429,6 +432,17 @@ app.whenReady().then(async () => {
   // Register for auth state change events from renderer
   ipcMain.on('auth-state-changed', (event, isAuthenticated) => {
     createApplicationMenu(); // Update menu on auth state change
+  });
+
+  // Handle AppCheck token generation via webview
+  ipcMain.handle('generate-appcheck-token', async () => {
+    try {
+      const { generateAppCheckTokenViaWebview } = require('./src-main/appcheck-token.js');
+      const token = await generateAppCheckTokenViaWebview();
+      return token;
+    } catch (error) {
+      return null;
+    }
   });
 
   // Allow renderer modules to trigger in-app notifications centrally
@@ -1205,12 +1219,11 @@ function createWindow() {
       });
       
       // Initialize capture with auth error handler
-      // On-demand App Check token fetch from renderer
+      // On-demand App Check token fetch from renderer (single attempt)
       const getAppCheckToken = async () => {
         try {
           const script = 'window.getAppCheckToken ? window.getAppCheckToken() : null';
-          const token = await mainWindow.webContents.executeJavaScript(script, true);
-          return token || null;
+          return await mainWindow.webContents.executeJavaScript(script, true);
         } catch (_) { return null; }
       };
       initCapture(mainWindow, handleCaptureAuthErrors, stateManager.getIdToken, getAppCheckToken);

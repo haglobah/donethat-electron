@@ -868,6 +868,9 @@ body {
 .toggle input:disabled:not(:checked) + .slider { background-color: #e5e7eb; }
 .toggle input:disabled:checked + .slider { background-color: var(--color-primary); }
 .toggle input:disabled + .slider:before { background-color: #f3f4f6; border: 0; }
+/* Make any disabled toggle show not-allowed cursor like Screenshare */
+.toggle:has(input:disabled) { cursor: not-allowed; }
+.toggle:has(input:disabled) .slider { cursor: not-allowed; }
 
 /* Settings view scrolling + proper sizing under topbar */
 #settingsView {

@@ -161,6 +161,11 @@ function setupPermissionResultListener() {
     // Set checkbox and local state according to permission result
     checkbox.checked = hasPermission;
     inputData[type] = hasPermission;
+
+    // Keep Active applications non-revokable once enabled
+    if (type === 'windows') {
+      checkbox.disabled = !!hasPermission;
+    }
     
     // Save to server
     try {

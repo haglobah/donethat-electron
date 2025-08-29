@@ -175,7 +175,6 @@ async function initializeStore() {
       if (hasData) {
         // Found data, use this location
         store = testStore;
-        log.info(`Using existing data from ${location.name} location: ${location.cwd}`);
         dataFound = true;
         break;
       }
