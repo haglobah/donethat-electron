@@ -1,5 +1,6 @@
 const log = require('electron-log')
 const { activeWindow } = require('get-windows')
+const { systemPreferences } = require('electron')
 
 // Track active windows
 let isTracking = false
@@ -19,12 +20,25 @@ let processingRecordWindow = false // Flag to prevent overlapping calls
  */
 async function checkPermissions() {
   try {
-    // Try to get active window info - if it fails, it's likely a permission issue
+    // On macOS, rely on the Accessibility trust state which is stable across focus changes
+    if (process.platform === 'darwin') {
+      const isTrusted = systemPreferences.isTrustedAccessibilityClient(false)
+      // If accessibility is trusted, treat permission as granted even if the probe fails transiently
+      if (isTrusted) {
+        return true
+      }
+      return false
+    }
+
+    // Other platforms: best effort probe
     const result = await activeWindow()
     return result !== null
   } catch (error) {
-    log.error('Window tracking permission check failed:', error)
-    return false
+    // Treat probe failures as transient errors unless we know permission is denied
+    log.warn('Window tracking permission probe failed (treated as transient):', error)
+    return process.platform === 'darwin'
+      ? systemPreferences.isTrustedAccessibilityClient(false)
+      : false
   }
 }
 

@@ -4,9 +4,12 @@
   "description": "DoneThat",
   "main": "main.js",
   "scripts": {
+    "predev": "node scripts/postinstall-macos-micstatus.js",
     "build:css": "postcss styles.css -o ./build/output.css --verbose",
     "build:webpack": "webpack --config webpack.config.js",
+    "prebuild:prepare": "node scripts/postinstall-macos-micstatus.js",
     "build:prepare": "npm run build:css && npm run build:webpack",
+    "postinstall": "node scripts/postinstall-macos-micstatus.js || electron-builder install-app-deps",
     "dev": "npm run build:prepare && electron .",
     "build": "npm run build:prepare && electron-builder",
     "build:mac:x64": "npm run build:prepare && electron-builder --mac --x64",
@@ -58,15 +61,21 @@
   },
   "dependencies": {
     "@firebase/analytics": "^0.10.15",
-    "get-windows": "^9.2.0",
+    "@langchain/core": "^0.3.66",
+    "@langchain/google-genai": "^0.2.15",
+    "@xenova/transformers": "^2.17.2",
     "electron-log": "^5.4.0",
     "electron-store": "^10.0.1",
     "electron-updater": "^6.6.2",
+    "ffmpeg-static": "^5.2.0",
     "firebase": "^11.7.3",
+    "fluent-ffmpeg": "^2.1.3",
+    "get-windows": "^9.2.0",
     "node-fetch": "^3.3.2",
     "node-global-key-listener": "^0.3.0",
     "tailwindcss": "^4.1.7"
   },
+  
   "build": {
     "appId": "com.donethat.app",
     "productName": "DoneThat",
@@ -74,10 +83,17 @@
     "icon": "resources/icon_inverse.png",
     "artifactName": "${productName}-${arch}.${ext}",
     "generateUpdatesFilesForAllChannels": true,
+    "protocols": [
+      {
+        "name": "DoneThat Protocol",
+        "schemes": ["donethat"]
+      }
+    ],
     "files": [
       "main.js",
       "firebase-config.js",
       "src/**/*",
+      "bin/**/*",
       "build/**/*",
       "resources/**/*",
       "src-main/**/*",
@@ -106,7 +122,9 @@
         "zip"
       ],
       "extendInfo": {
-        "LSUIElement": 1
+        "LSUIElement": 1,
+        "NSCameraUseContinuityCameraDeviceType": true,
+        "NSMicrophoneUsageDescription": "DoneThat needs microphone access to record audio for transcription and analysis."
       },
       "artifactName": "${productName}-${arch}.${ext}",
       "notarize": false

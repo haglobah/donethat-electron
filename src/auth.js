@@ -4,22 +4,25 @@ const {
     sendPasswordResetEmail,
     onAuthStateChanged,
     signOut,
-    sendEmailVerification
+    sendEmailVerification,
+    signInWithCustomToken
   } = require("firebase/auth");
 
 const { ipcRenderer } = require("electron");
 
-// Import auth instance from firebase.js and analytics functions directly
-const { auth } = require('./firebase.js');
+// Import auth instance and AppCheck helper
+const { auth, getAppCheckToken } = require('./firebase.js');
 const { logAnalyticsEvent, setAnalyticsUserProperties } = require('./analytics.js');
 const { updateAuthState } = require('./app-state.js');
 const { resetSummaryState } = require('./dashboard.js');
-// Import modal functions for UI notifications
-const { showErrorModal, showSuccessModal, showPersistentErrorModal, hideModal } = require('./modal.js');
+// Centralized in-app banner
+const { showBanner, hideBanner } = require('./notify.js');
+function hideModal() { try { hideBanner(); } catch (_) {} }
 
 const signInForm = document.getElementById("signInForm");
 const signUpForm = document.getElementById("signUpForm");
 const resetForm = document.getElementById("resetForm");
+const googleSignInBtn = document.getElementById("googleSignInBtn");
 
 const showSignUp = document.getElementById("showSignUp");
 const backToSignIn = document.getElementById("backToSignIn");
@@ -79,8 +82,8 @@ async function handleAuthError(error) {
   
   if (errorType === AUTH_ERROR_TYPES.CRITICAL) {
     console.log('Handling CRITICAL error - initiating logout');
-    // Show error notification for critical errors - use persistent modal
-    showPersistentErrorModal('Authentication error. Please sign in again.');
+    // Show error notification for critical errors - sticky banner
+    showBanner('Authentication error. Please sign in again.', { title: 'Auth Error', sticky: true });
     
     // Only logout for permanent issues
     if (auth.currentUser) {
@@ -98,8 +101,7 @@ async function handleAuthError(error) {
       
       // Show notification for retry > 1
       if (retryCount > 1) {
-        showPersistentErrorModal('Connection issue. Please check your internet connection.');
-        console.log(`Scheduling retry ${retryCount}/${MAX_RETRIES}`);
+        showBanner('Connection issue. Please check your internet connection.', { title: 'Network Issue', sticky: true });
       }
       
       logAnalyticsEvent('auth_error_retry', {
@@ -116,8 +118,7 @@ async function handleAuthError(error) {
         }
       }, delay);
     } else {
-      console.log('Max retries reached - waiting for next capture cycle');
-      showPersistentErrorModal('Connection issue. Please check your internet connection.');
+      showBanner('Connection issue. Please check your internet connection.', { title: 'Network Issue', sticky: true });
       
       logAnalyticsEvent('auth_error_max_retries', {
         error_code: error.code,
@@ -154,7 +155,7 @@ ipcRenderer.on('auth-error', (event, error) => {
   handleAuthError(error || { code: 'unknown', message: 'Unknown auth error' });
 });
 
-// Function to refresh Firebase auth token
+// Function to refresh Firebase auth token and AppCheck token
 async function refreshAuthToken() {
   if (retryCount > 0) {
     console.log('=== Token Refresh ===');
@@ -175,6 +176,10 @@ async function refreshAuthToken() {
       }
       updateAuthState(true, newToken);
       ipcRenderer.send('token-refreshed', newToken);
+      
+      // Also refresh AppCheck token (silent)
+      try { await getAppCheckToken({ forceRefresh: true }); } catch {}
+      
       // Reset retry count on successful refresh
       retryCount = 0;
       return newToken;
@@ -203,9 +208,9 @@ onAuthStateChanged(auth, async (user) => {
         try {
           await sendEmailVerification(user);
           logAnalyticsEvent('verification_email_sent');
-          showSuccessModal("Verification email sent. Please check your inbox.");
+          showBanner("Verification email sent. Please check your inbox.", { title: 'Email Sent' });
         } catch (error) {
-          showErrorModal("Error sending verification email: " + error.message);
+          showBanner("Error sending verification email: " + error.message, { title: 'Email Error', sticky: true });
         }
         await signOut(auth);
         hideSpinner();
@@ -213,10 +218,36 @@ onAuthStateChanged(auth, async (user) => {
         return;
       }
       
-      // User is signed in
-      const token = await user.getIdToken();
+      // User is signed in - add retry mechanism for token retrieval
+      let token = null;
+      let tokenRetries = 0;
+      const maxTokenRetries = 3;
+      
+      while (!token && tokenRetries < maxTokenRetries) {
+        try {
+          token = await user.getIdToken();
+          if (token) break;
+        } catch (error) {
+          tokenRetries++;
+          if (tokenRetries < maxTokenRetries) {
+            // Wait before retry (1s, 2s, 4s)
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, tokenRetries - 1)));
+          }
+        }
+      }
+      
+      if (!token) {
+        console.error('Failed to get token after retries');
+        // Don't logout immediately - let the user try again
+        hideSpinner();
+        return;
+      }
+      
       updateAuthState(true, token);
       ipcRenderer.send("login", token);
+      
+      // Create overlay window when user signs in
+      ipcRenderer.send("create-overlay-if-needed");
 
       // Set user properties for analytics
       setAnalyticsUserProperties({
@@ -230,7 +261,7 @@ onAuthStateChanged(auth, async (user) => {
         email_verified: user.emailVerified
       });
 
-      // Set up a token refresh interval
+      // Set up a token refresh interval (both auth and AppCheck tokens)
       const refreshInterval = setInterval(async () => {
         if (auth.currentUser) {
           await refreshAuthToken();
@@ -347,7 +378,7 @@ signInForm.addEventListener("submit", (e) => {
           error_code: error.code,
           error_message: error.message
         });
-        showErrorModal(getErrorMessage(error));
+        showBanner(getErrorMessage(error), { title: 'Sign In Error', sticky: true });
       });
   });
   
@@ -372,7 +403,7 @@ signInForm.addEventListener("submit", (e) => {
           error_code: error.code,
           error_message: error.message
         });
-        showErrorModal(getErrorMessage(error));
+        showBanner(getErrorMessage(error), { title: 'Sign Up Error', sticky: true });
       });
   });
   
@@ -388,7 +419,7 @@ signInForm.addEventListener("submit", (e) => {
         document.getElementById("resetEmail").value = "";
         hideSpinner();
         logAnalyticsEvent('password_reset_email_sent');
-        showSuccessModal("Password reset email sent. Check your inbox.");
+        showBanner("Password reset email sent. Check your inbox.", { title: 'Email Sent' });
         resetView.classList.add("hidden");
         signInView.classList.remove("hidden");
       })
@@ -398,7 +429,7 @@ signInForm.addEventListener("submit", (e) => {
           error_code: error.code,
           error_message: error.message
         });
-        showErrorModal(getErrorMessage(error));
+        showBanner(getErrorMessage(error), { title: 'Password Reset Error', sticky: true });
       });
   });
   
@@ -418,6 +449,95 @@ signInForm.addEventListener("submit", (e) => {
   showResetPassword.addEventListener("click", (e) => {
     e.preventDefault();
     navigateToView('reset');
+  });
+
+  // Toggle password visibility helpers
+  function wirePasswordToggle(buttonElementId, inputElementId) {
+    try {
+      const btn = document.getElementById(buttonElementId);
+      const input = document.getElementById(inputElementId);
+      if (!btn || !input) return;
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const isPassword = input.getAttribute('type') === 'password';
+        input.setAttribute('type', isPassword ? 'text' : 'password');
+      });
+    } catch (_) {}
+  }
+
+  // Wire up show/hide for auth forms
+  wirePasswordToggle('toggleSignInPasswordBtn', 'signInPassword');
+  wirePasswordToggle('toggleSignUpPasswordBtn', 'signUpPassword');
+
+  // Handle Google Sign In/Up (single button for both)
+  googleSignInBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    
+    try {
+      // Show spinner while we wait for the browser SSO flow and callback
+      showSpinner();
+      // Guard against double-clicks
+      try { googleSignInBtn.disabled = true; googleSignInBtn.classList.add('disabled-btn'); } catch (_) {}
+      // Call the Firebase function to start Google Sign In
+      const { httpsCallable } = require('firebase/functions');
+      const { functions } = require('./firebase.js');
+      
+      const googleSignInStart = httpsCallable(functions, 'authGoogleSignInStart');
+      
+      googleSignInStart()
+        .then((result) => {
+          // The function should return a URL to open
+          const url = result.data?.authUrl || result.data?.url || result.data?.data?.url;
+          if (url) {
+            // Open the URL in the default browser
+            const { shell } = require('electron');
+            shell.openExternal(url);
+          } else {
+            console.error('No URL found in result:', JSON.stringify(result.data, null, 2));
+            showBanner('No URL returned from Google Sign In function.', { title: 'Google Sign In', sticky: true });
+            hideSpinner();
+            try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
+          }
+        })
+        .catch((error) => {
+          console.error('Google Sign In error:', error);
+          logAnalyticsEvent('google_sign_in_error', {
+            error_code: error.code,
+            error_message: error.message
+          });
+          showBanner(`Failed to start Google Sign In: ${error.message}`, { title: 'Google Sign In', sticky: true });
+          hideSpinner();
+          try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
+        });
+    } catch (error) {
+      console.error('Google Sign In setup error:', error);
+      showBanner(`Failed to setup Google Sign In: ${error.message}`, { title: 'Google Sign In', sticky: true });
+      hideSpinner();
+      try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
+    }
+  });
+
+  // Handle custom token from main process
+  ipcRenderer.on('firebase-custom-token', (event, token) => {
+    // Request main process to focus the window
+    ipcRenderer.send('focus-app-window');
+    
+    signInWithCustomToken(auth, token)
+      .then((userCredential) => {
+        logAnalyticsEvent('google_sign_in_success');
+        hideSpinner();
+        try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
+      })
+      .catch((error) => {
+        logAnalyticsEvent('google_sign_in_token_error', {
+          error_code: error.code,
+          error_message: error.message
+        });
+        showBanner('Failed to complete Google Sign In. Please try again.', { title: 'Google Sign In', sticky: true });
+        console.error("Firebase custom token sign-in error:", error);
+        hideSpinner();
+        try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
+      });
   });
   
   // Toggle to go back to the sign-in view from the password reset view
@@ -463,8 +583,8 @@ signInForm.addEventListener("submit", (e) => {
     } catch (error) {
       console.error('Error during logout:', error);
       hideSpinner();
-      showErrorModal(`Error signing out: ${error.message}`);
+      showBanner(`Error signing out: ${error.message}`, { title: 'Sign Out Error', sticky: true });
     }
   }
 
-  export { initializeAuth, userIdToken, refreshAuthToken };
+  export { initializeAuth, userIdToken, refreshAuthToken, performFullLogout };

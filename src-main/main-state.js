@@ -1,6 +1,7 @@
 const { ipcMain, Notification, app, dialog } = require('electron');
 const log = require('electron-log');
 const path = require('path');
+const { encryptData, decryptData } = require('./encryption');
 
 // State variables
 let store = null;
@@ -18,6 +19,7 @@ let idToken = null; // User authentication token
 let workPeriodCheckTimeoutId = null; // For scheduling next workday/workhours check
 let autoSubmit = false;
 let hasShownStorageError = false; // Flag to prevent multiple error alerts
+let userStatus = 'active'; // User status - 'active' or 'inactive'
 
 // Function references that will be set by main.js
 let checkAndAdjustRecording = null;
@@ -46,14 +48,19 @@ function showStorageError(error) {
     } catch (dialogError) {
       // Fallback to notification if dialog fails
       try {
-        new Notification({
-          title: 'Storage Permission Error',
-          body: 'Could not store configuration. Please check your antivirus software.',
-          silent: false,
-          urgency: 'critical'
-        }).show();
+        const { BrowserWindow } = require('electron');
+        const win = BrowserWindow.getAllWindows()[0];
+        if (win) {
+          try { win.show(); win.focus(); } catch (e) {}
+          win.webContents.send('inapp:notify', {
+            id: 'storage-permission-error',
+            title: 'Storage Permission Error',
+            message: 'Could not store configuration. Please check your antivirus software.',
+            sticky: true
+          });
+        }
       } catch (notificationError) {
-        log.error('Failed to show storage error notification:', notificationError);
+        log.error('Failed to send in-app storage error notification:', notificationError);
       }
     }
   }
@@ -95,7 +102,7 @@ async function initState(options = {}) {
     }
 
     // Initialize store with fallback mechanism
-    initializeStore();
+    await initializeStore();
 
     // Load saved states
     loadWorkSettings();
@@ -117,11 +124,13 @@ async function initState(options = {}) {
       pauseUntilNextWorkPeriod,
       updateWaylandStatus,
       updateScreenCapturePermission,
+      updateUserStatus,
       getUserWorkdays: () => userWorkdays,
       getUserWorkhours: () => userWorkhours,
       hasScreenCapturePermission: () => hasScreenCapturePermission,
       isWaylandSession: () => isWaylandSession,
       isAuthenticated: () => Boolean(idToken),
+      hasValidAccess: () => userStatus === 'active',
       getIdToken: () => {
         return idToken;
       },
@@ -166,7 +175,6 @@ async function initializeStore() {
       if (hasData) {
         // Found data, use this location
         store = testStore;
-        log.info(`Using existing data from ${location.name} location: ${location.cwd}`);
         dataFound = true;
         break;
       }
@@ -284,22 +292,19 @@ function _checkWorkdayEndNotification() {
 
   if (lastSummaryTimestamp && (Date.now() - lastSummaryTimestamp > threeHoursInMillis)) {
     // Create notification with same options structure as start notification
-    const notification = new Notification({
-      title: "Workday Ended",
-      body: "Remember to generate your summary in DoneThat!",
-      silent: false,
-      hasReply: false,
-      urgency: 'critical'
-    });
-
-    notification.on('click', () => {
-      if (navigateToView) {
-        navigateToView('signup-next');
+    try {
+      const { BrowserWindow } = require('electron');
+      const win = BrowserWindow.getAllWindows()[0];
+      if (win) {
+        try { win.show(); win.focus(); } catch (e) {}
+        win.webContents.send('inapp:notify', {
+          id: 'workday-ended',
+          title: 'Workday Ended',
+          message: 'Remember to generate your summary in DoneThat!',
+          sticky: true
+        });
       }
-    });
-
-    // Show notification
-    notification.show();
+    } catch (e) {}
   }
 }
 
@@ -577,6 +582,16 @@ function updateScreenCapturePermission(permission) {
   hasScreenCapturePermission = permission;
 }
 
+// Update user status
+function updateUserStatus(status) {
+  userStatus = status;
+  
+  // Trigger recording state check when status changes
+  if (checkAndAdjustRecording) {
+    checkAndAdjustRecording();
+  }
+}
+
 // Set up IPC handlers for state management
 function setupIPCHandlers() {
   // Auth handlers - single source of truth for login/logout events
@@ -727,6 +742,11 @@ function setupIPCHandlers() {
     }
   });
 
+  // Add IPC handler for user status updates
+  ipcMain.on('updateUserStatus', (event, status) => {
+    updateUserStatus(status);
+  });
+
   // Add IPC handler for auto submit setting
   ipcMain.on('updateAutoSubmit', (event, value) => {
     if (typeof value === 'boolean') {
@@ -742,6 +762,75 @@ function setupIPCHandlers() {
       }, 'save autoSubmit setting');
     } else {
       log.error('Received invalid autoSubmit value:', value);
+    }
+  });
+
+  // Gemini API key handlers
+  ipcMain.handle('save-gemini-api-key', async (event, apiKey) => {
+    try {
+      if (!apiKey || typeof apiKey !== 'string') {
+        throw new Error('Invalid API key provided');
+      }
+
+      // Encrypt the API key
+      const encryptedKey = encryptData(apiKey);
+      
+      // Save encrypted key to store
+      safeStoreOperation(() => {
+        if (store) {
+          store.set('geminiApiKey', encryptedKey);
+        } else {
+          throw new Error('Store not initialized');
+        }
+      }, 'save encrypted Gemini API key');
+
+      log.info('Gemini API key saved successfully');
+      return { success: true };
+    } catch (error) {
+      log.error('Error saving Gemini API key:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('get-gemini-api-key', async (event) => {
+    try {
+      const encryptedKey = safeStoreOperation(() => {
+        if (store) {
+          return store.get('geminiApiKey');
+        } else {
+          return null;
+        }
+      }, 'get encrypted Gemini API key');
+
+      if (!encryptedKey) {
+        return { success: true, apiKey: null };
+      }
+
+      // Decrypt the API key
+      const decryptedKey = decryptData(encryptedKey);
+      
+      return { success: true, apiKey: decryptedKey };
+    } catch (error) {
+      log.error('Error retrieving Gemini API key:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('clear-gemini-api-key', async (event) => {
+    try {
+      safeStoreOperation(() => {
+        if (store) {
+          store.delete('geminiApiKey');
+        } else {
+          throw new Error('Store not initialized');
+        }
+      }, 'delete Gemini API key');
+
+      log.info('Gemini API key cleared successfully');
+      return { success: true };
+    } catch (error) {
+      log.error('Error clearing Gemini API key:', error);
+      throw error;
     }
   });
 }
@@ -817,6 +906,9 @@ function _scheduleNextWorkEndCheck() {
   // Ensure msUntilCheck is positive
   const positiveMsUntilCheck = Math.max(msUntilCheck, 60000); // Minimum 1 minute wait
     
+  // Capture the intended fire time to avoid late (post-sleep) notifications
+  const intendedFireTs = nextWorkEndTime.getTime();
+
   // Set timeout for next check - when work period ends, pause until next work period
   workPeriodCheckTimeoutId = setTimeout(() => {
     // Create a bridge to mainWindow
@@ -828,8 +920,15 @@ function _scheduleNextWorkEndCheck() {
       log.error('Failed to get mainWindow for pauseUntilNextWorkPeriod:', error);
     }
     
+    // If this timer fires significantly late (e.g., device resumed next day),
+    // avoid showing a stale end-of-day notification
+    const now = Date.now();
+    const LATE_GRACE_MS = 30 * 60 * 1000; // 30 minutes
+    const firedLate = now - intendedFireTs > LATE_GRACE_MS;
+
     // When work period ends, pause until next work period
-    pauseUntilNextWorkPeriod(mainWindow);
+    // Use silent=true when firing late to suppress the banner
+    pauseUntilNextWorkPeriod(mainWindow, firedLate === true);
   }, positiveMsUntilCheck);
   
   return positiveMsUntilCheck;
@@ -880,22 +979,54 @@ function setIdToken(token) {
  */
 function clearIdToken() {
   idToken = null;
-  
-  // Show notification about logout
+
+}
+
+/**
+ * Get Gemini API key (for internal use)
+ */
+async function getGeminiApiKey() {
   try {
-    const { Notification } = require('electron');
-    new Notification({
-      title: 'DoneThat Logged Out',
-      body: 'You have been logged out. Please log in again to continue tracking your work.',
-      silent: false,
-      urgency: 'critical'
-    }).show();
+    const encryptedKey = safeStoreOperation(() => {
+      if (store) {
+        return store.get('geminiApiKey');
+      } else {
+        return null;
+      }
+    }, 'get encrypted Gemini API key');
+
+    if (!encryptedKey) {
+      return { success: true, apiKey: null };
+    }
+
+    // Decrypt the API key
+    const decryptedKey = decryptData(encryptedKey);
+    
+    return { success: true, apiKey: decryptedKey };
   } catch (error) {
-    log.error('Failed to show logout notification:', error);
+    log.error('Error retrieving Gemini API key:', error);
+    return { success: false, error: error.message };
   }
 }
 
 module.exports = {
   initState,
+  resume,
+  isPaused,
+  isWorkday,
+  isWithinWorkHours,
+  isActiveWorkPeriod,
+  pauseRecording,
+  pauseUntilNextWorkPeriod,
+  recordingStarted,
+  loadWorkSettings,
+  loadSummaryTimestamp,
+  updateWaylandStatus,
+  updateScreenCapturePermission,
+  setupIPCHandlers,
+  cleanupOnQuit,
+  setIdToken,
+  clearIdToken,
+  getGeminiApiKey,
   getAutoSubmit: () => autoSubmit
 }

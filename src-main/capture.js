@@ -1,6 +1,7 @@
 const log = require('electron-log');
-const { captureScreenshot } = require('./captureScreenshots');
+const { captureScreenshot, getPreviousScreenshots } = require('./captureScreenshots');
 const { ipcMain } = require('electron');
+const { isLocalProcessingAvailable, processDataLocally } = require('./processLocal');
 
 // Firebase URL constant
 const FIREBASE_CAPTURE_URL = 'https://europe-west1-donethat.cloudfunctions.net/captureScreenshot';
@@ -15,8 +16,8 @@ let screenshotInterval = null;
 let captureIntervalMinutes; // Set in main
 let reauthenticateCallback = null; // Store reauthenticate callback function
 let mainWindowRef = null; // Store mainWindow reference
-let settingsInitialized = false; // Flag to track if settings have been loaded
 let getIdTokenFunction = null; // Store the getIdToken function reference
+let getAppCheckTokenFunction = null; // Store the getAppCheckToken function reference
 
 // Track input data settings
 let inputDataSettings = {
@@ -24,6 +25,9 @@ let inputDataSettings = {
   keystrokes: false,
   windows: false
 };
+
+// Track disable screenshots in meetings setting
+let disableScreenshotsInMeetings = false;
 
 /**
  * Sets capture interval in minutes
@@ -53,7 +57,7 @@ function setCaptureInterval(minutes) {
 }
 
 /**
- * Helper function to start audio recording
+ * Helper function to start audio tracking
  * @returns {Promise<boolean>} Success status
  */
 async function _startAudioTracking() {
@@ -68,26 +72,22 @@ async function _startAudioTracking() {
       );
       return false;
     }
-    
-    const recordingStarted = await audioCapture.startRecording();
-    if (!recordingStarted) {
-      const error = new Error('Audio recording permission denied or failed to start');
-      log.warn(error.message);
-      
-      // Use handleCaptureError with specific audio error
+    // Ensure microphone permission is granted
+    const hasPermission = await audioCapture.checkPermission();
+    if (!hasPermission) {
       handleCaptureError(
-        error, 
-        'audio-permission', 
+        new Error('Microphone permission not granted'),
+        'audio-permission',
         { audio: true },
-        false // Don't stop capturing, just disable this feature
+        false
       );
-      
       return false;
     }
-    
+    // Session detection will handle recording start/stop automatically
     return true;
+    
   } catch (error) {
-    log.error('Error starting audio recording:', error);
+    log.error('Error starting audio tracking:', error);
     
     // Use handleCaptureError with specific audio error
     handleCaptureError(
@@ -231,6 +231,30 @@ function updateInputDataSettings(settings) {
 }
 
 /**
+ * Updates the disable screenshots in meetings setting
+ * @param {boolean} enabled Whether to disable screenshots during meetings
+ */
+function updateDisableScreenshotsInMeetings(enabled) {
+  disableScreenshotsInMeetings = !!enabled;
+}
+
+/**
+ * Check if screenshots should be disabled during meetings
+ * @returns {boolean} True if screenshots should be disabled
+ */
+function shouldDisableScreenshotsInMeetings() {
+  // First check if user has the setting enabled
+  if (!disableScreenshotsInMeetings) {
+    return false;
+  }
+  
+  // Only check audio state if the setting is enabled
+  const audioCapture = require('./captureAudio');
+  const audioStatus = audioCapture.getStatus();
+  return audioStatus.recording;
+}
+
+/**
  * Initializes capture functionality and registers all IPC handlers
  * @param {BrowserWindow} mainWindow Reference to the main window for sending IPC messages
  * @param {Function} onAuthError Callback for when authentication errors are detected
@@ -239,7 +263,7 @@ function updateInputDataSettings(settings) {
  * @param {Function} getIdToken Function to get the current ID token
  * @throws {Error} If mainWindow is not provided or capture interval is not set
  */
-function initCapture(mainWindow, onAuthError, getIdToken) {
+function initCapture(mainWindow, onAuthError, getIdToken, getAppCheckToken) {
   if (!mainWindow) {
     throw new Error('Main window must be provided to initialize capture');
   }
@@ -255,6 +279,9 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
       throw new Error('getIdToken function must be provided to initialize capture');
   }
   getIdTokenFunction = getIdToken;
+  if (typeof getAppCheckToken === 'function') {
+    getAppCheckTokenFunction = getAppCheckToken;
+  }
   // Store mainWindow reference
   mainWindowRef = mainWindow;
   
@@ -266,6 +293,21 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
   // Handler for updating input data settings
   ipcMain.on('updateInputDataSettings', (event, settings) => {
     updateInputDataSettings(settings);
+  });
+
+  // Handler for updating disable screenshots in meetings setting
+  ipcMain.on('updateDisableScreenshotsInMeetings', (event, enabled) => {
+    updateDisableScreenshotsInMeetings(enabled);
+  });
+
+  // Handler for getting audio capture status
+  ipcMain.handle('getAudioCaptureStatus', async (event) => {
+    try {
+      return audioCapture.getStatus();
+    } catch (error) {
+      log.error('Error getting audio capture status:', error);
+      return { error: error.message };
+    }
   });
 
   // Add other capture-related IPC handlers here as needed
@@ -472,23 +514,16 @@ async function collectInputData(resetBuffers = true) {
     windows: false
   };
   
-  // Get audio data
+  // Get audio transcript
   if (inputDataSettings.audio) {
     try {
       const audioInfo = await audioCapture.stopRecording();
-      if (audioInfo && audioInfo.filePath) {
-        const fs = require('fs');
-        const audioBuffer = fs.readFileSync(audioInfo.filePath);
-        inputData.audio = {
-          base64Data: `data:audio/wav;base64,${audioBuffer.toString('base64')}`,
-          mimeType: 'audio/wav',
-          timeMs: audioInfo.duration || 0
-        };
-        fs.unlinkSync(audioInfo.filePath);
+      if (audioInfo && audioInfo.transcript) {
+        inputData.audioTranscript = audioInfo.transcript;
       }
     } catch (error) {
       captureErrors.audio = true;
-      log.error('Error capturing audio data:', error);
+      log.error('Error capturing audio transcript:', error);
     }
   }
   
@@ -623,82 +658,131 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
   }
 
   try {
-    const fetch = await import('node-fetch').then(module => module.default);
+    // Check if local processing is available
+    const localProcessingAvailable = await isLocalProcessingAvailable();
     
-    // Create payload with screenshots and timestamp
-    const payload = {
-      timestamp: Date.now(),
-      screenshots: screenshots
-    };
-    
-    // Add input data if provided
-    if (inputData) {
-      if (inputData.audio) {
-        payload.audio = inputData.audio;
+    if (localProcessingAvailable) {
+      // Get the previous screenshots scaled down to the configured scale factor
+      const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
+      
+      // Optionally include App Check token similar to cloud path
+      let appCheckToken = null;
+      try { 
+        appCheckToken = getAppCheckTokenFunction ? await getAppCheckTokenFunction() : null; 
+      } catch (error) { 
+        appCheckToken = null; 
+      }
+
+      // Process data locally
+      const result = await processDataLocally(
+        idToken,
+        screenshots,
+        previousScreenshotData,
+        inputData,
+        appCheckToken
+      );
+      
+      return result;
+    } else {      
+      // Fall back to cloud processing
+      const fetch = await import('node-fetch').then(module => module.default);
+      
+      // Get the previous screenshots scaled down to the configured scale factor
+      const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
+      
+      // Create payload with screenshots and timestamp
+      const payload = {
+        timestamp: Date.now(),
+        screenshots: screenshots
+      };
+      
+      // Add previous screenshot data if available
+      if (previousScreenshotData) {
+        payload.previousScreenshotData = previousScreenshotData;
       }
       
-      if (inputData.activity && inputData.activity.length > 0) {
-        // Format all timestamps to local time in activity data
-        payload.activity = inputData.activity.map(item => {
-          // Create a new object without start/end times for the API
-          const apiItem = {
-            ...item,
-            formattedDuration: `${Math.round(item.duration / 1000)}s`  // Duration in seconds
-          };
-          
-          // Remove start/end times from the API payload
-          delete apiItem.startTime;
-          delete apiItem.endTime;
-          delete apiItem.duration;
-          
-          return apiItem;
-        });
+      // Add input data if provided
+      if (inputData) {
+        if (inputData.audioTranscript) {
+          payload.audioTranscript = inputData.audioTranscript;
+        }
+        
+        if (inputData.activity && inputData.activity.length > 0) {
+          // Format all timestamps to local time in activity data
+          payload.activity = inputData.activity.map(item => {
+            // Create a new object without start/end times for the API
+            const apiItem = {
+              ...item,
+              formattedDuration: `${Math.round(item.duration / 1000)}s`  // Duration in seconds
+            };
+            
+            // Remove start/end times from the API payload
+            delete apiItem.startTime;
+            delete apiItem.endTime;
+            delete apiItem.duration;
+            
+            return apiItem;
+          });
+        }
       }
-    }
-     
-    // Send data to Firebase
-    const response = await fetch(FIREBASE_CAPTURE_URL, {
-      method: 'POST',
-      headers: {
+       
+      // Send data to Firebase
+      // Optionally include App Check token if available
+      let appCheckToken = null;
+      try { 
+        appCheckToken = getAppCheckTokenFunction ? await getAppCheckTokenFunction() : null; 
+      } catch (error) { 
+        appCheckToken = null; 
+      }
+
+      const headers = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${idToken}`
-      },
-      body: JSON.stringify(payload)
-    });
+      };
+      if (appCheckToken) {
+        headers['X-Firebase-AppCheck'] = appCheckToken;
+      }
 
-    if (!response.ok) {
-      // If response is not ok, check the detailed error
-      const errorData = await response.json().catch(() => ({}));
+      const response = await fetch(FIREBASE_CAPTURE_URL, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload)
+      });
 
-      // Check specifically for token expiration
-      if (response.status === 401 && errorData.error === 'token_expired') {
-        log.warn('_sendToServer: Token expired error detected.'); // Keep this
-        // Call the reauthenticate callback if available
-        if (reauthenticateCallback) {
-          log.warn('_sendToServer: Calling reauthenticate callback with tokenExpired.'); // Keep this
-          reauthenticateCallback({ tokenExpired: true });
+      if (!response.ok) {
+        // If response is not ok, check the detailed error
+        const errorData = await response.json().catch(() => ({}));
+
+        // Check specifically for token expiration
+        if (response.status === 401 && errorData.error === 'token_expired') {
+          log.warn('_sendToServer: Token expired error detected.'); // Keep this
+          // Call the reauthenticate callback if available
+          if (reauthenticateCallback) {
+            log.warn('_sendToServer: Calling reauthenticate callback with tokenExpired.'); // Keep this
+            reauthenticateCallback({ tokenExpired: true });
+          }
+          return { tokenExpired: true };
         }
-        return { tokenExpired: true };
+        
+        // Log other error details
+        log.error(`_sendToServer: Data upload failed with status ${response.status}`, errorData);
+
+        // For unauthorized errors (not token expired), return auth error
+        if (response.status === 401 || response.status === 403) {
+          log.warn('_sendToServer: Unauthorized error detected (not token expired).');
+          // Call the reauthenticate callback if available
+          if (reauthenticateCallback) {
+            log.warn('_sendToServer: Calling reauthenticate callback with authError.'); // Keep this
+            reauthenticateCallback({ authError: true });
+          }
+          return { authError: true };
+        }
+        
+        throw new Error(`Server error: ${response.status}`);
       }
       
-      // Log other error details
-      log.error(`_sendToServer: Data upload failed with status ${response.status}`, errorData);
-
-      // For unauthorized errors (not token expired), return auth error
-      if (response.status === 401 || response.status === 403) {
-        log.warn('_sendToServer: Unauthorized error detected (not token expired).');
-        // Call the reauthenticate callback if available
-        if (reauthenticateCallback) {
-          log.warn('_sendToServer: Calling reauthenticate callback with authError.'); // Keep this
-          reauthenticateCallback({ authError: true });
-        }
-        return { authError: true };
-      }
-      
-      throw new Error(`Server error: ${response.status}`);
+      return true;
     }
-    
-    return true;
   } catch (error) {
     log.error('_sendToServer: Error during data sending:', error.message, error.stack);
     console.error('Data upload failed:', error);
@@ -713,12 +797,17 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
  */
 async function captureAndSend(idToken) {
   try {
-    // Capture screenshots
-    const screenshots = await captureScreenshot();
+    // Check if screenshots should be disabled during meetings
+    let screenshots = [];
+    if (!shouldDisableScreenshotsInMeetings()) {
+      // Capture screenshots
+      screenshots = await captureScreenshot();
+    } else {
+      log.info('Screenshots disabled during meeting');
+    }
 
     if (!screenshots || screenshots.length === 0) {
-        log.warn('No screenshots captured, skipping upload');
-        return false;
+        log.info('No screenshots captured, continuing with other data');
     }
 
     // Get input data while resetting buffers
@@ -730,6 +819,16 @@ async function captureAndSend(idToken) {
       // Pass the specific errors to the handler
       handleCaptureError(new Error('Capture module error detected'), 'module-specific', captureErrors);
       delete inputData.captureErrors; // Remove this property before sending
+    }
+    
+    // Check if we have any data to upload
+    const hasScreenshots = screenshots && screenshots.length > 0;
+    const hasAudioTranscript = inputData && inputData.audioTranscript;
+    const hasActivity = inputData && inputData.activity && inputData.activity.length > 0;
+    
+    if (!hasScreenshots && !hasAudioTranscript && !hasActivity) {
+      log.info('No data to upload, skipping');
+      return false;
     }
     
     // Send all collected data to the server
@@ -930,5 +1029,6 @@ module.exports = {
   stopCaptureInterval,
   isCapturing,
   setCaptureInterval,
-  initCapture
+  initCapture,
+  shouldDisableScreenshotsInMeetings
 }; 

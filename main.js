@@ -1,4 +1,11 @@
-const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification, powerMonitor } = require('electron')
+// Suppress ONNX runtime warnings - must be set before any imports
+// Load environment variables from .env file
+require('dotenv').config();
+
+process.env.ORT_LOGGING_LEVEL = '4'
+process.env.ORT_LOGGING_VERBOSE = '0'
+
+const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification, powerMonitor, globalShortcut } = require('electron')
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
@@ -26,6 +33,20 @@ if (!gotTheLock) {
 
 // Set up second-instance handler
 app.on('second-instance', (event, commandLine, workingDirectory) => {
+  // Check if the app was launched with a URL (for Google SSO)
+  const url = commandLine.find(arg => arg.startsWith('donethat://'));
+  if (url) {
+    try {
+      const urlObj = new URL(url);
+      const token = urlObj.searchParams.get('token');
+      if (token && mainWindow) {
+        mainWindow.webContents.send('firebase-custom-token', token);
+      }
+    } catch (error) {
+      log.error('Error parsing URL in second-instance:', error);
+    }
+  }
+
   // Instead of showing a dialog, bring the existing window to foreground
   if (mainWindow) {
     // If window exists but is hidden, show it
@@ -36,16 +57,23 @@ app.on('second-instance', (event, commandLine, workingDirectory) => {
       mainWindow.focus();
     }
   }
+  // Also ensure overlay is shown (only if authenticated)
+  try {
+    if (stateManager?.isAuthenticated()) {
+      if (!overlayWindow || overlayWindow.isDestroyed()) {
+        createOverlayWindow();
+      }
+      positionOverlayWindow();
+      overlayWindow.show();
+    }
+  } catch (e) {}
 });
 
 // Handle macOS reactivation (when user clicks dock icon or reopens app)
 app.on('activate', () => {
   log.info('App activated');
-  // Show the tray menu on reactivation if tray exists
-  if (tray) {
-    const contextMenu = buildContextMenu();
-    tray.popUpContextMenu(contextMenu);
-  }
+  // Open dashboard instead of showing tray dropdown
+  try { navigateToView('dashboard') } catch (e) {}
 });
 
 // To show dev tools next to main window
@@ -67,31 +95,15 @@ let iconErrorPath = path.join(__dirname, 'resources', 'icon_error.png')
 let stateManager = null
 let tray = null
 let mainWindow = null
+let overlayWindow = null
 let screenshotInterval = null
+// Persist overlay position
+let overlayStore = null
+let savedOverlayPosition = null
+let saveOverlayPositionDebounce = null
+let overlayPositionUserSet = false
 
 if (DEBUG) {
-  // Add custom notification transport for warnings and errors
-  log.hooks.push((message, transport) => {
-    if (transport !== log.transports.console) return message;
-
-    if (message.level === 'warn' || message.level === 'error') {
-      // Only send notifications after app is ready
-      if (app.isReady()) {
-        try {
-          new Notification({
-            title: `DoneThat ${message.level.toUpperCase()}`,
-            body: message.data.join(' ').substring(0, 100) + (message.data.join(' ').length > 100 ? '...' : ''),
-            silent: false
-          }).show();
-        } catch (err) {
-          console.error('Failed to show notification:', err);
-        }
-      }
-    }
-
-    return message;
-  });
-
   // For debugging, replace console with more verbose electron-log
   const originalConsole = { ...console };
   console.log = (...args) => { log.info(...args); originalConsole.log(...args); };
@@ -121,6 +133,41 @@ if (app.isPackaged) {
   log.transports.file.level = 'silly'
 }
 
+// Global hook: surface ERROR logs as non-sticky in-app notifications
+// Only enable this behavior in DEBUG mode to avoid disruptive overlays in production
+try {
+  log.hooks.push((message) => {
+    if (!message || message.level !== 'error') return message;
+    if (!DEBUG) return message;
+    if (!app.isReady() || !mainWindow) return message;
+    try {
+      const data = Array.isArray(message.data) ? message.data : [message.data];
+      const text = data.filter(Boolean).map(String).join(' ');
+      const body = text.substring(0, 160) + (text.length > 160 ? '…' : '');
+      try { if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) overlayWindow.hide(); } catch (e) {}
+      try { mainWindow.show(); } catch (e) {}
+      try { mainWindow.focus(); } catch (e) {}
+      mainWindow.webContents.send('inapp:notify', {
+        id: 'log-error-' + Date.now(),
+        title: 'DoneThat Error',
+        message: body,
+        sticky: false
+      });
+    } catch (_) {}
+    return message;
+  });
+} catch (_) {}
+
+// Utility: hide main window only if app is not active (no focused window)
+function hideMainWindowIfVisible() {
+  try {
+    const hasFocusedWindow = !!BrowserWindow.getFocusedWindow();
+    if (!hasFocusedWindow && mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+      mainWindow.hide();
+    }
+  } catch (e) {}
+}
+
 ////// AUTOUPDATER /////
 
 // Configure autoUpdater
@@ -148,18 +195,19 @@ function setupAutoUpdater() {
         log.info('Windows platform: using notification-based update');
         
         // Show notification for user to manually install
-        const notification = new Notification({
-          title: 'DoneThat Update',
-          body: 'An update is ready. Click to install now. You may see a windows prompt to confirm.',
-          silent: false
-        });
-        
-        notification.on('click', () => {
-          log.info('Update notification clicked, installing update');
-          autoUpdater.quitAndInstall(false, true);
-        });
-        
-        notification.show();
+        try {
+          if (mainWindow) {
+            mainWindow.show();
+            mainWindow.focus();
+            mainWindow.webContents.send('inapp:notify', {
+              id: 'update-available',
+              title: 'DoneThat Update',
+              message: 'An update is ready. Click to install now. You may see a Windows prompt to confirm.',
+              sticky: true,
+              action: { label: 'Install Update', channel: 'update:install', payload: { forceRunAfter: true } }
+            });
+          }
+        } catch (e) { log.warn('Failed to send in-app update notify:', e); }
         
         // Force update after 30 minutes if notification was missed/disabled
         const currentVersion = app.getVersion();
@@ -174,33 +222,35 @@ function setupAutoUpdater() {
         // Linux - show dialog, never silent install
         log.info('Linux platform: using dialog-based update');
         
-        const { dialog } = require('electron');
-        dialog.showMessageBox({
-          type: 'info',
-          title: 'DoneThat Update Available',
-          message: `A new version (${info.version}) is available and has been downloaded.`,
-          detail: 'You will need to manually restart DoneThat after the update is installed.',
-          buttons: ['Cancel', 'Install Update'],
-          cancelId: 0,
-          defaultId: 1
-        }).then(({ response }) => {
-          if (response === 1) { // Install Update
-            log.info('Update dialog approved, installing update');
-            autoUpdater.quitAndInstall(false, false);
-          } else {
-            log.info('Update dialog canceled by user');
+        try {
+          if (mainWindow) {
+            mainWindow.show();
+            mainWindow.focus();
+            mainWindow.webContents.send('inapp:notify', {
+              id: 'update-available',
+              title: 'DoneThat Update Available',
+              message: `A new version (${info.version}) is available and has been downloaded.`,
+              sticky: true,
+              action: { label: 'Install Update', channel: 'update:install', payload: { forceRunAfter: false } }
+            });
           }
-        }).catch(err => {
-          log.error('Error showing update dialog:', err);
-        });
+        } catch (e) { log.warn('Failed to send in-app update notify (linux):', e); }
       } else {
         // macOS - use the original silent install approach
         log.info('macOS platform: using silent update');
-        setTimeout(() => {
-          log.info('Executing quitAndInstall() for macOS');
-          app.isQuitting = true; // Explicitly set this flag to prevent event.preventDefault in close handlers
-          autoUpdater.quitAndInstall();
-        }, 1000); // 1 second delay
+        try {
+          if (mainWindow) {
+            mainWindow.show();
+            mainWindow.focus();
+            mainWindow.webContents.send('inapp:notify', {
+              id: 'update-available',
+              title: 'DoneThat Update',
+              message: 'An update is ready. It will install on quit. Click to install now.',
+              sticky: true,
+              action: { label: 'Install Now', channel: 'update:install', payload: { forceRunAfter: true } }
+            });
+          }
+        } catch (e) { log.warn('Failed to send in-app update notify (mac):', e); }
       }
     } else {
       log.info('Development mode: skipping update installation');
@@ -239,6 +289,72 @@ function scheduleUpdateChecks() {
 // Add IPC handler for getting app version
 ipcMain.handle('get-app-version', () => {
   return app.getVersion();
+});
+
+// Expose debug flag to renderer
+ipcMain.handle('get-debug-flag', () => {
+  return DEBUG === true;
+});
+
+// Recording control handlers for renderer topbar
+ipcMain.on('pauseForMs', (event, ms) => {
+  try { stateManager?.pauseRecording(Number(ms), mainWindow); } catch (e) {}
+});
+ipcMain.on('pauseForToday', () => {
+  try { stateManager?.pauseUntilNextWorkPeriod(mainWindow); } catch (e) {}
+});
+ipcMain.on('logout-request', () => {
+  if (mainWindow) {
+    mainWindow.webContents.send('logout');
+  }
+});
+
+// Ensure UI reacts on logout: hide overlay, show main window, and notify
+ipcMain.on('logout', () => {
+  try {
+    if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
+      overlayWindow.hide();
+    }
+  } catch (e) {}
+  if (mainWindow) {
+    try { mainWindow.show(); } catch (e) {}
+    try { mainWindow.focus(); } catch (e) {}
+    try {
+      mainWindow.webContents.send('inapp:notify', {
+        id: 'logged-out',
+        title: 'DoneThat Logged Out',
+        message: 'You have been logged out. Please sign in again to continue.',
+        sticky: true
+      });
+    } catch (e) {}
+  }
+});
+
+// Add IPC handler for custom token
+ipcMain.on('firebase-custom-token', (event, token) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('firebase-custom-token', token);
+  }
+});
+
+// Add IPC handler for processing external URLs
+ipcMain.on('process-external-url', (event, urlString) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('process-external-url', urlString);
+  }
+});
+
+// Add IPC handler to focus app window
+ipcMain.on('focus-app-window', (event) => {
+  try {
+    if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
+      overlayWindow.hide();
+    }
+  } catch (e) {}
+  if (mainWindow) {
+    try { mainWindow.show(); } catch (e) {}
+    try { mainWindow.focus(); } catch (e) {}
+  }
 });
 
 ////// AUTOSTART /////
@@ -280,11 +396,35 @@ function setupAutoStart() {
 ////// MAIN /////
 
 app.whenReady().then(async () => {
+  // Lazy-load electron-store for overlay position persistence
+  try {
+    const { default: Store } = await import('electron-store');
+    overlayStore = new Store({ name: 'donethat-config' });
+    try {
+      savedOverlayPosition = overlayStore.get('overlayPosition') || null;
+      if (savedOverlayPosition && Number.isFinite(savedOverlayPosition.x) && (Number.isFinite(savedOverlayPosition.y) || Number.isFinite(savedOverlayPosition.bottom))) {
+        overlayPositionUserSet = true;
+      } else {
+        overlayPositionUserSet = false;
+      }
+    } catch (e) {}
+  } catch (e) {}
+  // Register custom URL scheme for Google SSO
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient('donethat', process.execPath, [path.resolve(process.argv[1])])
+    }
+  } else {
+    app.setAsDefaultProtocolClient('donethat')
+  }
+
   // Initialize the state manager with necessary callbacks
   stateManager = await initState({
     checkRecording: checkAndAdjustRecording, // for pause state changes
     navigateToView: navigateToView // for notifications
   });
+
+
 
   // Create application menu
   createApplicationMenu();
@@ -292,6 +432,27 @@ app.whenReady().then(async () => {
   // Register for auth state change events from renderer
   ipcMain.on('auth-state-changed', (event, isAuthenticated) => {
     createApplicationMenu(); // Update menu on auth state change
+  });
+
+  // Handle AppCheck token generation via webview
+  ipcMain.handle('generate-appcheck-token', async () => {
+    try {
+      const { generateAppCheckTokenViaWebview } = require('./src-main/appcheck-token.js');
+      const token = await generateAppCheckTokenViaWebview();
+      return token;
+    } catch (error) {
+      return null;
+    }
+  });
+
+  // Allow renderer modules to trigger in-app notifications centrally
+  ipcMain.on('inapp:notify', (_event, payload) => {
+    try { if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) overlayWindow.hide(); } catch (e) {}
+    if (mainWindow) {
+      try { mainWindow.show(); } catch (e) {}
+      try { mainWindow.focus(); } catch (e) {}
+      try { mainWindow.webContents.send('inapp:notify', payload); } catch (e) {}
+    }
   });
 
   // Create tray with initial error icon
@@ -340,6 +501,22 @@ app.whenReady().then(async () => {
 
   // Create window but don't show it yet
   createWindow()
+  // IPC to install update from in-app notification
+  ipcMain.on('update:install', (_event, payload) => {
+    try {
+      const runAfter = payload && payload.forceRunAfter === true;
+      // Windows: silent flag true for runAfter
+      if (process.platform === 'win32') {
+        autoUpdater.quitAndInstall(false, runAfter);
+      } else {
+        app.isQuitting = true;
+        autoUpdater.quitAndInstall();
+      }
+    } catch (e) { log.error('Failed to install update from banner:', e); }
+  });
+
+  // Create overlay window (hidden initially)
+  createOverlayWindow()
 
   // Check for updates with proper error handling
   try {
@@ -348,6 +525,34 @@ app.whenReady().then(async () => {
 
   } catch (error) {
     log.error('Error setting up updater:', error);
+  }
+
+  // Register global shortcut for Open Chat
+  try {
+    const ok = globalShortcut.register('CommandOrControl+Shift+D', () => {
+      try {
+        // Check if user is authenticated before showing overlay
+        if (!stateManager?.isAuthenticated()) {
+          return;
+        }
+        
+        if (!overlayWindow || overlayWindow.isDestroyed()) {
+          createOverlayWindow();
+        }
+        if (overlayWindow.isVisible()) {
+          overlayWindow.hide();
+        } else {
+          positionOverlayWindow();
+          overlayWindow.show();
+          overlayWindow.focus();
+        }
+      } catch (e) {}
+    });
+    if (!ok) {
+      log.warn('Failed to register global shortcut for Open Chat');
+    }
+  } catch (e) {
+    log.error('Error registering global shortcut:', e);
   }
 
   // Also check permissions when the app is activated
@@ -366,6 +571,219 @@ app.whenReady().then(async () => {
 
   // Add daily auth check
   scheduleDailyAuthCheck();
+
+  // Handle custom URL scheme for Google SSO and internal navigation
+  app.on('open-url', (event, urlString) => {
+    event.preventDefault();
+    const url = new URL(urlString);
+    const token = url.searchParams.get('token');
+    
+    if (token && mainWindow) {
+      // Send the token to the window so it can sign in
+      mainWindow.webContents.send('firebase-custom-token', token);
+    } else if (mainWindow) {
+      // Forward other donethat:// URLs for internal navigation
+      mainWindow.webContents.send('router:open-link', urlString);
+    }
+  });
+
+  // Handle URL when app is launched with URL (all platforms)
+  const url = process.argv.find(arg => arg.startsWith('donethat://'));
+  if (url) {
+    try {
+      const urlObj = new URL(url);
+      const token = urlObj.searchParams.get('token');
+      if (token && mainWindow) {
+        mainWindow.webContents.send('firebase-custom-token', token);
+      } else if (mainWindow) {
+        // Forward other donethat:// URLs for internal navigation
+        mainWindow.webContents.send('router:open-link', url);
+      }
+    } catch (error) {
+      log.error('Error parsing URL in app launch:', error);
+    }
+  }
+})
+
+////// OVERLAY IPC //////
+
+ipcMain.handle('overlay:get-state', () => {
+  return {
+    isPaused: stateManager?.isPaused() ?? false,
+    hasPermission: stateManager?.hasScreenCapturePermission() ?? false,
+    isAuthenticated: stateManager?.isAuthenticated() ?? false
+  }
+})
+
+  // Chat message handling - main window handles all Firebase logic
+  ipcMain.handle('chat:send-message', async (event, messageData) => {
+    // Forward to main window for Firebase processing
+    mainWindow.webContents.send('chat:process-message', messageData)
+    return { success: true, pending: true }
+  })
+
+  // Handle chat message response from main window
+  ipcMain.on('chat:message-result', (event, result) => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('chat:message-update', result)
+    }
+  })
+
+  // Handle chat messages from main window
+  ipcMain.on('chat:set-messages', (event, messages) => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('chat:receive-messages', messages)
+    }
+  })
+
+  // Handle screenshot capture for chat
+  ipcMain.handle('chat:capture-screenshot', async () => {
+    try {
+      const { captureScreenshot } = require('./src-main/captureScreenshots');
+      const screenshots = await captureScreenshot();
+      
+      // The screenshots are already processed by processScreenshotForUpload()
+      // and returned as optimized JPEG data URLs, so we can use them directly
+      const imageData = screenshots;
+      
+      return { success: true, images: imageData };
+    } catch (error) {
+      console.error('[MAIN] Error capturing screenshot for chat:', error);
+      return { success: false, error: error.message };
+    }
+  })
+
+  // Handle chat reset - clear current chat and prepare for new chat
+  ipcMain.handle('chat:reset', () => {
+    // Forward to main window to reset chat state
+    mainWindow.webContents.send('chat:reset-state');
+    return { success: true };
+  })
+
+
+
+
+
+ipcMain.on('create-overlay-if-needed', () => {
+  try {
+    // Create overlay if it doesn't exist
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow();
+    }
+  } catch (e) {
+    console.error('[MAIN] Error creating overlay after sign-in:', e);
+  }
+})
+
+ipcMain.on('overlay:hide', () => {
+  try {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.hide()
+    }
+  } catch (e) {}
+})
+
+ipcMain.on('overlay:open-main', (event, view) => {
+  if (typeof view === 'string') {
+    navigateToView(view)
+  } else {
+    navigateToView('signup-next')
+  }
+})
+
+// Toggle overlay visibility
+ipcMain.on('overlay:toggle', () => {
+  try {
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow();
+    }
+    
+    // Check if overlay is currently visible
+    if (overlayWindow.isVisible()) {
+      // Hide the overlay
+      overlayWindow.hide();
+    } else {
+      // Show the overlay
+      positionOverlayWindow();
+      overlayWindow.show();
+      overlayWindow.focus();
+      try { setTimeout(() => overlayWindow.webContents.send('overlay:focus-input'), 0) } catch (e) {}
+    }
+  } catch (e) {}
+});
+
+ipcMain.on('overlay:show', () => {
+  try {
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow();
+    }
+    positionOverlayWindow();
+    overlayWindow.show();
+    overlayWindow.focus();
+    try { overlayWindow.webContents.send('overlay:focus-input') } catch (e) {}
+  } catch (e) {}
+});
+
+ipcMain.on('overlay:show-if-hidden', () => {
+  try {
+    const isAuthenticated = stateManager?.isAuthenticated();
+    
+    // Check if user is authenticated before showing overlay
+    if (!isAuthenticated) {
+      return;
+    }
+    
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow();
+    }
+    
+    // Only show if the window is currently hidden
+    if (!overlayWindow.isVisible()) {
+      hideMainWindowIfVisible();
+      positionOverlayWindow();
+      if (process.platform === 'darwin') {
+        // macOS Spaces quirk: a window is associated with the Space/desktop it was last
+        // visible on. If we only reposition and call show(), macOS may switch the user to
+        // the window's previous Space instead of revealing it on the current Space.
+        //
+        // Workaround: temporarily enable visibility across all workspaces so showing the
+        // window binds it to the currently active Space/display, then immediately revert
+        // to normal behavior. This avoids Desktop switching while still respecting our
+        // positioning on the display under the current cursor.
+        try { overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (e) {}
+        try { overlayWindow.show(); } catch (e) {}
+        try { overlayWindow.focus(); } catch (e) {}
+        try { overlayWindow.setVisibleOnAllWorkspaces(false); } catch (e) {}
+      } else {
+        overlayWindow.show();
+        overlayWindow.focus();
+      }
+      try { overlayWindow.webContents.send('overlay:focus-input') } catch (e) {}
+    }
+  } catch (e) {
+    console.error('[MAIN] Error in overlay:show-if-hidden:', e)
+  }
+});
+
+// Overlay dynamic resize
+ipcMain.on('overlay:resize', (event, height) => {
+  try {
+    if (overlayWindow && typeof height === 'number' && isFinite(height)) {
+      const bounds = overlayWindow.getBounds();
+      const MAX_H = 600
+      const clamped = Math.max(40, Math.min(MAX_H, Math.floor(height)));
+      const heightDiff = clamped - bounds.height;
+      
+      // Set new size
+      overlayWindow.setSize(bounds.width, clamped, false);
+      
+      // Adjust Y position to keep top edge fixed (shrink from bottom)
+      if (heightDiff !== 0) {
+        const newY = bounds.y - heightDiff;
+        overlayWindow.setPosition(bounds.x, newY, false);
+      }
+    }
+  } catch (e) {}
 })
 
 // Handle OS-level quit events properly - especially important for macOS
@@ -397,6 +815,7 @@ function updateTrayIcon(isActuallyRecording) {
   const loggedIn = stateManager?.isAuthenticated() ?? false;
   const isPaused = stateManager?.isPaused() ?? false;
   const hasPermission = stateManager?.hasScreenCapturePermission() ?? false;
+  const hasValidAccess = stateManager?.hasValidAccess() ?? false;
 
   if (isActuallyRecording) {
     iconPath = iconRecordingPath;
@@ -407,6 +826,9 @@ function updateTrayIcon(isActuallyRecording) {
   } else if (!loggedIn) {
     iconPath = iconErrorPath;
     tooltip = 'DoneThat - Not Logged In';
+  } else if (!hasValidAccess) {
+    iconPath = iconErrorPath;
+    tooltip = 'DoneThat - Account Inactive';
   } else if (isPaused) {
     iconPath = iconPausedPath;
     tooltip = 'DoneThat - Paused';
@@ -457,6 +879,7 @@ function createApplicationMenu() {
   const isLoggedIn = stateManager?.isAuthenticated() ?? false;
   const isPaused = stateManager?.isPaused() ?? false;
   const hasPermission = stateManager?.hasScreenCapturePermission() ?? false;
+  const isMac = process.platform === 'darwin';
   
   const template = [];
   
@@ -548,6 +971,20 @@ function createApplicationMenu() {
     label: 'Help',
     submenu: [
       {
+        label: `Open Chat (${isMac ? 'Cmd' : 'Ctrl'}+Shift+D)`,
+        accelerator: 'CmdOrCtrl+Shift+D',
+        click: () => {
+          try {
+            if (!overlayWindow || overlayWindow.isDestroyed()) {
+              createOverlayWindow();
+            }
+            positionOverlayWindow();
+            overlayWindow.show();
+            overlayWindow.focus();
+          } catch (e) {}
+        }
+      },
+      {
         label: 'Support',
         click: () => {
           const { shell } = require('electron');
@@ -556,9 +993,22 @@ function createApplicationMenu() {
       }
     ]
   };
+  // Add standard Edit menu for system-wide copy/paste/dictation support
+  const editMenu = {
+    label: 'Edit',
+    submenu: [
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'separator' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      { role: 'selectAll' },
+    ]
+  };
   
   // Push menus to template
-  template.push(fileMenu, recordingMenu, accountMenu, helpMenu);
+  template.push(fileMenu, editMenu, recordingMenu, accountMenu, helpMenu);
   
   // Set as application menu
   const menu = Menu.buildFromTemplate(template);
@@ -579,11 +1029,21 @@ function buildContextMenu() {
     label: 'Open App',
     click: () => navigateToView('signup-next')
   }, 
-  // Add Open Settings option (renamed from Setup)
   {
-    label: 'Open Settings',
-    click: () => navigateToView('settings'),
-    enabled: isLoggedIn
+    label: `Open Chat (${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+Shift+D)`,
+    enabled: isLoggedIn,
+    click: () => {
+      // Only show overlay if authenticated
+      if (!stateManager?.isAuthenticated()) {
+        return;
+      }
+      if (!overlayWindow || overlayWindow.isDestroyed()) {
+        createOverlayWindow()
+      }
+      positionOverlayWindow()
+      try { overlayWindow.show() } catch (e) {}
+      try { overlayWindow.focus() } catch (e) {}
+    }
   },
   { type: 'separator' },
   // Add "Open Web Portal" option
@@ -670,13 +1130,15 @@ function checkAndAdjustRecording() {
     // Determine if we should be recording based on current conditions
     const isAuthenticated = stateManager?.isAuthenticated();
     const hasPermission = stateManager?.hasScreenCapturePermission();
+    const hasValidAccess = stateManager?.hasValidAccess();
     const isPaused = stateManager?.isPaused();
-    const shouldBeRecording = isAuthenticated && hasPermission && !isPaused;
+    const shouldBeRecording = isAuthenticated && hasPermission && hasValidAccess && !isPaused;
 
     // to capture some cases where auth is loaded later
     // but not recording it's not triggering above function because
     // isCurrentlyRecording is false
     updateTrayIcon(isCurrentlyRecording && shouldBeRecording);
+    sendOverlayState();
     
     // Update application menu when recording state changes
     createApplicationMenu();
@@ -687,6 +1149,8 @@ function checkAndAdjustRecording() {
     } else if (!isCurrentlyRecording && shouldBeRecording) {
       startRecording();
     }
+  // Notify overlay about state for icon updates
+  sendOverlayState();
 }
 
 // Add IPC handler for resume action
@@ -700,32 +1164,37 @@ ipcMain.on('resumeRecording', (event) => {
 // Separate window creation from showing
 function createWindow() {
   if (!mainWindow) {
-    // Platform-specific window configurations
-    const isPlatformMac = process.platform === 'darwin';
-    const windowWidth = DEBUG ? 600 : (isPlatformMac ? 250 : 300); // Wider for Win/Linux
-    const windowHeight = DEBUG ? 600 : (isPlatformMac ? 420 : 475); // Slightly taller for Win/Linux
+    // Use a standard, larger default size for all platforms
+    const windowWidth = 1024;
+    const windowHeight = 720;
     
     mainWindow = new BrowserWindow({
       width: windowWidth,
       height: windowHeight,
-      // Add frame on Linux/Windows, keep frameless on macOS
-      frame: !isPlatformMac,
-      resizable: false, // No resizing on any platform
-      // Make window movable on Linux/Windows, keep it fixed on macOS
-      movable: !isPlatformMac,
+      // Use a standard framed window on all platforms
+      frame: true,
+      resizable: true,
+      minWidth: 800,
+      minHeight: 560,
+      // Make window movable on all platforms
+      movable: true,
       show: false,
-      skipTaskbar: true, // Hide from taskbar on all platforms
+      // Show in taskbar/dock so it's a normal app window
+      skipTaskbar: false,
       fullscreenable: false, // Prevent full screen toggle
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,
         partition: 'persist:donethat',
         webSecurity: true,
+        webviewTag: true,
         // Add these to ensure proper persistence
         enableRemoteModule: false,
         sandbox: false,
         // This is important for IndexedDB persistence
-        backgroundThrottling: false
+        backgroundThrottling: false,
+        // Enable context menus and copy-paste
+        spellcheck: false
       }
     })
 
@@ -735,10 +1204,12 @@ function createWindow() {
     if (DEBUG) {
       mainWindow.webContents.openDevTools();
     }
-    // Log any webContents errors
-    mainWindow.webContents.on('console-message', (event) => {
-      console.log('Renderer Console:', event.message);
-    });
+    // Log any webContents errors (only in debug mode)
+    if (DEBUG) {
+      mainWindow.webContents.on('console-message', (event) => {
+        console.log('Renderer Console:', event.message);
+      });
+    }
 
     // Position the window once it's ready.
     mainWindow.once('ready-to-show', () => {
@@ -748,15 +1219,17 @@ function createWindow() {
       });
       
       // Initialize capture with auth error handler
-      initCapture(mainWindow, handleCaptureAuthErrors, stateManager.getIdToken);
+      // On-demand App Check token fetch from renderer
+      const getAppCheckToken = async () => {
+        try {
+          const script = 'window.getAppCheckToken ? window.getAppCheckToken() : null';
+          return await mainWindow.webContents.executeJavaScript(script, true);
+        } catch (_) { return null; }
+      };
+      initCapture(mainWindow, handleCaptureAuthErrors, stateManager.getIdToken, getAppCheckToken);
     })
 
-    // Only auto-hide on blur for macOS (popup style)
-    mainWindow.on('blur', () => {
-      if (process.platform === 'darwin' && mainWindow && mainWindow.isVisible()) {
-        mainWindow.hide()
-      }
-    })
+    // Remove macOS-specific auto-hide on blur to behave like a normal window
     
     // Handle close event for Windows/Linux - don't quit the app, just hide the window
     mainWindow.on('close', (event) => {
@@ -768,89 +1241,240 @@ function createWindow() {
       }
       return true;
     });
+
+    // Ensure Dock icon is visible whenever the main window is shown (macOS)
+    mainWindow.on('show', () => {
+      if (process.platform === 'darwin') {
+        try { app.dock.show(); } catch (e) {}
+      } else {
+        // Ensure taskbar presence on Windows/Linux
+        try { mainWindow.setSkipTaskbar(false); } catch (e) {}
+      }
+      // Notify renderer to reload the embedded webview when app window is shown/unhidden
+      try { mainWindow.webContents.send('webview:reload'); } catch (e) {}
+    });
+
+    // Hide Dock icon when main window is hidden (macOS)
+    mainWindow.on('hide', () => {
+      if (process.platform === 'darwin') {
+        try { app.dock.hide(); } catch (e) {}
+      } else {
+        // Hide from taskbar on Windows/Linux when main window is hidden
+        try { mainWindow.setSkipTaskbar(true); } catch (e) {}
+      }
+    });
+
+    // Enable context menus
+    mainWindow.webContents.on('context-menu', (event, params) => {
+      // Allow default context menu behavior
+    event.preventDefault();
+    // Create a simple context menu with copy/paste
+    const { Menu, MenuItem } = require('electron');
+    const contextMenu = new Menu();
+    
+    if (params.selectionText) {
+      contextMenu.append(new MenuItem({ role: 'copy' }));
+    }
+    if (params.isEditable) {
+      contextMenu.append(new MenuItem({ role: 'paste' }));
+      contextMenu.append(new MenuItem({ role: 'cut' }));
+      contextMenu.append(new MenuItem({ role: 'selectAll' }));
+    }
+    
+    if (contextMenu.items.length > 0) {
+      contextMenu.popup({ window: mainWindow });
+    }
+    });
   }
+}
+
+// Minimal overlay window setup
+function createOverlayWindow() {
+  if (!overlayWindow) {
+    const isPlatformMac = process.platform === 'darwin';
+    // Compute an initial position explicitly to avoid Electron's default centering
+    const margin = 16;
+    const defaultWidth = 390; // Increased from 260 to 390 (1.5x wider)
+    const defaultHeight = 40;
+    let initX;
+    let initY;
+    try {
+      if (overlayPositionUserSet && savedOverlayPosition && Number.isFinite(savedOverlayPosition.x) && (Number.isFinite(savedOverlayPosition.y) || Number.isFinite(savedOverlayPosition.bottom))) {
+        const hasBottom = Number.isFinite(savedOverlayPosition.bottom)
+        initX = Math.round(savedOverlayPosition.x);
+        initY = Math.round(hasBottom ? (savedOverlayPosition.bottom - defaultHeight) : savedOverlayPosition.y);
+      } else {
+        const cursorPoint = screen.getCursorScreenPoint();
+        let targetDisplay = screen.getDisplayNearestPoint(cursorPoint) || screen.getPrimaryDisplay();
+        const trayBounds = tray?.getBounds();
+        if (trayBounds) {
+          const allDisplays = screen.getAllDisplays();
+          const found = allDisplays.find(d => {
+            const b = d.bounds;
+            return trayBounds.x >= b.x && trayBounds.x < b.x + b.width && trayBounds.y >= b.y && trayBounds.y < b.y + b.height;
+          });
+          if (found) targetDisplay = found;
+        }
+        const work = targetDisplay.workArea;
+        initX = Math.floor(work.x + (work.width / 2) - (defaultWidth / 2));
+        initY = Math.floor(work.y + work.height - defaultHeight - margin);
+      }
+    } catch (e) {}
+
+    overlayWindow = new BrowserWindow({
+      width: defaultWidth,
+      height: defaultHeight,
+      x: initX,
+      y: initY,
+      frame: false,
+      resizable: false,
+      movable: true,
+      show: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      focusable: true,
+      fullscreenable: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+        partition: 'persist:donethat',
+        sandbox: false,
+        backgroundThrottling: false,
+        spellcheck: true
+      },
+      ...(isPlatformMac ? { visibleOnAllWorkspaces: true, acceptFirstMouse: true } : {})
+    })
+
+    overlayWindow.loadFile('./src/chat.html')
+
+    // Log any overlay webContents console messages (only in debug mode)
+    if (DEBUG) {
+      overlayWindow.webContents.on('console-message', (event) => {
+        console.log('Overlay Console:', event.message);
+      });
+    }
+
+    overlayWindow.once('ready-to-show', () => {
+      positionOverlayWindow()
+      // Only show overlay if authenticated
+      if (stateManager?.isAuthenticated()) {
+        overlayWindow.showInactive()
+      }
+      sendOverlayState()
+    })
+
+    overlayWindow.on('blur', () => {
+      try { overlayWindow.setAlwaysOnTop(true) } catch (e) {}
+      try { overlayWindow.webContents.send('overlay:collapse') } catch (e) {}
+    })
+
+    // Removed focus event that was causing auto-expansion on drag
+
+    overlayWindow.on('closed', () => {
+      overlayWindow = null
+    })
+
+    // Persist position when moved (save both y and bottom to be robust)
+    overlayWindow.on('move', () => {
+      try {
+        if (!overlayStore) return
+        const [x, y] = overlayWindow.getPosition()
+        const bounds = overlayWindow.getBounds()
+        const bottom = y + bounds.height
+        // Save both y and bottom for backward/forward compatibility
+        const display = screen.getDisplayNearestPoint({ x, y })
+        const displayId = display?.id
+        savedOverlayPosition = { x, y, bottom, displayId }
+        overlayPositionUserSet = true
+        clearTimeout(saveOverlayPositionDebounce)
+        saveOverlayPositionDebounce = setTimeout(() => {
+          try { overlayStore.set('overlayPosition', savedOverlayPosition) } catch (e) {}
+        }, 200)
+      } catch (e) {}
+    })
+
+    // Enable context menus (copy/paste) for overlay window
+    overlayWindow.webContents.on('context-menu', (event, params) => {
+      event.preventDefault();
+      const { Menu, MenuItem } = require('electron');
+      const cm = new Menu();
+      if (params.selectionText && params.selectionText.length > 0) {
+        cm.append(new MenuItem({ role: 'copy' }));
+      }
+      if (params.isEditable) {
+        cm.append(new MenuItem({ role: 'paste' }));
+        cm.append(new MenuItem({ role: 'cut' }));
+        cm.append(new MenuItem({ role: 'selectAll' }));
+      }
+      if (cm.items.length > 0) {
+        cm.popup({ window: overlayWindow });
+      }
+    });
+
+    screen.on('display-metrics-changed', () => {
+      if (overlayWindow && overlayWindow.isVisible()) {
+        positionOverlayWindow()
+      }
+    })
+  }
+}
+
+function positionOverlayWindow() {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return
+  const margin = 16
+
+  // Determine the active (current cursor) display
+  const cursorPoint = screen.getCursorScreenPoint()
+  const targetDisplay = screen.getDisplayNearestPoint(cursorPoint) || screen.getPrimaryDisplay()
+  const work = targetDisplay.workArea
+
+  const winBounds = overlayWindow.getBounds()
+  let x, y
+
+  const hasSaved = savedOverlayPosition && Number.isFinite(savedOverlayPosition.x) && (Number.isFinite(savedOverlayPosition.y) || Number.isFinite(savedOverlayPosition.bottom))
+  const isSameDisplay = hasSaved && savedOverlayPosition.displayId && savedOverlayPosition.displayId === targetDisplay.id
+
+  if (overlayPositionUserSet && isSameDisplay) {
+    // Restore saved position on the same display, clamped to work area
+    const hasBottom = Number.isFinite(savedOverlayPosition.bottom)
+    const hasY = Number.isFinite(savedOverlayPosition.y)
+    const virtualY = hasBottom ? savedOverlayPosition.bottom - winBounds.height : (hasY ? savedOverlayPosition.y : undefined)
+    x = Math.round(savedOverlayPosition.x)
+    y = Math.round(virtualY ?? (work.y + work.height - winBounds.height - margin))
+
+    const maxX = work.x + work.width - winBounds.width
+    const maxY = work.y + work.height - winBounds.height
+    x = Math.min(Math.max(x, work.x), Math.max(work.x, maxX))
+    y = Math.min(Math.max(y, work.y), Math.max(work.y, maxY))
+  } else {
+    // Default: bottom-center on current cursor display
+    x = Math.floor(work.x + (work.width / 2) - (winBounds.width / 2))
+    y = Math.floor(work.y + work.height - winBounds.height - margin)
+  }
+
+  try { overlayWindow.setPosition(x, y, false) } catch (e) {}
+}
+
+function sendOverlayState() {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return
+  try {
+    overlayWindow.webContents.send('overlay:state', {
+      isPaused: stateManager?.isPaused() ?? false,
+      hasPermission: stateManager?.hasScreenCapturePermission() ?? false,
+      isAuthenticated: stateManager?.isAuthenticated() ?? false
+    })
+  } catch (e) {}
 }
 
 // Intelligently positions the window relative to the tray icon
 // with support for multiple displays
 function showWindowBelowTray() {
-  const isPlatformMac = process.platform === 'darwin';
-  
-  // Get window size
-  const windowBounds = mainWindow.getBounds();
-  
-  // Get tray icon bounds
-  const trayBounds = tray.getBounds();
-  
-  // Get all displays
-  const allDisplays = screen.getAllDisplays();
-  
-  // Find which display contains the tray icon
-  const trayDisplay = allDisplays.find(display => {
-    const { x, y, width, height } = display.bounds;
-    return (
-      trayBounds.x >= x && trayBounds.x < x + width &&
-      trayBounds.y >= y && trayBounds.y < y + height
-    );
-  }) || screen.getPrimaryDisplay(); // Fall back to primary if not found
-  
-  // For Windows, use the built-in center method which is more reliable
-  if (process.platform === 'win32') {
-    mainWindow.center();
-    mainWindow.show();
-    mainWindow.focus();
-    return;
-  }
-  
-  // Use the working area of the display containing the tray
-  const { workArea } = trayDisplay;
-  
-  let x, y;
-  
-  // Linux positioning logic
-  if (process.platform === 'linux') {
-    // Center in the display - calculate with integer positions
-    x = Math.floor(workArea.x + (workArea.width / 2) - (windowBounds.width / 2));
-    y = Math.floor(workArea.y + (workArea.height / 2) - (windowBounds.height / 2));
-    
-    // If we have valid tray bounds, try to position near it
-    if (trayBounds.width > 0 && trayBounds.height > 0) {
-      // Position at the bottom of the screen if the tray appears to be at the bottom
-      // Common for panels at bottom of screen
-      if (trayBounds.y > workArea.y + (workArea.height / 2)) {
-        y = Math.floor(workArea.y + workArea.height - windowBounds.height - 50); // 50px buffer
-      } else {
-        // Otherwise position at top with offset
-        y = Math.floor(workArea.y + 50);
-      }
-    }
-  } else {
-    // Position relative to tray for macOS
-    // Calculate x position: center window horizontally relative to the tray icon
-    x = Math.floor(trayBounds.x + (trayBounds.width / 2) - (windowBounds.width / 2));
-    
-    // For macOS, determine if tray is closer to top or bottom of display
-    const distanceToTop = trayBounds.y - workArea.y;
-    const distanceToBottom = (workArea.y + workArea.height) - (trayBounds.y + trayBounds.height);
-    
-    if (distanceToTop < distanceToBottom) {
-      // Tray is closer to top - position window below tray
-      y = Math.floor(trayBounds.y + trayBounds.height);
-    } else {
-      // Tray is closer to bottom - position window above tray
-      y = Math.floor(trayBounds.y - windowBounds.height);
-    }
-  }
-  
-  // Ensure window doesn't go off-screen horizontally
-  x = Math.floor(Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - windowBounds.width)));
-  
-  // Ensure window doesn't go off-screen vertically
-  y = Math.floor(Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - windowBounds.height)));
-  
-  mainWindow.setPosition(x, y, false);
-  mainWindow.show();
-  mainWindow.focus(); // Ensure window gets focus
+  // Show the main window centered and focused on all platforms
+  try { mainWindow.center(); } catch (e) {}
+  try { mainWindow.show(); } catch (e) {}
+  try { mainWindow.focus(); } catch (e) {}
 }
 
 // Modify the window-all-closed handler to respect system quit
@@ -860,6 +1484,11 @@ app.on('window-all-closed', (event) => {
     event.preventDefault();
   }
   // Otherwise let the app quit normally
+});
+
+// Unregister shortcuts on quit
+app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch (e) {}
 });
 
 // Update the focus handler to use state manager
@@ -893,6 +1522,7 @@ function startRecording() {
   
   updateTrayIcon(true) // Show recording state
   createApplicationMenu(); // Update menu when recording starts
+  sendOverlayState();
 
   if (mainWindow) {
     mainWindow.webContents.send('pauseStateChanged', false)
@@ -914,6 +1544,7 @@ function stopRecording() {
 
   updateTrayIcon(false) // Update icon to non-recording state
   createApplicationMenu(); // Update menu when recording stops
+  sendOverlayState();
   
   // Send state updates
   if (mainWindow) {
@@ -941,6 +1572,7 @@ async function checkScreenCapturePermission() {
   
   // Update application menu when permission changes
   createApplicationMenu();
+  sendOverlayState();
   
   return hasPermission;
 }
@@ -990,6 +1622,7 @@ ipcMain.on('requestScreenCapturePermission', async () => {
 
       // Re-evaluate recording state based on permission change
       checkAndAdjustRecording();
+      sendOverlayState();
     }
   };
   
@@ -1052,12 +1685,18 @@ function scheduleDailyAuthCheck() {
   setTimeout(() => {
     // Check if user is not authenticated
     if (!stateManager?.isAuthenticated()) {
-      new Notification({
-        title: 'DoneThat Not Logged In',
-        body: 'You are not logged in to DoneThat. Please log in to continue tracking your work.',
-        silent: false,
-        urgency: 'critical'
-      }).show();
+      try {
+        if (mainWindow) {
+          mainWindow.show();
+          mainWindow.focus();
+          mainWindow.webContents.send('inapp:notify', {
+            id: 'not-logged-in',
+            title: 'DoneThat Not Logged In',
+            message: 'You are not logged in. Please log in to continue tracking your work.',
+            sticky: true
+          });
+        }
+      } catch (e) {}
     }
     
     // Schedule next check

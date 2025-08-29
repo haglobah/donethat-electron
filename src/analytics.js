@@ -199,12 +199,10 @@ class Analytics {
     // If user doesn't have valid access, return none
     if (!hasValidAccess()) return 'none';
     
-    // Check the different types of access
-    if (appState.teamStatus === 'active') return 'team';
-    if (appState.subscriptionStatus === 'trialing') return 'trial';
-    if (appState.subscriptionStatus === 'active') return 'paid';
+    // Check user status
+    if (appState.userStatus === 'active') return 'active';
     
-    return 'unknown';
+    return 'inactive';
   }
   
   /**

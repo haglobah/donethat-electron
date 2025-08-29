@@ -1,21 +1,18 @@
-const { initializeApp } = require("firebase/app");
 const { getFirestore, doc, onSnapshot } = require("@firebase/firestore");
 const { getAuth } = require("firebase/auth");
-const { getFunctions, httpsCallable } = require("firebase/functions");
-const firebaseConfig = require("../firebase-config.js");
+const { httpsCallable } = require("firebase/functions");
+const { firebaseApp, functions } = require("./firebase.js");
 const { logAnalyticsEvent } = require('./analytics.js');
 const { ipcRenderer } = require("electron");
-const { updateIsPublic } = require('./app-state.js');
+const { updateIsPublic, hasScreenCapturePermission } = require('./app-state.js');
 const { requestAudioPermission, requestKeystrokesPermission, requestWindowsPermission } = require('./permissions.js');
 const { refreshAuthToken } = require('./auth.js');
 const os = require('os');
 const packageInfo = require('../package.json');
-const { showErrorModal } = require('./modal.js');
+const { showBanner } = require('./notify.js');
 
-// Initialize Firebase
-const firebaseApp = initializeApp(firebaseConfig);
+// Use shared Firebase app (with App Check) and regioned services
 const db = getFirestore(firebaseApp, "europe-west1");
-const functions = getFunctions(firebaseApp, "europe-west1");
 
 // Create callable function references
 const getUserSettingsFunction = httpsCallable(functions, "getUserSettings");
@@ -91,11 +88,18 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   setupInputDataCheckboxListeners();
   // Set up permission result listener
   setupPermissionResultListener();
+  // Note: Screen capture toggle behavior is now handled in permissions.js
   // Set up listener for disable-capture-features message
   setupDisableCaptureListener();
   // Set up work hours change listeners
   setupWorkhoursChangeListeners();
+  // Set up Gemini API key listeners
+  setupGeminiApiKeyListeners();
+  // Set up dependency: disable screenshots in meetings requires microphone enabled
+  setupMeetingScreenshotsDependency();
 }
+// Note: Screen capture checkbox behavior is now handled in permissions.js
+
 
 // Set up listener for errors from main process
 function setupDisableCaptureListener() {
@@ -157,6 +161,11 @@ function setupPermissionResultListener() {
     // Set checkbox and local state according to permission result
     checkbox.checked = hasPermission;
     inputData[type] = hasPermission;
+
+    // Keep Active applications non-revokable once enabled
+    if (type === 'windows') {
+      checkbox.disabled = !!hasPermission;
+    }
     
     // Save to server
     try {
@@ -182,16 +191,7 @@ function setupPermissionResultListener() {
 
 // Helper function to update screenshots container visibility
 function updateScreenshotsContainerVisibility(show) {
-  const screenshotsContainer = document.getElementById('screenshotsContainer');
-  if (screenshotsContainer) {
-    if (show) {
-      screenshotsContainer.classList.remove('hidden');
-      screenshotsContainer.classList.add('flex');
-    } else {
-      screenshotsContainer.classList.add('hidden');
-      screenshotsContainer.classList.remove('flex');
-    }
-  }
+  // No-op: screenshots/local processing row removed
 }
 
 // Set up version click handler
@@ -202,17 +202,7 @@ function setupVersionClickHandler() {
     try {
       // Try to get version from package.json first
       versionElement.textContent = `v${packageInfo.version}`;
-      
-      // Add click handler for version number
-      versionElement.style.cursor = 'pointer'; // Make it look clickable
-      versionElement.addEventListener('click', (e) => {
-        const screenshotsCheckbox = document.getElementById('screenshotsCheckbox');
-        if (screenshotsCheckbox && !screenshotsCheckbox.checked) {
-          // Only toggle if checkbox is unchecked
-          const isHidden = document.getElementById('screenshotsContainer').classList.contains('hidden');
-          updateScreenshotsContainerVisibility(isHidden);
-        }
-      });
+      // Remove click easter egg
     } catch (error) {
       // If we can't get the version, just show a placeholder
       versionElement.textContent = 'v?.?.?';
@@ -332,6 +322,12 @@ async function saveUserSettings(type, value) {
         type: 'timezone',
         timezone: value
       });
+    } else if (type === 'disableScreenshotsInMeetings') {
+      settingsData.disableScreenshotsInMeetings = value;
+      logAnalyticsEvent('settings_updated', {
+        type: 'disableScreenshotsInMeetings',
+        enabled: value
+      });
     }
 
     // Check if we need to include OS info (only when saving other settings, not app)
@@ -382,7 +378,7 @@ async function saveUserSettings(type, value) {
       error_message: error.message
     });
     console.error("Error saving settings:", error);
-    showErrorModal(`Error saving settings: ${error.message}`);
+    showBanner(`Error saving settings: ${error.message}`, { title: 'Settings', sticky: true });
     throw error; // Re-throw error so UI can react (e.g., revert input)
   } finally {
     // Hide spinner
@@ -416,9 +412,26 @@ async function updateSettingsUI(settings) {
   const keystrokesCheckbox = document.getElementById('keystrokesCheckbox');
   const audioCheckbox = document.getElementById('audioCheckbox');
 
-  if (windowsCheckbox) windowsCheckbox.checked = inputData.windows; // Use windows key
+  if (windowsCheckbox) {
+    windowsCheckbox.checked = inputData.windows; // Use windows key
+    // Non-revokable when enabled: disable direct toggling once on
+    windowsCheckbox.disabled = !!inputData.windows;
+  }
   if (keystrokesCheckbox) keystrokesCheckbox.checked = inputData.keystrokes;
   if (audioCheckbox) audioCheckbox.checked = inputData.audio; // Keep disabled state from HTML
+
+  // Recompute dependency for meeting screenshots toggle now that audio state is applied
+  try { recomputeMeetingScreenshotsDependency(); } catch (_) {}
+
+  // Handle disable screenshots in meetings setting
+  if (settings && typeof settings.disableScreenshotsInMeetings === 'boolean') {
+    const disableScreenshots = document.getElementById('disableScreenshotsInMeetings');
+    if (disableScreenshots) {
+      disableScreenshots.checked = settings.disableScreenshotsInMeetings;
+      // Send to main process
+      ipcRenderer.send('updateDisableScreenshotsInMeetings', settings.disableScreenshotsInMeetings);
+    }
+  }
 
   // Handle workhours setting
   if (settings && settings.workhours) {
@@ -617,11 +630,15 @@ function setupInputDataCheckboxListeners() {
   };
 
   if (windowsCheckbox) {
-    windowsCheckbox.addEventListener('change', () => {
+    // Make windows (active applications) non-revokable via UI. Allow enabling through permission flow,
+    // but prevent turning off directly; will be turned off only if permission is lost.
+    windowsCheckbox.addEventListener('change', (e) => {
       if (windowsCheckbox.checked) {
         handleCheckboxChange('windowsCheckbox', 'windows', requestWindowsPermission);
       } else {
-        handleCheckboxChange('windowsCheckbox', 'windows', () => {});
+        // Prevent turning off via UI
+        e.preventDefault();
+        windowsCheckbox.checked = true;
       }
     });
   }
@@ -644,6 +661,56 @@ function setupInputDataCheckboxListeners() {
         handleCheckboxChange('audioCheckbox', 'audio', () => {});
       }
     });
+  }
+}
+
+// Disable "Disable screenshots in meetings" unless microphone is enabled
+function setupMeetingScreenshotsDependency() {
+  const audioCheckbox = document.getElementById('audioCheckbox');
+  const disableScreenshots = document.getElementById('disableScreenshotsInMeetings');
+  if (!disableScreenshots) return;
+
+  const applyState = () => {
+    const micOn = !!(audioCheckbox && audioCheckbox.checked);
+    disableScreenshots.disabled = !micOn;
+    if (!micOn) {
+      // Don't uncheck if we're just temporarily disabling due to no audio
+      // The setting will be restored when audio is re-enabled
+    }
+  };
+
+  // Initial application
+  applyState();
+  // React to microphone toggle changes
+  if (audioCheckbox) {
+    audioCheckbox.addEventListener('change', applyState);
+  }
+
+  // Add event listener for the disable screenshots toggle
+  disableScreenshots.addEventListener('change', async () => {
+    const isChecked = disableScreenshots.checked;
+    try {
+      await saveUserSettings('disableScreenshotsInMeetings', isChecked);
+      // Send to main process
+      ipcRenderer.send('updateDisableScreenshotsInMeetings', isChecked);
+    } catch (error) {
+      // Revert on error
+      disableScreenshots.checked = !isChecked;
+      console.error('Error saving disable screenshots setting:', error);
+    }
+  });
+}
+
+// Standalone recompute that can be called after async settings load
+function recomputeMeetingScreenshotsDependency() {
+  const audioCheckbox = document.getElementById('audioCheckbox');
+  const disableScreenshots = document.getElementById('disableScreenshotsInMeetings');
+  if (!disableScreenshots) return;
+  const micOn = !!(audioCheckbox && audioCheckbox.checked);
+  disableScreenshots.disabled = !micOn;
+  if (!micOn) {
+    // Don't uncheck if we're just temporarily disabling due to no audio
+    // The setting will be restored when audio is re-enabled
   }
 }
 
@@ -692,6 +759,135 @@ function setupWorkhoursChangeListeners() {
         // Revert on error
         workhours.end = originalEnd;
         e.target.value = originalEnd;
+      }
+    });
+  }
+}
+
+// Set up Gemini API key listeners
+function setupGeminiApiKeyListeners() {
+  const geminiApiKeyInput = document.getElementById('geminiApiKeyInput');
+  const toggleGeminiKeyBtn = document.getElementById('toggleGeminiKeyBtn');
+  const clearGeminiKeyBtn = document.getElementById('clearGeminiKeyBtn');
+  const MASK = '************************'; // long placeholder for masked key
+  let hasStoredKey = false;
+  let isShowing = false;
+  
+  if (geminiApiKeyInput) {
+    // On mount, check if a key exists and show masked
+    (async () => {
+      try {
+        const result = await ipcRenderer.invoke('get-gemini-api-key');
+        hasStoredKey = !!(result && result.success && result.apiKey);
+        if (hasStoredKey) {
+          storedKeyCached = result.apiKey || '';
+        }
+        if (hasStoredKey) {
+          geminiApiKeyInput.value = MASK;
+          geminiApiKeyInput.type = 'password';
+        }
+      } catch (error) {
+        console.error('Error checking Gemini API key:', error);
+      }
+    })();
+    
+    // If user focuses and currently masked, temporarily reveal only when toggled via button
+    geminiApiKeyInput.addEventListener('focus', async () => {
+      if (!isShowing && hasStoredKey) {
+        // Keep masked on focus; do nothing
+      }
+    });
+    
+    // Save API key on blur
+    geminiApiKeyInput.addEventListener('blur', async () => {
+      const raw = geminiApiKeyInput.value.trim();
+      if (hasStoredKey && !isShowing && raw === MASK) {
+        // Still masked, don't save
+        return;
+      }
+      const apiKey = raw;
+      
+      try {
+        if (apiKey) {
+          await ipcRenderer.invoke('save-gemini-api-key', apiKey);
+          logAnalyticsEvent('gemini_api_key_saved', {
+            has_key: true
+          });
+          hasStoredKey = true;
+          storedKeyCached = apiKey;
+          if (!isShowing) {
+            geminiApiKeyInput.value = MASK;
+            geminiApiKeyInput.type = 'password';
+          }
+        } else {
+          await ipcRenderer.invoke('clear-gemini-api-key');
+          logAnalyticsEvent('gemini_api_key_cleared', {
+            has_key: false
+          });
+          hasStoredKey = false;
+          storedKeyCached = '';
+        }
+      } catch (error) {
+        console.error('Error saving Gemini API key:', error);
+        showBanner(`Error saving API key: ${error.message}`, { title: 'Settings', sticky: true });
+      }
+    });
+  }
+  
+  if (toggleGeminiKeyBtn) {
+    toggleGeminiKeyBtn.addEventListener('click', () => {
+      const input = geminiApiKeyInput;
+      if (input.type === 'password') {
+        input.type = 'text';
+        isShowing = true;
+        // Populate with real key if we have a stored one and field currently masked
+        if (hasStoredKey && input.value === MASK) {
+          // Always refetch to ensure fresh value
+          ipcRenderer.invoke('get-gemini-api-key').then((res) => {
+            if (res && res.success && res.apiKey) {
+              storedKeyCached = res.apiKey;
+              input.value = res.apiKey;
+            } else {
+              input.value = '';
+            }
+          }).catch(() => { input.value = ''; });
+        }
+        toggleGeminiKeyBtn.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+            <line x1="1" y1="1" x2="23" y2="23"></line>
+          </svg>
+        `;
+      } else {
+        input.type = 'password';
+        isShowing = false;
+        if (hasStoredKey) {
+          input.value = MASK;
+        }
+        toggleGeminiKeyBtn.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+        `;
+      }
+    });
+  }
+  
+  if (clearGeminiKeyBtn) {
+    clearGeminiKeyBtn.addEventListener('click', async () => {
+      try {
+        await ipcRenderer.invoke('clear-gemini-api-key');
+        geminiApiKeyInput.value = '';
+        hasStoredKey = false;
+        isShowing = false;
+        storedKeyCached = '';
+        logAnalyticsEvent('gemini_api_key_cleared', {
+          has_key: false
+        });
+      } catch (error) {
+        console.error('Error clearing Gemini API key:', error);
+        showBanner(`Error clearing API key: ${error.message}`, { title: 'Settings', sticky: true });
       }
     });
   }

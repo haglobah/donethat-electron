@@ -90,6 +90,18 @@ exports.default = async function(configuration) {
         throw new Error('Build failed: Certificate sync failed');
       }
     }
+
+    console.log("Healtheck");
+
+    try {
+      const cmdHealth = `smctl healthcheck`
+      const outputHealth = execSync(cmdHealth, { encoding: 'utf8' });
+      console.log(outputHealth);
+    } catch (healthError) {
+      console.error('Healthcheck failed: ', healthError.message);
+    }
+
+    console.log("Starting signing");
     
     if (!process.env.SM_KEYPAIR_ALIAS) {
       throw new Error('Build failed: SM_KEYPAIR_ALIAS environment variable is not set');

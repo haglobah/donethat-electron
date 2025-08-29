@@ -13,7 +13,6 @@ alwaysApply: true
 
 ## Integration Modules
 - Authentication: [src/auth.js](mdc:src/auth.js)
-- Slack Integration: [src/slack.js](mdc:src/slack.js)
 - Firebase Integration: [src/firebase.js](mdc:src/firebase.js)
 - Analytics: [src/analytics.js](mdc:src/analytics.js)
 - Subscription: [src/subscription.js](mdc:src/subscription.js)

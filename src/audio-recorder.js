@@ -11,21 +11,9 @@ let MAX_BUFFER_DURATION_MS;
  * @returns {string} Best supported MIME type
  */
 function getBestSupportedMimeType() {
-  const types = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus',
-    'audio/mp4',
-    'audio/mpeg'
-  ];
+  // Use WebM format directly since we're using temp files
   
-  for (const type of types) {
-    if (MediaRecorder.isTypeSupported(type)) {
-      return type;
-    }
-  }
-  
-  return ''; // Fall back to browser default
+  return 'audio/webm;codecs=opus';
 }
 
 /**
@@ -80,7 +68,8 @@ window.startAudioRecording = async function() {
         echoCancellation: true,
         noiseSuppression: true, 
         autoGainControl: true
-      } 
+      },
+      video: false
     });
     
     const mimeType = getBestSupportedMimeType();
@@ -107,6 +96,7 @@ window.startAudioRecording = async function() {
       console.error('MediaRecorder error:', event.error);
     };
     
+    
     mediaRecorder.start(1000);
     recordingStartTime = Date.now();
     isRecording = true;
@@ -124,7 +114,7 @@ async function restartAudioRecording() {
   if (!isRecording) return true;
   
   try {
-    console.log('Restarting audio recording due to device change');
+    
     
     // Stop the current recording cleanly
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
@@ -142,7 +132,8 @@ async function restartAudioRecording() {
         echoCancellation: true,
         noiseSuppression: true, 
         autoGainControl: true
-      } 
+      },
+      video: false
     });
     
     const mimeType = getBestSupportedMimeType();
@@ -234,6 +225,11 @@ window.stopAudioRecording = async function() {
     const mimeType = mediaRecorder.mimeType || 'audio/webm';
     const blob = new Blob(audioChunks, { type: mimeType });
     
+    // Basic validation
+    if (blob.size === 0) {
+      return null;
+    }
+    
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.readAsDataURL(blob);
@@ -243,6 +239,10 @@ window.stopAudioRecording = async function() {
           mimeType: mimeType,
           timeMs: duration
         });
+      };
+      reader.onerror = () => {
+        console.error('Error reading audio blob');
+        resolve(null);
       };
     });
   } catch (error) {

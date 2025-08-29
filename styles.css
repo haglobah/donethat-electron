@@ -25,36 +25,42 @@
   --color-warning: #f59e0b;
 }
 
-/* Auth Error Notification Styles */
-.auth-error-notification {
+/* Unified Notification Banner Styles */
+.banner-notification {
   @apply fixed top-0 left-0 right-0 z-50;
   background-color: var(--color-primary);
   color: white;
-  padding: 0.3rem 0.75rem;
+  /* Match dashboard topbar height */
+  height: 48px;
+  min-height: 48px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
   font-size: 0.75rem;
   transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
   transform: translateY(0);
   box-shadow: 0 2px 5px rgba(0,0,0,0.1);
 }
 
-.auth-error-notification.hidden {
+.banner-notification.hidden {
   transform: translateY(-100%);
   opacity: 0;
 }
 
-.auth-error-content {
+.banner-content {
   @apply flex justify-between items-center max-w-screen-lg mx-auto;
 }
 
 /* Style for the warning icon only - even larger now */
-.auth-error-content > svg:first-child,
-.auth-error-content > span:first-child > svg,
-.auth-error-content > *:first-child > svg {
+.banner-content > svg:first-child,
+.banner-content > span:first-child > svg,
+.banner-content > *:first-child > svg {
   width: 2rem !important;
   height: 2rem !important;
 }
 
-.auth-error-close {
+.banner-close {
   @apply ml-3;
   background-color: rgba(255,255,255,0.3);
   transition: background-color 0.2s;
@@ -73,7 +79,7 @@
   box-sizing: border-box;
 }
 
-.auth-error-close:hover {
+.banner-close:hover {
   background-color: rgba(255,255,255,0.3);
 }
 
@@ -84,7 +90,11 @@
 
 /* Common view container */
 .view-container {
-  @apply h-full w-full items-start justify-center pt-0;
+  @apply w-full justify-center pt-0;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Form container */
@@ -147,39 +157,21 @@
   border-top-color: var(--color-primary-dark);
 }
 
+/* Small spinner for buttons */
+.spinner-small {
+  @apply w-4 h-4 border-2 rounded-full animate-spin inline-block mr-2;
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+}
+
 /* Spinner overlay */
 .spinner-overlay {
   @apply absolute inset-0 bg-white/80 flex items-center justify-center z-10;
 }
 
-/* Subscription-specific styles */
-/* Target subscription price specifically in the bullet list context */
-.text-gray-600 .subscription-price,
-.text-gray-600 .subscription-period {
-  font-size: inherit;
-  font-weight: inherit;
-  text-align: inherit;
-  margin-top: 0;
-  color: var(--color-neutral-700);
-}
 
-/* Override any other styling that might be applied */
-.text-left .subscription-price,
-.text-left .subscription-period {
-  color: var(--color-neutral-700) !important;
-}
 
-/* Special classes for subscription price in bullet points - no inline styles needed */
-.subscription-bullet-price,
-.subscription-bullet-period {
-  font-size: inherit;
-  font-weight: normal;
-  text-align: left;
-  margin-top: 0;
-  color: var(--color-neutral-700) !important;
-}
-
-/* Add email button (used for subscription action button as well) */
+/* Add email button */
 .add-email-btn {
   @apply absolute right-1.5 top-1/2 transform -translate-y-1/2 text-white rounded-full w-4 h-4 flex items-center justify-center transition-colors;
   background-color: var(--color-primary);
@@ -188,16 +180,15 @@
   background-color: var(--color-primary-dark);
 }
 
-/* Time input container styling */
-.time-input-container {
-  @apply relative w-full;
-}
-
-/* Summary period display */
-.summary-period {
-  @apply text-xs text-center py-2 mb-3 border-b;
+/* Small grey icon button (for password visibility toggles) */
+.icon-toggle-btn {
+  @apply absolute right-1.5 top-1/2 transform -translate-y-1/2 rounded-full w-4 h-4 flex items-center justify-center transition-colors;
+  background-color: var(--color-neutral-200);
   color: var(--color-neutral-600);
-  border-color: var(--color-neutral-200);
+}
+.icon-toggle-btn:hover {
+  background-color: var(--color-neutral-300);
+  color: var(--color-neutral-700);
 }
 
 /* Disabled button styling */
@@ -259,6 +250,29 @@
   text-align: center;
 }
 
+/* Typing indicator for chat */
+.typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 10px;
+}
+.typing span {
+  width: 4px;
+  height: 4px;
+  background-color: var(--color-neutral-500);
+  border-radius: 50%;
+  display: inline-block;
+  animation: typing-bounce 1.1s infinite ease-in-out;
+}
+.typing span:nth-child(2) { animation-delay: 0.15s; }
+.typing span:nth-child(3) { animation-delay: 0.30s; }
+
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.6; }
+  30% { transform: translateY(-2px); opacity: 1; }
+}
+
 .code-input:focus {
   outline: 2px solid var(--color-primary);
 }
@@ -276,39 +290,6 @@
   background-position: right 8px center;
   background-repeat: no-repeat;
   background-size: 16px 16px;
-}
-
-/* Price display container styling */
-.price-display-container {
-  @apply w-full mb-4 mt-2;
-}
-
-/* Price display box */
-.price-display {
-  @apply border border-gray-300 rounded-lg p-3 text-center;
-  background-color: var(--color-neutral-50);
-}
-
-/* Price amount */
-.price-amount {
-  @apply text-2xl font-bold inline-block mr-1;
-  color: var(--color-primary);
-}
-
-/* Price period */
-.price-period {
-  @apply text-sm inline-block;
-  color: var(--color-neutral-600);
-}
-
-/* Add these styles */
-#payment-element {
-  min-height: 300px;
-  margin-bottom: 1rem;
-}
-
-.StripeElement {
-  width: 100%;
 }
 
 /* Add custom utilities using CSS variables */
@@ -355,72 +336,6 @@
 
 #settingsView .form-group > div:first-child {
   margin-top: 0;
-}
-
-/* Custom Bullet Points Styles */
-.custom-bullets-container {
-  @apply flex flex-col;
-}
-
-/* Spacer between original bullets and custom bullets */
-.bullets-spacer {
-  height: 1rem;
-}
-
-/* Style for custom bullets */
-.custom-bullet {
-  @apply flex items-center py-1;
-}
-
-/* Style for the add and delete icons */
-.delete-icon, .add-bullet-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-right: 0.5rem;
-  width: 1rem;
-  height: 1rem;
-  color: #9ca3af; /* Gray-400 */
-  font-size: 1.25rem;
-  cursor: pointer;
-  transition: color 0.2s ease-in-out;
-  flex-shrink: 0;
-}
-
-.delete-icon:hover, .add-bullet-icon:hover {
-  color: var(--color-primary);
-}
-
-/* Bullet input row */
-.bullet-input-row {
-  @apply flex items-center py-1;
-}
-
-/* Full-width custom bullet input */
-.custom-bullet-input {
-  flex: 1;
-  border: 1px solid #d1d5db;
-  border-radius: 0.375rem;
-  padding: 0.375rem 0.5rem;
-  font-size: 0.875rem;
-  color: #374151;
-  background-color: #fff;
-  outline: none;
-  transition: border-color 0.2s ease-in-out;
-  margin-left: 0.25rem;
-}
-
-.custom-bullet-input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 1px var(--color-primary-focus);
-}
-
-.custom-bullet-italic {
-  @apply italic;
-}
-
-.custom-bullet-input::placeholder {
-  color: #9ca3af;
 }
 
 /* Custom checkbox styles */
@@ -479,96 +394,578 @@
   @apply text-gray-400 line-through;
 }
 
-/* Heart icon styles */
-.heart-icon {
-  @apply ml-auto cursor-pointer transition-colors duration-200 text-base;
-  color: var(--color-neutral-500);
-}
-.heart-icon:hover {
-  color: var(--color-neutral-700);
+/* Layout: top bar + fill remainder with dashboard */
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
 }
 
-.heart-icon.active {
-  color: var(--color-primary);
-}
-.heart-icon.active:hover {
-  color: var(--color-primary-dark);
-}
-
-/* Disabled heart icon when item is crossed out */
-.heart-icon.opacity-50.pointer-events-none {
-  @apply cursor-default;
+/* Dashboard shell layout for embedded portal */
+.dashboard-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
 }
 
-/* Comment input field styling */
-.comment-input {
-  @apply w-full border border-gray-300 p-2 rounded-lg text-sm focus:outline-none focus:ring-1 transition duration-200 mt-3;
-  --tw-ring-color: var(--color-primary);
-  min-height: 60px;
-  resize: none;
+.dashboard-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-neutral-200);
+  height: 48px; /* Fixed height to ensure consistency */
+  min-height: 48px; /* Ensure minimum height */
+  position: relative;
 }
 
-.comment-input::placeholder {
-  @apply text-gray-400;
+.topbar-left {
+  display: flex;
+  align-items: center;
 }
 
-/* Summary container */
-.summary-container {
-  @apply h-68 mb-3 border border-gray-200 rounded p-2 overflow-y-auto text-sm;
+.topbar-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
 }
 
-/* Make borders consistent between inputs and containers */
-.form-input, .summary-container {
-  @apply border border-gray-300 rounded-lg;
-}
-
-/* Modal */
-.modal {
-  @apply fixed inset-0 bg-black/50 flex items-center justify-center z-50;
-}
-
-/* Modal content */
-.modal-content {
-  @apply max-w-xs w-full bg-white p-4 border border-black rounded-lg shadow-xl;
-}
-
-.linux-permission-help {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: white;
-  padding: 20px;
+.topbar-icon-btn {
+  border: 1px solid var(--color-neutral-200);
+  background: #fff;
   border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-  max-width: 500px;
-  width: 90%;
-  z-index: 1000;
-}
-
-.linux-permission-help h3 {
-  margin: 0 0 15px 0;
-  color: #333;
-  font-size: 18px;
-}
-
-.linux-permission-help p {
-  margin: 0 0 20px 0;
-  color: #666;
-  line-height: 1.5;
-  white-space: pre-line;
-}
-
-.linux-permission-help button {
-  background: #007bff;
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 8px;
   cursor: pointer;
-  float: right;
 }
 
-.linux-permission-help button:hover {
-  background: #0056b3;
+.topbar-icon-btn:hover {
+  background: var(--color-neutral-50);
+}
+
+/* Recording dropdown */
+.recording-control { position: relative; }
+.recording-control button {
+  height: 32px; /* Fixed height to match other buttons */
+  min-height: 32px; /* Ensure minimum height */
+  width: 32px; /* Fixed width to prevent size changes */
+  min-width: 32px; /* Ensure minimum width */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.recording-menu {
+  position: absolute;
+  right: 0;
+  top: 34px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  padding: 4px;
+  z-index: 30;
+  width: 160px;
+  font-size: 13px;
+  line-height: 1.25rem;
+}
+.recording-menu-item {
+  display: block !important;
+  width: 100% !important;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: none !important;
+  background: transparent;
+  cursor: pointer;
+  color: #374151;
+  transition: background-color 0.15s ease;
+  box-sizing: border-box;
+  white-space: nowrap;
+  min-width: 100% !important;
+  max-width: none !important;
+  flex: none !important;
+}
+.recording-menu-item:hover { 
+  background: #f3f4f6; 
+}
+.recording-menu-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+  color: #9ca3af;
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Ensure topbar actions don't affect layout when hidden */
+.topbar-actions.hidden {
+  display: none !important;
+}
+
+.topbar-btn {
+  width: auto;
+  padding-left: 12px;
+  padding-right: 12px;
+  height: 32px; /* Fixed height to match recording button */
+  min-height: 32px; /* Ensure minimum height */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Semi-transparent overlay to block interactions on topbar */
+.topbar-overlay {
+  @apply absolute inset-0 bg-white/50;
+  pointer-events: none;
+}
+
+/* Summary Overlay Modal */
+.summary-overlay {
+  @apply fixed inset-0 bg-black/50 flex items-center justify-center z-50;
+  backdrop-filter: blur(2px);
+}
+
+.summary-overlay-content {
+  @apply max-w-lg w-full mx-4 bg-white rounded-xl shadow-2xl;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.summary-subtitle-header {
+  @apply flex items-center justify-between;
+}
+
+.summary-close-btn {
+  @apply p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors;
+}
+
+.summary-subtitle {
+  @apply p-4 pb-3;
+}
+
+.summary-headline {
+  @apply text-lg font-semibold text-gray-900 mb-1;
+}
+
+.summary-period-text {
+  @apply text-sm text-gray-600 mb-2;
+}
+
+.summary-activities-note {
+  @apply text-xs text-gray-500;
+}
+
+.summary-content {
+  @apply px-4 pb-3;
+}
+
+.summary-section {
+  @apply mb-4;
+}
+
+.summary-section-title {
+  @apply text-sm font-semibold text-gray-900 mb-2;
+}
+
+.summary-bullets-container {
+  @apply space-y-2 mb-3;
+}
+
+.summary-custom-bullets-container {
+  @apply space-y-2 mb-3;
+}
+
+.summary-add-custom {
+  @apply flex gap-2;
+}
+
+.summary-custom-input {
+  @apply flex-1 p-2 border border-gray-300 rounded-lg text-sm;
+  font-family: inherit;
+}
+
+.summary-custom-input:focus {
+  @apply outline-none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-focus);
+}
+
+.summary-custom-time-input {
+  @apply w-16 p-2 border border-gray-300 rounded-lg text-sm text-center;
+  font-family: inherit;
+}
+
+.summary-custom-time-input:focus {
+  @apply outline-none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-focus);
+}
+
+.summary-add-custom-btn {
+  @apply px-3 py-2 text-white rounded-lg transition-colors text-sm;
+  background-color: var(--color-primary);
+}
+.summary-add-custom-btn:hover {
+  background-color: var(--color-primary-dark);
+}
+
+.summary-comment-section {
+  @apply space-y-2;
+}
+
+.summary-comment-label {
+  @apply block text-gray-700 font-semibold text-sm;
+}
+
+.summary-comment-input {
+  @apply w-full p-2 border border-gray-300 rounded-lg text-sm;
+  font-family: inherit;
+}
+
+.summary-comment-input:focus {
+  @apply outline-none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-focus);
+}
+
+.summary-actions {
+  @apply flex items-center justify-end gap-3 p-4;
+}
+
+.summary-cancel-btn {
+  @apply px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-sm;
+}
+
+.summary-submit-btn {
+  @apply px-6 py-2 text-white rounded-lg transition-colors text-sm;
+  background-color: var(--color-primary);
+}
+.summary-submit-btn:hover {
+  background-color: var(--color-primary-dark);
+}
+
+.summary-submit-btn:disabled {
+  @apply bg-gray-300 cursor-not-allowed;
+}
+
+.summary-pause-note {
+  @apply px-4 pb-4;
+}
+
+.summary-pause-text {
+  @apply text-xs text-gray-500 text-right;
+}
+
+.summary-note {
+  @apply px-6 pb-6;
+}
+
+.summary-note-text {
+  @apply text-xs text-gray-500 text-center;
+}
+
+/* Bullet point styles - matching FE design */
+.bullet-item {
+  @apply flex gap-3 items-center w-full;
+  min-height: 24px;
+  align-items: center;
+}
+
+.bullet-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background-color: white;
+  width: 16px;
+  height: 16px;
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
+  align-self: center;
+}
+
+.bullet-checkbox:checked::after {
+  content: '';
+  display: block;
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 5px;
+  height: 10px;
+  border: solid var(--color-primary);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.bullet-checkbox:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-primary-focus);
+}
+
+.bullet-text {
+  @apply text-sm text-gray-700;
+  flex: 1;
+  cursor: pointer;
+  line-height: 1.4;
+  padding: 0;
+  display: flex;
+  align-items: center;
+}
+
+.bullet-text-crossed {
+  @apply text-gray-400 line-through;
+}
+
+.bullet-time {
+  @apply text-xs text-gray-500 ml-2;
+}
+
+/* Time chip styling */
+.bullet-time-chip {
+  @apply inline-block px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full;
+  font-family: monospace;
+  flex-shrink: 0;
+  align-self: center;
+  margin: 0;
+}
+
+.bullet-time-chip-crossed {
+  @apply text-gray-400 line-through;
+}
+
+/* Custom bullet styles */
+.custom-bullet {
+  @apply flex gap-3 items-center w-full;
+  min-height: 24px;
+  align-items: center;
+}
+
+.custom-bullet-text {
+  @apply text-sm italic text-gray-600;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.custom-bullet-delete {
+  @apply text-gray-400 hover:text-gray-700 flex-shrink-0 cursor-pointer;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+}
+
+.custom-bullet-delete:hover {
+  @apply text-red-500;
+}
+
+.recording-dot { 
+  color: #9ca3af; 
+  letter-spacing: 1px; /* Small spacing for pause symbol */
+}
+.recording-dot.active { 
+  color: var(--color-primary); 
+  letter-spacing: 0; /* No spacing for dot */
+}
+
+.topbar-note {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--color-neutral-600);
+  border-bottom: 1px solid var(--color-neutral-200);
+  min-height: 28px; /* reserve consistent space under topbar */
+}
+
+/* Reserve space even when using the utility 'hidden' class */
+.topbar-note.hidden {
+  display: block;      /* override Tailwind's display:none */
+  visibility: hidden;  /* hide content but keep layout height */
+}
+
+.dashboard-embed {
+  flex: 1 1 auto;
+  min-height: 0; /* required so iframe can flex properly */
+  display: flex;
+  position: relative;
+}
+
+/* Webview error message */
+.webview-error {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background-color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.webview-error.hidden {
+  display: none !important;
+}
+
+.portal-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  flex: 1 1 auto;
+}
+
+/* Toggle switch */
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 52px; /* unify width */
+  height: 28px; /* unify height */
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.toggle input { display: none; }
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #e5e7eb;
+  transition: .2s;
+  border-radius: 9999px;
+  border: none;
+  box-sizing: border-box;
+}
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 22px; width: 22px;
+  left: 3px; top: 3px;
+  background-color: white;
+  transition: .2s;
+  border-radius: 9999px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  border: 0;
+}
+.toggle input:checked + .slider {
+  background-color: var(--color-primary);
+}
+.toggle input:checked + .slider:before {
+  transform: translateX(24px);
+}
+/* Remove any focus outlines/rings */
+.toggle input:focus + .slider {
+  outline: none;
+}
+.toggle input:focus + .slider:before {
+  outline: none;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+/* Disabled state for toggles */
+.toggle input:disabled + .slider { opacity: 0.7; }
+.toggle input:disabled:not(:checked) + .slider { background-color: #e5e7eb; }
+.toggle input:disabled:checked + .slider { background-color: var(--color-primary); }
+.toggle input:disabled + .slider:before { background-color: #f3f4f6; border: 0; }
+/* Make any disabled toggle show not-allowed cursor like Screenshare */
+.toggle:has(input:disabled) { cursor: not-allowed; }
+.toggle:has(input:disabled) .slider { cursor: not-allowed; }
+
+/* Settings view scrolling + proper sizing under topbar */
+#settingsView {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+#settingsView .auth-page {
+  min-height: auto;
+  justify-content: flex-start;
+  padding-top: 24px;
+  padding-bottom: 24px;
+  width: 100%;
+}
+
+/* Section dividers under headings with line through and white label background */
+.section-divider {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 8px;
+  margin: 16px 0 12px 0;
+}
+.section-divider::after {
+  content: "";
+  border-top: 1px solid var(--color-neutral-200);
+}
+.section-divider-label {
+  background: #fff;
+  padding: 0 8px 0 0; /* text left aligned, line starts right after label */
+  font-weight: 600;
+  font-size: 14px;
+  color: #111827;
+  line-height: 1;
+}
+
+/* Auth page layout */
+.auth-page {
+  min-height: calc(100vh - 0px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 48px 24px;
+  background: linear-gradient(to bottom, #ffffff, #f9fafb);
+  overflow-y: auto;
+}
+
+.auth-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.auth-logo {
+  width: 40px;
+  height: 40px;
+}
+
+.auth-title {
+  margin-left: 12px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.auth-container {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.auth-card {
+  background: #fff;
+  border: 1px solid #f3f4f6;
+  border-radius: 14px;
+  padding: 28px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  margin-bottom: 24px; /* modest whitespace below tile */
+}
+
+.auth-legal {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #6b7280;
+  text-align: center;
 }
