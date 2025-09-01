@@ -17,6 +17,10 @@ let llmModels = null;
 // latest config snapshot for downstream use
 let latestConfig = null;
 
+// Constants from online version
+const CAPTION_TOKENS = 200;
+const MAX_SCREENSHOT_SIZE = 2000000; // 2MB per screenshot
+
 /**
  * Check if local processing is available (has Gemini API key)
  */
@@ -38,19 +42,17 @@ async function getConfig(idToken) {
   
   // Return cached config if still valid
   if (configCache.data && (now - configCache.lastFetch) < configCache.fetchInterval) {
-    latestConfig = configCache.data;
-    return latestConfig;
+    return configCache.data;
   }
 
   try {
     const fetch = await import('node-fetch').then(module => module.default);
     
-    const headers = {
-      'Authorization': `Bearer ${idToken}`
-    };
     const response = await fetch(FIREBASE_CONFIG_URL, {
       method: 'GET',
-      headers
+      headers: {
+        'Authorization': `Bearer ${idToken}`
+      }
     });
 
     if (!response.ok) {
@@ -67,8 +69,8 @@ async function getConfig(idToken) {
     configCache.data = config;
     configCache.lastFetch = now;
     latestConfig = config;
-    
-    return latestConfig;
+
+    return config;
   } catch (error) {
     log.error('Error fetching config:', error);
     throw error;
@@ -96,7 +98,7 @@ async function initializeLLM(idToken) {
       .map(modelConfig => new ChatGoogleGenerativeAI({
           apiKey: geminiResult.apiKey,
           model: modelConfig.model,
-          maxOutputTokens: modelConfig.maxOutputTokens || 300
+          maxOutputTokens: modelConfig.maxOutputTokens || CAPTION_TOKENS
         }).withStructuredOutput(config.outputSchema)
       );
     
@@ -125,6 +127,25 @@ async function invokeWithFallback(messages) {
       } catch (error) {
         attempt += 1;
         const remaining = maxAttemptsPerModel - attempt;
+        
+        // Check if it's an image processing error
+        const isImageError = error.message && error.message.includes('Unable to process input image');
+        
+        if (isImageError) {
+          log.warn(`LLM image processing error on attempt ${attempt}, trying with fewer images...`);
+          // Try with fewer images on next attempt
+          if (attempt === 1) {
+            // Remove some images and retry
+            const simplifiedMessages = simplifyMessagesForRetry(messages);
+            try {
+              const response = await llm.invoke(simplifiedMessages);
+              return response;
+            } catch (retryError) {
+              log.warn(`LLM retry with fewer images also failed:`, retryError);
+            }
+          }
+        }
+        
         log.warn(`LLM ${llm.constructor.name} attempt ${attempt} failed${remaining > 0 ? `, retrying (${remaining} left)` : ''}:`, error);
         if (attempt >= maxAttemptsPerModel) {
           break;
@@ -138,7 +159,76 @@ async function invokeWithFallback(messages) {
 }
 
 /**
- * Build content blocks based on config spec
+ * Simplify messages by removing some images for retry attempts
+ */
+function simplifyMessagesForRetry(messages) {
+  try {
+    const simplifiedMessages = messages.map(message => {
+      if (message.content && Array.isArray(message.content)) {
+        // Keep only the first 2 images and all text content
+        const simplifiedContent = message.content.filter(block => {
+          if (block.type === 'text') return true;
+          if (block.type === 'image_url') {
+            // Only keep first 2 images
+            const imageBlocks = message.content.filter(b => b.type === 'image_url');
+            const imageIndex = imageBlocks.indexOf(block);
+            return imageIndex < 2;
+          }
+          return false;
+        });
+        return { ...message, content: simplifiedContent };
+      }
+      return message;
+    });
+    return simplifiedMessages;
+  } catch (error) {
+    log.error('Error simplifying messages:', error);
+    return messages; // Return original if simplification fails
+  }
+}
+
+/**
+ * Validate and process image data for LLM processing
+ */
+function validateAndProcessImage(imageData) {
+  try {
+    // Ensure it's a valid data URL
+    if (!imageData || typeof imageData !== 'string' || !imageData.startsWith('data:image/')) {
+      return null;
+    }
+
+    // Extract the base64 part
+    const base64Part = imageData.split(',')[1];
+    if (!base64Part) {
+      return null;
+    }
+
+    // Decode to check if it's valid
+    const buffer = Buffer.from(base64Part, 'base64');
+    if (buffer.length === 0) {
+      return null;
+    }
+
+    // Check file size (mirror online version's 2MB limit)
+    if (buffer.length > MAX_SCREENSHOT_SIZE) {
+      return null;
+    }
+
+    // Ensure it's a supported format (JPEG, PNG)
+    const mimeType = imageData.match(/data:([^;]+)/)?.[1];
+    if (!mimeType || !['image/jpeg', 'image/png'].includes(mimeType)) {
+      return null;
+    }
+
+    return imageData;
+  } catch (error) {
+    log.error('Image validation error:', error);
+    return null;
+  }
+}
+
+/**
+ * Build content blocks based on config spec (mirror online version)
  */
 function buildBlocks(config, validScreenshots, previousScreenshots, applicationActivity, audioTranscript) {
   const spec = config.contentBlocksSpec || {};
@@ -152,24 +242,45 @@ function buildBlocks(config, validScreenshots, previousScreenshots, applicationA
     blocks.push({ type: 'text', text: `Audio Transcript:\n${audioTranscript}` });
   }
 
+  // Add previous screenshots if available (mirror online version)
   if (previousScreenshots && previousScreenshots.images && previousScreenshots.images.length > 0) {
     blocks.push({ type: 'text', text: spec.previousLabel || 'PREVIOUS SCREENSHOTS (from 5 minutes ago):' });
-    previousScreenshots.images.forEach(img => {
+    previousScreenshots.images.forEach((img, idx) => {
       if (img && img.base64Data) {
         const url = img.base64Data.startsWith('data:image') ? img.base64Data : `data:image/jpeg;base64,${img.base64Data}`;
-        const imageBlock = { type: 'image_url' };
-        imageBlock[imageKey] = url;
-        blocks.push(imageBlock);
+        const validatedImage = validateAndProcessImage(url);
+        if (validatedImage) {
+          const imageBlock = { type: 'image_url' };
+          imageBlock[imageKey] = validatedImage;
+          blocks.push(imageBlock);
+        }
       }
     });
     blocks.push({ type: 'text', text: spec.currentLabel || 'CURRENT SCREENSHOTS:' });
   }
 
-  validScreenshots.forEach(img => {
+  // Process current screenshots (mirror online version's approach)
+  const processedScreenshots = validScreenshots
+    .map((img, idx) => {
+      const validatedImage = validateAndProcessImage(img);
+      return validatedImage;
+    })
+    .filter(img => img !== null);
+
+  processedScreenshots.forEach(img => {
     const imageBlock = { type: 'image_url' };
-    imageBlock[imageKey] = img; // already a data URL
+    imageBlock[imageKey] = img;
     blocks.push(imageBlock);
   });
+
+  // Log summary of what's being sent to LLM
+  const imageBlocks = blocks.filter(b => b.type === 'image_url');
+
+  // If no screenshots are provided, add a note about activity-only processing (mirror online)
+  if (processedScreenshots.length === 0 && 
+      (!previousScreenshots || !previousScreenshots.images || previousScreenshots.images.length === 0)) {
+    blocks.push({ type: 'text', text: 'NO SCREENSHOTS PROVIDED - Processing based on activity data, audio, and other inputs only.' });
+  }
 
   return blocks;
 }
@@ -222,8 +333,6 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, au
     throw error;
   }
 }
-
-
 
 /**
  * Submit processed results to Firebase
