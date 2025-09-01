@@ -77,7 +77,8 @@ async function sendPortalLoginIfPossible() {
 setTimeout(() => {
   const { ipcRenderer } = require('electron');
   ipcRenderer.send('initialAuthCheck', !!auth.currentUser);
-}, 1000);
+  // Windows needed 3s, 1s was enough for mac
+}, 3000);
 
 // Get references to views and elements
 const signInView = document.getElementById("signInView");
