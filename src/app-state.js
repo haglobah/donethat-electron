@@ -12,6 +12,7 @@ const state = {
 
   // Permission state
   hasScreenCapturePermission: false,
+  hasWindowsPermission: false,
 
   // User status
   userStatus: 'active',
@@ -46,6 +47,10 @@ function isAuthenticated() {
 
 function hasScreenCapturePermission() {
   return state.hasScreenCapturePermission;
+}
+
+function hasWindowsPermission() {
+  return state.hasWindowsPermission;
 }
 
 function hasValidAccess() {
@@ -84,6 +89,10 @@ function updateAuthState(isAuthenticated, userIdToken) {
 
 function updateScreenCapturePermission(hasPermission) {
   state.hasScreenCapturePermission = hasPermission;
+}
+
+function updateWindowsPermission(hasPermission) {
+  state.hasWindowsPermission = hasPermission;
 }
 
 function updateUserStatus(status) {
@@ -257,6 +266,7 @@ module.exports = {
   getState,
   isAuthenticated,
   hasScreenCapturePermission,
+  hasWindowsPermission,
   hasValidAccess,
   isPublic,
   isStoreScreenshots,
@@ -266,6 +276,7 @@ module.exports = {
   getDateCreated,
   updateAuthState,
   updateScreenCapturePermission,
+  updateWindowsPermission,
   updateUserStatus,
   updateIsPublic,
   updateStoreScreenshots,

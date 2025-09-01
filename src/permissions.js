@@ -1,6 +1,7 @@
 const { ipcRenderer } = require("electron");
-const { updateScreenCapturePermission, hasScreenCapturePermission } = require('./app-state.js');
+const { updateScreenCapturePermission, updateWindowsPermission, hasScreenCapturePermission, hasWindowsPermission } = require('./app-state.js');
 const { logAnalyticsEvent } = require('./analytics.js');
+const { updateTopbarVisibility } = require('./index.js');
 
 const openSettingsBtn = document.getElementById("openSettingsBtn");
 
@@ -17,6 +18,15 @@ function initializePermissions(viewNavigator, currentViewGetter) {
   
   // Set up screen capture checkbox behavior
   setupScreenCaptureCheckboxBehavior();
+  
+  // Set up windows checkbox behavior
+  setupWindowsCheckboxBehavior();
+  
+  // Set up audio checkbox behavior
+  setupAudioCheckboxBehavior();
+  
+  // Set up keystrokes checkbox behavior
+  setupKeystrokesCheckboxBehavior();
 }
 
 // Set up event listeners for platform-specific permission troubleshooting
@@ -118,6 +128,9 @@ ipcRenderer.on('screenCapturePermission', (event, data) => {
     // Update screen capture checkbox in settings if we're on settings view
     updateScreenCaptureCheckbox(hasPermission);
     
+    // Update topbar visibility
+    updateTopbarVisibility();
+    
     // Only navigate if we're not already on settings view
     const currentView = getCurrentView ? getCurrentView() : null;
     if (currentView !== 'settings') {
@@ -149,14 +162,30 @@ ipcRenderer.on('keystrokesPermission', (event, hasPermission) => {
 });
 
 ipcRenderer.on('windowsPermission', (event, hasPermission) => {
+  updateWindowsPermission(hasPermission);
+
+  // Log windows permission status
   logAnalyticsEvent('windows_permission', {
     status: hasPermission ? 'granted' : 'denied',
     platform: process.platform
   });
+
+  // Update windows checkbox in settings if we're on settings view
+  updateWindowsCheckbox(hasPermission);
+  
   // Notify settings component about permission status
   document.dispatchEvent(new CustomEvent('permissionResult', {
     detail: { type: 'windows', hasPermission }
   }));
+  
+  // Update topbar visibility
+  updateTopbarVisibility();
+  
+  // Only navigate if we're not already on settings view
+  const currentView = getCurrentView ? getCurrentView() : null;
+  if (currentView !== 'settings') {
+    navigateToView('signup-next');
+  }
 });
 
 // Simplified function to update Linux installation instructions
@@ -218,6 +247,41 @@ function updateScreenCaptureCheckbox(hasPermission) {
   }
 }
 
+// Function to update windows checkbox in settings
+function updateWindowsCheckbox(hasPermission) {
+  const checkbox = document.getElementById('windowsCheckbox');
+  if (!checkbox) return;
+  
+  const toggleLabel = checkbox.closest('.toggle');
+  
+  try {
+    // Show checked when we have permission; unchecked when not.
+    checkbox.checked = !!hasPermission;
+    
+    if (!hasPermission) {
+      // Permission missing: enable toggle and make it look clickable
+      checkbox.disabled = false;
+      if (toggleLabel) {
+        // Rely on CSS for visuals; reset any inline styles from prior state
+        toggleLabel.style.opacity = '';
+        toggleLabel.style.cursor = 'pointer';
+        toggleLabel.title = 'Grant active applications permission';
+      }
+    } else {
+      // Permission granted: disable toggle and use CSS-driven disabled visuals
+      checkbox.disabled = true;
+      if (toggleLabel) {
+        // Reset inline opacity to ensure consistent color with other toggles
+        toggleLabel.style.opacity = '';
+        toggleLabel.style.cursor = 'not-allowed';
+        toggleLabel.title = 'Active applications enabled (managed by system)';
+      }
+    }
+  } catch (error) {
+    console.error('Error updating windows checkbox:', error);
+  }
+}
+
 // Set up screen capture checkbox behavior
 function setupScreenCaptureCheckboxBehavior() {
   const checkbox = document.getElementById('screenCheckbox');
@@ -253,6 +317,95 @@ function setupScreenCaptureCheckboxBehavior() {
       ipcRenderer.send("requestScreenCapturePermission");
     });
   }
+}
+
+// Set up windows checkbox behavior
+function setupWindowsCheckboxBehavior() {
+  const checkbox = document.getElementById('windowsCheckbox');
+  if (!checkbox) return;
+  
+  const toggleLabel = checkbox.closest('.toggle');
+
+  // When user clicks the toggle area, open system settings
+  if (toggleLabel) {
+    toggleLabel.addEventListener('click', (e) => {
+      if (!hasWindowsPermission()) {
+        e.preventDefault();
+        e.stopPropagation();
+        // Log and request permission via system settings
+        logAnalyticsEvent('windows_capture_requested', {
+          status: 'requested',
+          platform: process.platform
+        });
+        ipcRenderer.send('requestWindowsPermission');
+      }
+      // When permission exists, the toggle is disabled so clicks are ignored
+    });
+  }
+}
+
+// Set up audio checkbox behavior
+function setupAudioCheckboxBehavior() {
+  const checkbox = document.getElementById('audioCheckbox');
+  if (!checkbox) return;
+
+  const handleCheckboxChange = async (isChecked) => {
+    const originalValue = checkbox.checked;
+
+    if (isChecked) {
+      // Revert checkbox state immediately - will be re-enabled by permission listener if granted
+      checkbox.checked = false;
+      // Request permission and wait for the result
+      requestAudioPermission();
+    } else {
+      // If turning OFF, update setting immediately - no permission needed
+      try {
+        // Dispatch custom event to notify settings.js to save the state
+        document.dispatchEvent(new CustomEvent('permissionResult', {
+          detail: { type: 'audio', hasPermission: false }
+        }));
+      } catch (error) {
+        // Revert UI on error
+        checkbox.checked = originalValue;
+      }
+    }
+  };
+
+  checkbox.addEventListener('change', () => {
+    handleCheckboxChange(checkbox.checked);
+  });
+}
+
+// Set up keystrokes checkbox behavior
+function setupKeystrokesCheckboxBehavior() {
+  const checkbox = document.getElementById('keystrokesCheckbox');
+  if (!checkbox) return;
+
+  const handleCheckboxChange = async (isChecked) => {
+    const originalValue = checkbox.checked;
+
+    if (isChecked) {
+      // Revert checkbox state immediately - will be re-enabled by permission listener if granted
+      checkbox.checked = false;
+      // Request permission and wait for the result
+      requestKeystrokesPermission();
+    } else {
+      // If turning OFF, update setting immediately - no permission needed
+      try {
+        // Dispatch custom event to notify settings.js to save the state
+        document.dispatchEvent(new CustomEvent('permissionResult', {
+          detail: { type: 'keystrokes', hasPermission: false }
+        }));
+      } catch (error) {
+        // Revert UI on error
+        checkbox.checked = originalValue;
+      }
+    }
+  };
+
+  checkbox.addEventListener('change', () => {
+    handleCheckboxChange(checkbox.checked);
+  });
 }
 
 // Functions to request permissions for each capture type

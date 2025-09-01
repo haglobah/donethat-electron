@@ -15,6 +15,7 @@ const { initializeAnalytics, trackPageView } = require('./analytics.js');
 const { routeLink } = require('./link-router.js');
 const { 
   hasScreenCapturePermission,
+  hasWindowsPermission,
   updateStoreScreenshots,
   updateCurrentView,
   getCurrentView,
@@ -99,7 +100,7 @@ function navigateToView(viewName) {
     // If not authenticated, always go to signin
     if (!isAuthenticated()) {
       viewName = 'signin';
-    } else if (!hasScreenCapturePermission()) {
+    } else if (!hasScreenCapturePermission() || !hasWindowsPermission()) {
       viewName = 'settings';
     } else {
       viewName = 'dashboard';
@@ -146,8 +147,8 @@ function navigateToView(viewName) {
     const appTopbar = document.getElementById('appTopbar');
     const isAuthScreen = (viewName === 'signin' || viewName === 'signup' || viewName === 'reset');
     if (appTopbar) {
-      // Hide the entire topbar on auth screens or when screen permission is missing
-      const shouldHideTopbar = isAuthScreen || !hasScreenCapturePermission();
+      // Hide the entire topbar on auth screens or when screen permission or windows permission is missing
+      const shouldHideTopbar = isAuthScreen || !hasScreenCapturePermission() || !hasWindowsPermission();
       if (shouldHideTopbar) appTopbar.classList.add('hidden');
       else appTopbar.classList.remove('hidden');
     }
@@ -677,6 +678,20 @@ function hideBlockingSpinner() {
   }
 }
 
+// Function to update topbar visibility based on permissions
+function updateTopbarVisibility() {
+  const appTopbar = document.getElementById('appTopbar');
+  const currentView = getCurrentView();
+  const isAuthScreen = (currentView === 'signin' || currentView === 'signup' || currentView === 'reset');
+  
+  if (appTopbar) {
+    // Hide the entire topbar on auth screens or when screen permission or windows permission is missing
+    const shouldHideTopbar = isAuthScreen || !hasScreenCapturePermission() || !hasWindowsPermission();
+    if (shouldHideTopbar) appTopbar.classList.add('hidden');
+    else appTopbar.classList.remove('hidden');
+  }
+}
+
 // Add IPC listener for navigation
 ipcRenderer.on('navigate', (event, viewName) => {
   navigateToView(viewName);
@@ -698,3 +713,8 @@ ipcRenderer.on('router:open-link', (event, url) => {
 
 // Initialize centralized chat (state-managed)
 initializeChat();
+
+// Export functions for use in other modules
+module.exports = {
+  updateTopbarVisibility
+};

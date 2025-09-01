@@ -4,8 +4,8 @@ const { httpsCallable } = require("firebase/functions");
 const { firebaseApp, functions } = require("./firebase.js");
 const { logAnalyticsEvent } = require('./analytics.js');
 const { ipcRenderer } = require("electron");
-const { updateIsPublic, hasScreenCapturePermission } = require('./app-state.js');
-const { requestAudioPermission, requestKeystrokesPermission, requestWindowsPermission } = require('./permissions.js');
+const { updateIsPublic } = require('./app-state.js');
+
 const { refreshAuthToken } = require('./auth.js');
 const os = require('os');
 const packageInfo = require('../package.json');
@@ -82,17 +82,12 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   
   // Set up version click handler
   setupVersionClickHandler();
-  // Setup workday click handler
-  setupWorkdayClickHandler();
-  // Set up event listeners for new checkboxes
-  setupInputDataCheckboxListeners();
   // Set up permission result listener
   setupPermissionResultListener();
   // Note: Screen capture toggle behavior is now handled in permissions.js
   // Set up listener for disable-capture-features message
   setupDisableCaptureListener();
-  // Set up work hours change listeners
-  setupWorkhoursChangeListeners();
+
   // Set up Gemini API key listeners
   setupGeminiApiKeyListeners();
   // Set up dependency: disable screenshots in meetings requires microphone enabled
@@ -285,21 +280,6 @@ async function saveUserSettings(type, value) {
         type: 'screenshots',
         enabled: value
       });
-    } else if (type === 'workdays') {
-      settingsData.workdays = value;
-      workdays = value; // Update local state immediately
-      logAnalyticsEvent('settings_updated', {
-        type: 'workdays',
-        days: value.join(',') // Log the selected days
-      });
-    } else if (type === 'workhours') {
-      settingsData.workhours = value;
-      workhours = value; // Update local state
-      logAnalyticsEvent('settings_updated', {
-        type: 'workhours',
-        start: value.start,
-        end: value.end
-      });
     } else if (type === 'inputData') { // Renamed type
       settingsData.inputData = value; // Use inputData
       logAnalyticsEvent('settings_updated', {
@@ -360,16 +340,6 @@ async function saveUserSettings(type, value) {
     }
 
     await updateUserSettingsFunction(settingsData);
-
-    // If save was successful, *now* send the update to main process for workdays
-    if (type === 'workdays') {
-      ipcRenderer.send('updateWorkdays', value);
-    }
-
-    // Send workhours to main process if needed
-    if (type === 'workhours') {
-      ipcRenderer.send('updateWorkhours', value);
-    }
 
   } catch (error) {
     logAnalyticsEvent('settings_update_error', {
@@ -444,11 +414,7 @@ async function updateSettingsUI(settings) {
     workhours = { start: "09:00", end: "17:00" };
   }
   
-  // Update workhours inputs
-  const workhoursStartInput = document.getElementById('workhoursStart');
-  const workhoursEndInput = document.getElementById('workhoursEnd');
-  if (workhoursStartInput) workhoursStartInput.value = workhours.start;
-  if (workhoursEndInput) workhoursEndInput.value = workhours.end;
+
   
   // Send workhours to main process
   ipcRenderer.send('updateWorkhours', workhours);
@@ -493,174 +459,12 @@ async function updateSettingsUI(settings) {
   // Assign to module state AFTER processing
   workdays = loadedWorkdays;
 
-  // Render the selectors
-  renderWorkdaySelectors();
-
   // Send initial workdays to main process
   ipcRenderer.send('updateWorkdays', workdays);
 
   // Handle isPublic setting
   if (typeof settings?.isPublic === 'boolean') {
     updateIsPublic(settings.isPublic);
-  }
-}
-
-// Function to render workday selectors
-function renderWorkdaySelectors() {
-  const container = document.getElementById('workdaysContainer');
-  if (!container) return;
-
-  container.innerHTML = ''; // Clear existing buttons
-
-  const firstDay = getFirstDayOfWeek(); // 0 for Sunday, 1 for Monday
-  const dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S']; // Sun-Sat
-
-  for (let i = 0; i < 7; i++) {
-    const dayIndex = (firstDay + i) % 7; // The actual day number (0-6)
-    const button = document.createElement('button');
-    button.className = 'workday-selector flex-1 py-1 text-xs rounded border cursor-pointer'; // Base classes
-    button.textContent = dayLabels[dayIndex];
-    button.setAttribute('data-day', dayIndex.toString());
-
-    if (workdays.includes(dayIndex)) {
-      // Active state: Light gray background, dark gray text
-      button.classList.add('bg-gray-200', 'text-gray-700', 'border-gray-300', 'hover:bg-gray-300');
-      button.classList.remove('bg-white', 'text-gray-400', 'border-gray-200', 'hover:bg-gray-100');
-    } else {
-      // Inactive state: White background, light gray text
-      button.classList.add('bg-white', 'text-gray-400', 'border-gray-200', 'hover:bg-gray-100');
-      button.classList.remove('bg-gray-200', 'text-gray-700', 'border-gray-300', 'hover:bg-gray-300');
-    }
-    container.appendChild(button);
-  }
-}
-
-// Helper function to get the first day of the week based on locale
-function getFirstDayOfWeek() {
-  try {
-    // Use Intl.Locale if available (modern browsers/Node versions)
-    if (typeof Intl !== 'undefined' && typeof Intl.Locale !== 'undefined') {
-      // Use navigator.language for renderer process locale
-      const locale = new Intl.Locale(navigator.language);
-      // weekInfo is experimental but widely supported
-      if (locale.weekInfo && typeof locale.weekInfo.firstDay === 'number') {
-        // Intl.Locale returns 1 for Monday, 7 for Sunday. Convert Sunday to 0.
-        return locale.weekInfo.firstDay % 7;
-      }
-    }
-  } catch (e) {
-    console.warn("Could not determine locale's first day of week, defaulting to Monday:", e);
-  }
-  // Default to Monday (1) if Intl.Locale is unavailable or doesn't provide weekInfo
-  return 1;
-}
-
-// Set up click handler for workday selectors using event delegation
-function setupWorkdayClickHandler() {
-  const container = document.getElementById('workdaysContainer');
-  if (container) {
-    container.addEventListener('click', async (e) => {
-      if (e.target && e.target.classList.contains('workday-selector')) {
-        const dayIndex = parseInt(e.target.getAttribute('data-day'), 10);
-        if (isNaN(dayIndex)) return;
-
-        const originalWorkdays = [...workdays]; // Backup
-
-        // Toggle the day
-        let newWorkdays;
-        if (workdays.includes(dayIndex)) {
-          newWorkdays = workdays.filter(d => d !== dayIndex);
-        } else {
-          newWorkdays = [...workdays, dayIndex].sort((a, b) => a - b);
-        }
-
-        // Optimistically update UI
-        workdays = newWorkdays;
-        renderWorkdaySelectors();
-
-        try {
-          await saveUserSettings('workdays', newWorkdays);
-          // If save successful, UI is already updated.
-        } catch (error) {
-          // Revert UI on error
-          workdays = originalWorkdays;
-          renderWorkdaySelectors();
-          // Error already alerted in saveUserSettings
-        }
-      }
-    });
-  }
-}
-
-function setupInputDataCheckboxListeners() {
-  const windowsCheckbox = document.getElementById('windowsCheckbox');
-  const keystrokesCheckbox = document.getElementById('keystrokesCheckbox');
-  const audioCheckbox = document.getElementById('audioCheckbox');
-
-  const handleCheckboxChange = async (checkboxId, fieldName, permissionFunction) => {
-    const checkbox = document.getElementById(checkboxId);
-    if (!checkbox) return;
-
-    const isChecked = checkbox.checked;
-    const originalValue = inputData[fieldName];
-
-    if (isChecked) {
-      // Revert checkbox state immediately - will be re-enabled by permission listener if granted
-      checkbox.checked = false;
-      // If turning ON, only request permission and wait for the result
-      // The permissionResult event listener will handle enabling if granted
-      permissionFunction();
-      
-
-    } else {
-      // If turning OFF, update setting immediately - no permission needed
-      inputData[fieldName] = false;
-      
-      try {
-        await saveUserSettings('inputData', inputData);
-        
-        // Send updated input data to main process
-        ipcRenderer.send('updateInputDataSettings', inputData);
-      } catch (error) {
-        // Revert UI and state on error
-        inputData[fieldName] = originalValue;
-        checkbox.checked = originalValue;
-      }
-    }
-  };
-
-  if (windowsCheckbox) {
-    // Make windows (active applications) non-revokable via UI. Allow enabling through permission flow,
-    // but prevent turning off directly; will be turned off only if permission is lost.
-    windowsCheckbox.addEventListener('change', (e) => {
-      if (windowsCheckbox.checked) {
-        handleCheckboxChange('windowsCheckbox', 'windows', requestWindowsPermission);
-      } else {
-        // Prevent turning off via UI
-        e.preventDefault();
-        windowsCheckbox.checked = true;
-      }
-    });
-  }
-  
-  if (keystrokesCheckbox) {
-    keystrokesCheckbox.addEventListener('change', () => {
-      if (keystrokesCheckbox.checked) {
-        handleCheckboxChange('keystrokesCheckbox', 'keystrokes', requestKeystrokesPermission);
-      } else {
-        handleCheckboxChange('keystrokesCheckbox', 'keystrokes', () => {});
-      }
-    });
-  }
-  
-  if (audioCheckbox) {
-    audioCheckbox.addEventListener('change', () => {
-      if (audioCheckbox.checked) {
-        handleCheckboxChange('audioCheckbox', 'audio', requestAudioPermission);
-      } else {
-        handleCheckboxChange('audioCheckbox', 'audio', () => {});
-      }
-    });
   }
 }
 
@@ -714,55 +518,7 @@ function recomputeMeetingScreenshotsDependency() {
   }
 }
 
-// Set up listeners for workhours inputs
-function setupWorkhoursChangeListeners() {
-  const workhoursStartInput = document.getElementById('workhoursStart');
-  const workhoursEndInput = document.getElementById('workhoursEnd');
-  
-  if (workhoursStartInput) {
-    workhoursStartInput.addEventListener('blur', async (e) => {
-      const newStart = e.target.value;
-      const originalStart = workhours.start;
-      
-      // Only proceed if value has changed
-      if (newStart === originalStart) return;
-      
-      try {
-        // Update local state
-        workhours = { ...workhours, start: newStart };
-        
-        // Save to server
-        await saveUserSettings('workhours', workhours);
-      } catch (error) {
-        // Revert on error
-        workhours.start = originalStart;
-        e.target.value = originalStart;
-      }
-    });
-  }
-  
-  if (workhoursEndInput) {
-    workhoursEndInput.addEventListener('blur', async (e) => {
-      const newEnd = e.target.value;
-      const originalEnd = workhours.end;
-      
-      // Only proceed if value has changed
-      if (newEnd === originalEnd) return;
-      
-      try {
-        // Update local state
-        workhours = { ...workhours, end: newEnd };
-        
-        // Save to server
-        await saveUserSettings('workhours', workhours);
-      } catch (error) {
-        // Revert on error
-        workhours.end = originalEnd;
-        e.target.value = originalEnd;
-      }
-    });
-  }
-}
+
 
 // Set up Gemini API key listeners
 function setupGeminiApiKeyListeners() {
