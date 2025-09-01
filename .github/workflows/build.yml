@@ -98,7 +98,7 @@ jobs:
           
       - name: Setup DigiCert code signing for Windows
         if: matrix.platform == 'win'
-        uses: digicert/ssm-code-signing@v1.0.0
+        uses: digicert/ssm-code-signing@v1.1.1
         
       - name: Setup DigiCert certificate and environment variables
         if: matrix.platform == 'win'
