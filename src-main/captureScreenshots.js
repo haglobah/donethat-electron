@@ -1,4 +1,4 @@
-const { desktopCapturer, nativeImage, screen } = require('electron')
+const { desktopCapturer, nativeImage, screen, ipcMain, shell, app } = require('electron')
 const { execSync } = require('child_process')
 const path = require('path')
 const log = require('electron-log')
@@ -464,11 +464,52 @@ async function processScreenshotForUpload(dataUrl) {
   }
 }
 
+// Initialize screen capture permission handling
+function initScreenCapturePermissionHandling(mainWindow, stateManager, checkAndAdjustRecording, sendOverlayState) {
+  ipcMain.on('requestScreenCapturePermission', async () => {
+    // On macOS this would open System Preferences > Security & Privacy > Screen Recording
+    // On Windows there isn't a direct way to open system settings for this
+    if (process.platform === 'darwin') {
+      // macOS
+      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+    } else if (process.platform === 'win32') {
+      // Windows - open general privacy settings
+      shell.openExternal('ms-settings:privacy')
+    } else {
+      // Linux or other platforms
+    }
+
+    // After opening settings, we should check permission again when app regains focus
+    const focusListener = async () => {
+      // Remove listener immediately to prevent multiple triggers
+      app.removeListener('browser-window-focus', focusListener);
+
+      const oldPermission = stateManager?.hasScreenCapturePermission();
+      const hasPermission = await checkScreenCapturePermission();
+      stateManager?.updateScreenCapturePermission(hasPermission);
+
+      if (stateManager?.hasScreenCapturePermission() !== oldPermission && mainWindow) { // Check if permission *changed*
+        mainWindow.webContents.send('screenCapturePermission', {
+          hasPermission: stateManager?.hasScreenCapturePermission(),
+          isWaylandSession: stateManager?.isWaylandSession()
+        });
+
+        // Re-evaluate recording state based on permission change
+        if (checkAndAdjustRecording) checkAndAdjustRecording();
+        if (sendOverlayState) sendOverlayState();
+      }
+    };
+    
+    app.on('browser-window-focus', focusListener);
+  });
+}
+
 module.exports = {
   captureScreenshot,
   checkScreenCapturePermission,
   getWaylandStatus: () => isWaylandSession,
   getPreviousScreenshots,
   saveCurrentScreenshot,
-  PREVIOUS_SCREENSHOT_SCALE_FACTOR
+  PREVIOUS_SCREENSHOT_SCALE_FACTOR,
+  initScreenCapturePermissionHandling
 } 

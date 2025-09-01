@@ -124,6 +124,8 @@ async function initState(options = {}) {
       pauseUntilNextWorkPeriod,
       updateWaylandStatus,
       updateScreenCapturePermission,
+      updateWindowsPermission,
+      hasWindowsPermission: getWindowsPermission,
       updateUserStatus,
       getUserWorkdays: () => userWorkdays,
       getUserWorkhours: () => userWorkhours,
@@ -582,6 +584,19 @@ function updateScreenCapturePermission(permission) {
   hasScreenCapturePermission = permission;
 }
 
+// Windows permission state
+let hasWindowsPermission = false;
+
+// Update Windows permission status
+function updateWindowsPermission(permission) {
+  hasWindowsPermission = permission;
+}
+
+// Get Windows permission status
+function getWindowsPermission() {
+  return hasWindowsPermission;
+}
+
 // Update user status
 function updateUserStatus(status) {
   userStatus = status;
@@ -1023,6 +1038,8 @@ module.exports = {
   loadSummaryTimestamp,
   updateWaylandStatus,
   updateScreenCapturePermission,
+  updateWindowsPermission,
+  hasWindowsPermission: getWindowsPermission,
   setupIPCHandlers,
   cleanupOnQuit,
   setIdToken,

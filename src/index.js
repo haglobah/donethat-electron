@@ -3,13 +3,12 @@ const {
   onIdTokenChanged,
 } = require("firebase/auth");
 const { ipcRenderer } = require('electron');
-const { shell } = require('electron');
 
 const { auth } = require('./firebase.js');
 
 const { initializeSettings, loadUserSettings } = require('./settings.js');
 const { initializeAuth } = require('./auth.js');
-const { initializeDashboard, resetSummaryState, refreshDashboardNotes } = require('./dashboard.js');
+const { initializeDashboard, resetSummaryState } = require('./dashboard.js');
 const { initializePermissions } = require('./permissions.js');
 const { initializeAnalytics, trackPageView } = require('./analytics.js');
 const { routeLink } = require('./link-router.js');
@@ -20,6 +19,7 @@ const {
   updateCurrentView,
   getCurrentView,
   isAuthenticated,
+  hasValidAccess,
   updatePauseState,
   updateDateCreated,
   initializeChat,
@@ -184,9 +184,6 @@ async function loadUserSettingsCallback() {
       return; // Exit if no result (user not logged in)
     }
     
-    // Check if user has any active teams
-    const teams = result.data?.teams || {};
-    
     // Use the status directly from settings - backend should send the correct status
     const userStatus = result.data?.status || 'inactive';
 
@@ -204,9 +201,6 @@ async function loadUserSettingsCallback() {
     
     // Update app-state with the initial value
     updatePauseState(initialIsPaused);
-
-    // Refresh dashboard notes now that state is loaded
-    refreshDashboardNotes();
 
     // Only navigate if we're not already in the settings view
     if (getCurrentView() !== 'settings') {
@@ -294,7 +288,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeAuth(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   initializeDashboard(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   initializeSettings(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
-  initializePermissions(navigateToView, getCurrentView);
+  initializePermissions(navigateToView, getCurrentView, updateTopbarVisibility);
   initializeAnalytics();
 
   // Grab the portal webview if present
@@ -336,8 +330,11 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {}
     
     openChatBtn.addEventListener('click', () => {
-      // Only allow chat if authenticated
+      // Only allow chat if authenticated and has valid access
       if (!isAuthenticated()) {
+        return;
+      }
+      if (!hasValidAccess()) {
         return;
       }
       try { ipcRenderer.send('overlay:toggle'); } catch (e) {}
@@ -386,18 +383,22 @@ document.addEventListener('DOMContentLoaded', () => {
     else recordingMenu.classList.toggle('hidden');
   }
 
-  // Enable/disable menu entries based on pause state
+  // Enable/disable menu entries based on pause state and valid access
   function updateRecordingMenuState(isPaused) {
     if (!recordingMenu) return;
-    // Disable resume when already recording; disable pause durations when paused
+    
+    // Check if user has valid access
+    const userHasValidAccess = hasValidAccess();
+    
+    // Disable all recording controls if user doesn't have valid access
     recordingMenu.querySelectorAll('[data-pause]')?.forEach(el => {
-      if (isPaused) el.classList.add('disabled'); else el.classList.remove('disabled');
+      if (isPaused || !userHasValidAccess) el.classList.add('disabled'); else el.classList.remove('disabled');
     });
     if (resumeNowBtn) {
-      if (isPaused) resumeNowBtn.classList.remove('disabled'); else resumeNowBtn.classList.add('disabled');
+      if (isPaused && userHasValidAccess) resumeNowBtn.classList.remove('disabled'); else resumeNowBtn.classList.add('disabled');
     }
     if (pauseTodayBtn) {
-      if (isPaused) pauseTodayBtn.classList.add('disabled'); else pauseTodayBtn.classList.remove('disabled');
+      if (isPaused || !userHasValidAccess) pauseTodayBtn.classList.add('disabled'); else pauseTodayBtn.classList.remove('disabled');
     }
   }
 
@@ -411,13 +412,35 @@ document.addEventListener('DOMContentLoaded', () => {
   // Pause durations
   recordingMenu?.querySelectorAll('[data-pause]')?.forEach(btn => {
     btn.addEventListener('click', () => {
+      // Check if user has valid access before allowing pause
+      if (!hasValidAccess()) {
+        return;
+      }
       const ms = Number(btn.getAttribute('data-pause')) || 0;
       if (ms > 0) ipcRenderer.send('pauseForMs', ms);
       toggleRecordingMenu(false);
     });
   });
-  pauseTodayBtn?.addEventListener('click', () => { if (!pauseTodayBtn.classList.contains('disabled')) { ipcRenderer.send('pauseForToday'); toggleRecordingMenu(false); } });
-  resumeNowBtn?.addEventListener('click', () => { if (!resumeNowBtn.classList.contains('disabled')) { ipcRenderer.send('resumeRecording'); toggleRecordingMenu(false); } });
+  pauseTodayBtn?.addEventListener('click', () => { 
+    // Check if user has valid access before allowing pause
+    if (!hasValidAccess()) {
+      return;
+    }
+    if (!pauseTodayBtn.classList.contains('disabled')) { 
+      ipcRenderer.send('pauseForToday'); 
+      toggleRecordingMenu(false); 
+    } 
+  });
+  resumeNowBtn?.addEventListener('click', () => { 
+    // Check if user has valid access before allowing resume
+    if (!hasValidAccess()) {
+      return;
+    }
+    if (!resumeNowBtn.classList.contains('disabled')) { 
+      ipcRenderer.send('resumeRecording'); 
+      toggleRecordingMenu(false); 
+    } 
+  });
 
   // Update recording icon on pause/resume changes
   function setRecordingIcon(isPaused) {

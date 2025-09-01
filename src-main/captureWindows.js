@@ -1,6 +1,6 @@
 const log = require('electron-log')
 const { activeWindow } = require('get-windows')
-const { systemPreferences } = require('electron')
+const { systemPreferences, ipcMain, shell, app } = require('electron')
 
 // Track active windows
 let isTracking = false
@@ -324,6 +324,52 @@ function getCurrentInterval() {
   return currentTrackingIntervalMs;
 }
 
+// Initialize Windows permission handling
+function initWindowsPermissionHandling(mainWindow, stateManager, checkAndAdjustRecording, sendOverlayState) {
+  ipcMain.on('requestWindowsPermission', async (event, shouldOpenSettings = true) => {
+    // Only open system settings if explicitly requested (user clicked toggle)
+    if (shouldOpenSettings) {
+      if (process.platform === 'darwin') {
+        // macOS
+        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility')
+      } else if (process.platform === 'win32') {
+        // Windows - open general privacy settings
+        shell.openExternal('ms-settings:privacy')
+      } else {
+        // Linux or other platforms
+      }
+
+      // After opening settings, we should check permission again when app regains focus
+      const focusListener = async () => {
+        // Remove listener immediately to prevent multiple triggers
+        app.removeListener('browser-window-focus', focusListener);
+
+        const oldPermission = stateManager?.hasWindowsPermission();
+        const hasPermission = await checkPermissions();
+        stateManager?.updateWindowsPermission(hasPermission);
+
+        if (stateManager?.hasWindowsPermission() !== oldPermission && mainWindow) { // Check if permission *changed*
+          mainWindow.webContents.send('windowsPermission', hasPermission);
+
+          // Re-evaluate recording state based on permission change
+          if (checkAndAdjustRecording) checkAndAdjustRecording();
+          if (sendOverlayState) sendOverlayState();
+        }
+      };
+      
+      app.on('browser-window-focus', focusListener);
+    } else {
+      // Just check permission without opening settings
+      const hasPermission = await checkPermissions();
+      stateManager?.updateWindowsPermission(hasPermission);
+      
+      if (mainWindow) {
+        mainWindow.webContents.send('windowsPermission', hasPermission);
+      }
+    }
+  });
+}
+
 module.exports = {
   startTracking,
   stopTracking,
@@ -332,5 +378,6 @@ module.exports = {
   clearTimeline,
   processTimelineData,
   isTracking: isTrackingActive,
-  getCurrentInterval
+  getCurrentInterval,
+  initWindowsPermissionHandling
 } 

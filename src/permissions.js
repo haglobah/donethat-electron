@@ -1,17 +1,18 @@
 const { ipcRenderer } = require("electron");
 const { updateScreenCapturePermission, updateWindowsPermission, hasScreenCapturePermission, hasWindowsPermission } = require('./app-state.js');
 const { logAnalyticsEvent } = require('./analytics.js');
-const { updateTopbarVisibility } = require('./index.js');
 
 const openSettingsBtn = document.getElementById("openSettingsBtn");
 
 let navigateToView;
 let getCurrentView;
+let updateTopbarVisibility;
 
 // Initialize permissions module
-function initializePermissions(viewNavigator, currentViewGetter) {
+function initializePermissions(viewNavigator, currentViewGetter, topbarVisibilityUpdater) {
   navigateToView = viewNavigator;
   getCurrentView = currentViewGetter;
+  updateTopbarVisibility = topbarVisibilityUpdater;
   
   // Set up event listeners for platform-specific permission issues
   setupPlatformSpecificListeners();
@@ -27,6 +28,19 @@ function initializePermissions(viewNavigator, currentViewGetter) {
   
   // Set up keystrokes checkbox behavior
   setupKeystrokesCheckboxBehavior();
+  
+  // Check permissions on startup
+  checkPermissionsOnStartup();
+}
+
+// Check all permissions on startup to update state
+function checkPermissionsOnStartup() {
+  
+  // Check Windows permission (don't open settings, just check current status)
+  ipcRenderer.send('requestWindowsPermission', false);
+  
+  // Check other permissions as needed
+  // (Audio and keystrokes might need different handling)
 }
 
 // Set up event listeners for platform-specific permission troubleshooting
@@ -129,7 +143,7 @@ ipcRenderer.on('screenCapturePermission', (event, data) => {
     updateScreenCaptureCheckbox(hasPermission);
     
     // Update topbar visibility
-    updateTopbarVisibility();
+    if (updateTopbarVisibility) updateTopbarVisibility();
     
     // Only navigate if we're not already on settings view
     const currentView = getCurrentView ? getCurrentView() : null;
@@ -179,7 +193,7 @@ ipcRenderer.on('windowsPermission', (event, hasPermission) => {
   }));
   
   // Update topbar visibility
-  updateTopbarVisibility();
+  if (updateTopbarVisibility) updateTopbarVisibility();
   
   // Only navigate if we're not already on settings view
   const currentView = getCurrentView ? getCurrentView() : null;

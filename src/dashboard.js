@@ -11,7 +11,6 @@ const saveFinalSummaryFunction = httpsCallable(functions, "saveFinalSummary");
 
 // Reference to permission-related elements 
 const generateSummaryBtn = document.getElementById("generateSummaryBtn");
-const summaryContainer = document.getElementById("summaryContainer");
 let currentSummaryId = null;
 const summaryLoadingSpinner = document.getElementById("summaryLoadingSpinner");
 
@@ -109,61 +108,7 @@ function hideSummaryOverlay() {
   }
 }
   
-  // Function to handle all dashboard note operations
-  function dashboardNote(extraNotes = []) {
-    const notes = [];
-    
-    // Check if app is paused
-    if (getIsPaused()) {
-      notes.push({
-        text: 'DoneThat is paused. <a href="#" class="resume-link">Resume recording</a>.',
-        isWarning: true
-      });
-    }
-
-    // Add any extra notes
-    notes.push(...extraNotes);
-
-    // Only add default note if no other notes exist
-    if (notes.length === 0) {
-      notes.push({
-        text: "Summaries always show work you did since the last summary.",
-        isWarning: false
-      });
-      notes.push({
-        text: "Generate one once you're done for the day.",
-        isWarning: false
-      });
-    }
-
-    // Render the notes
-    const notesHTML = notes.map(note => `
-      <p class="dashboard-note ${note.isWarning ? 'text-gray-900' : 'text-gray-500'} text-center text-sm">
-        ${note.text}
-      </p>
-    `).join('');
-
-    const summaryContainer = document.getElementById('summaryContainer');
-    if (summaryContainer) {
-      summaryContainer.innerHTML = notesHTML;
-
-      // Add event listeners for links
-      document.querySelectorAll('.resume-link').forEach(link => {
-        link.addEventListener('click', (e) => {
-          e.preventDefault();
-          resumeRecording();
-        });
-      });
-
-      document.querySelectorAll('.settings-link').forEach(link => {
-        link.addEventListener('click', (e) => {
-          e.preventDefault();
-          const { routeLink } = require('./link-router.js');
-          routeLink('https://app.donethat.ai/feed', { source: 'dashboard' });
-        });
-      });
-    }
-  }
+  
 
   // Reset to initial state
   function resetSummaryState() {
@@ -180,8 +125,6 @@ function hideSummaryOverlay() {
     
     // Hide summary overlay
     hideSummaryOverlay();
-    
-    dashboardNote();
   }
 
   // Initialize dashboard
@@ -352,10 +295,11 @@ if (summarySubmitBtn) {
           }
 
           if (bulletPoints.length === 0) {
-            dashboardNote([{
-              text: 'No activities found for today. Check if DoneThat is paused and try again in an hour.',
-              isWarning: true
-            }]);
+             // Show notification for empty summary
+             showBanner('No activities found for today. Check if DoneThat is paused and try again in an hour.', {
+               title: 'Empty Summary',
+               sticky: false
+             });
             logAnalyticsEvent('summary_generated', {
               status: 'empty',
               bullet_points_count: 0
@@ -439,7 +383,12 @@ if (summarySubmitBtn) {
         .catch((error) => {
           summaryLoadingSpinner.classList.add('hidden');
           console.error("Error generating summary:", error);
-          summaryContainer.innerHTML = `<p class="empty-state-text">Error: ${error.message}</p>`;
+          
+          // Show error notification instead of just logging
+          showBanner(error.message || 'Failed to generate summary', {
+            title: 'Finish Day Error',
+            sticky: false
+          });
           
           // Log error in summary generation
           logAnalyticsEvent('summary_generated', {
@@ -462,14 +411,18 @@ function resumeRecording() {
 ipcRenderer.on('pauseStateChanged', () => {
   // Add a small delay back to ensure app state is updated first
   setTimeout(() => {
-    dashboardNote();
+    // Check if app is paused and show notification if so
+    if (getIsPaused()) {
+             showBanner('DoneThat is paused and not recording your work', {
+         title: 'Recording Paused',
+         sticky: true,
+         action: { label: 'Resume Recording', channel: 'resumeRecording' }
+       });
+    }
   }, 100);
 });
 
-// Add a function to explicitly refresh notes
-function refreshDashboardNotes() {
-  dashboardNote();
-}
+
 
 // Function to render existing custom bullets
 function renderCustomBullets() {
@@ -514,4 +467,4 @@ function renderCustomBullets() {
   });
 }
 
-module.exports = { initializeDashboard, resetSummaryState, refreshDashboardNotes };
+ module.exports = { initializeDashboard, resetSummaryState };

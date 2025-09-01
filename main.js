@@ -9,11 +9,14 @@ const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
 const {
   checkScreenCapturePermission: moduleCheckPermission,
-  getWaylandStatus
+  getWaylandStatus,
+  initScreenCapturePermissionHandling
 } = require('./src-main/captureScreenshots')
-const { 
-  startCaptureInterval, 
-  stopCaptureInterval, 
+const { initWindowsPermissionHandling } = require('./src-main/captureWindows')
+
+const {
+  startCaptureInterval,
+  stopCaptureInterval,
   isCapturing,
   setCaptureInterval,
   initCapture
@@ -518,8 +521,11 @@ app.whenReady().then(async () => {
   try {
     const ok = globalShortcut.register('CommandOrControl+Shift+D', () => {
       try {
-        // Check if user is authenticated before showing overlay
+        // Check if user is authenticated and has valid access before showing overlay
         if (!stateManager?.isAuthenticated()) {
+          return;
+        }
+        if (!stateManager?.hasValidAccess()) {
           return;
         }
         
@@ -694,7 +700,7 @@ ipcMain.on('overlay:toggle', () => {
       positionOverlayWindow();
       overlayWindow.show();
       overlayWindow.focus();
-      try { setTimeout(() => overlayWindow.webContents.send('overlay:focus-input'), 0) } catch (e) {}
+      try { setTimeout(() => overlayWindow.webContents.send('overlay:focus-input'), 0) } catch (e) { }
     }
   } catch (e) {}
 });
@@ -714,9 +720,13 @@ ipcMain.on('overlay:show', () => {
 ipcMain.on('overlay:show-if-hidden', () => {
   try {
     const isAuthenticated = stateManager?.isAuthenticated();
+    const hasValidAccess = stateManager?.hasValidAccess();
     
-    // Check if user is authenticated before showing overlay
+    // Check if user is authenticated and has valid access before showing overlay
     if (!isAuthenticated) {
+      return;
+    }
+    if (!hasValidAccess) {
       return;
     }
     
@@ -801,15 +811,26 @@ function updateTrayIcon(isActuallyRecording) {
 
   const loggedIn = stateManager?.isAuthenticated() ?? false;
   const isPaused = stateManager?.isPaused() ?? false;
-  const hasPermission = stateManager?.hasScreenCapturePermission() ?? false;
+  const hasScreenPermission = stateManager?.hasScreenCapturePermission() ?? false;
+  const hasWindowsPermission = stateManager?.hasWindowsPermission() ?? false;
   const hasValidAccess = stateManager?.hasValidAccess() ?? false;
+
+  // Show main window for authentication, account, or permission issues
+  if (!loggedIn || !hasValidAccess || !hasScreenPermission || !hasWindowsPermission) {
+    if (mainWindow && !mainWindow.isVisible()) {
+      showWindowBelowTray();
+    }
+  }
 
   if (isActuallyRecording) {
     iconPath = iconRecordingPath;
     tooltip = 'DoneThat - Recording';
-  } else if (!hasPermission) {
+  } else if (!hasScreenPermission) {
     iconPath = iconErrorPath;
     tooltip = 'DoneThat - No Screen Capture Permission';
+  } else if (!hasWindowsPermission) {
+    iconPath = iconErrorPath;
+    tooltip = 'DoneThat - No Windows Permission';
   } else if (!loggedIn) {
     iconPath = iconErrorPath;
     tooltip = 'DoneThat - Not Logged In';
@@ -866,6 +887,7 @@ function createApplicationMenu() {
   const isLoggedIn = stateManager?.isAuthenticated() ?? false;
   const isPaused = stateManager?.isPaused() ?? false;
   const hasPermission = stateManager?.hasScreenCapturePermission() ?? false;
+  const hasValidAccess = stateManager?.hasValidAccess() ?? false;
   const isMac = process.platform === 'darwin';
   
   const template = [];
@@ -907,32 +929,32 @@ function createApplicationMenu() {
       {
         label: 'Pause for 5 minutes',
         click: () => stateManager?.pauseRecording(5 * 60 * 1000, mainWindow),
-        enabled: isLoggedIn && !isPaused && hasPermission
+        enabled: isLoggedIn && !isPaused && hasPermission && hasValidAccess
       },
       {
         label: 'Pause for 15 minutes',
         click: () => stateManager?.pauseRecording(15 * 60 * 1000, mainWindow),
-        enabled: isLoggedIn && !isPaused && hasPermission
+        enabled: isLoggedIn && !isPaused && hasPermission && hasValidAccess
       },
       {
         label: 'Pause for 30 minutes',
         click: () => stateManager?.pauseRecording(30 * 60 * 1000, mainWindow),
-        enabled: isLoggedIn && !isPaused && hasPermission
+        enabled: isLoggedIn && !isPaused && hasPermission && hasValidAccess
       },
       {
         label: 'Pause for 1 hour',
         click: () => stateManager?.pauseRecording(60 * 60 * 1000, mainWindow),
-        enabled: isLoggedIn && !isPaused && hasPermission
+        enabled: isLoggedIn && !isPaused && hasPermission && hasValidAccess
       },
       {
         label: 'Pause for today',
         click: () => stateManager?.pauseUntilNextWorkPeriod(mainWindow),
-        enabled: isLoggedIn && !isPaused && hasPermission
+        enabled: isLoggedIn && !isPaused && hasPermission && hasValidAccess
       },
       {
         label: 'Resume',
         click: () => startRecording(),
-        enabled: isLoggedIn && isPaused && hasPermission
+        enabled: isLoggedIn && isPaused && hasPermission && hasValidAccess
       }
     ]
   };
@@ -1007,6 +1029,7 @@ function buildContextMenu() {
   const isLoggedIn = stateManager?.isAuthenticated() ?? false;
   const isPaused = stateManager?.isPaused() ?? false;
   const hasPermission = stateManager?.hasScreenCapturePermission() ?? false;
+  const hasValidAccess = stateManager?.hasValidAccess() ?? false;
 
   // Start with basic template
   const template = []
@@ -1015,66 +1038,69 @@ function buildContextMenu() {
   template.push({
     label: 'Open App',
     click: () => navigateToView('signup-next')
-  }, 
-  {
-    label: `Open Chat (${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+Shift+D)`,
-    enabled: isLoggedIn,
-    click: () => {
-      // Only show overlay if authenticated
-      if (!stateManager?.isAuthenticated()) {
-        return;
-      }
-      if (!overlayWindow || overlayWindow.isDestroyed()) {
-        createOverlayWindow()
-      }
-      positionOverlayWindow()
-      try { overlayWindow.show() } catch (e) {}
-      try { overlayWindow.focus() } catch (e) {}
-    }
   },
-  { type: 'separator' },
-  // Add "Open Web Portal" option
-  {
-    label: 'Open Web Portal',
-    click: () => {
-      const { shell } = require('electron');
-      shell.openExternal('https://app.donethat.ai');
-    }
-  },
-  { type: 'separator' },
-)
+    {
+      label: `Open Chat (${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+Shift+D)`,
+      enabled: isLoggedIn && hasValidAccess,
+      click: () => {
+        // Only show overlay if authenticated and has valid access
+        if (!stateManager?.isAuthenticated()) {
+          return;
+        }
+        if (!stateManager?.hasValidAccess()) {
+          return;
+        }
+        if (!overlayWindow || overlayWindow.isDestroyed()) {
+          createOverlayWindow()
+        }
+        positionOverlayWindow()
+        try { overlayWindow.show() } catch (e) { }
+        try { overlayWindow.focus() } catch (e) { }
+      }
+    },
+    { type: 'separator' },
+    // Add "Open Web Portal" option
+    {
+      label: 'Open Web Portal',
+      click: () => {
+        const { shell } = require('electron');
+        shell.openExternal('https://app.donethat.ai');
+      }
+    },
+    { type: 'separator' },
+  )
 
   // Add pause options
   template.push(
     {
       label: 'Pause for 5 minutes',
       click: () => stateManager?.pauseRecording(5 * 60 * 1000, mainWindow),
-      enabled: isLoggedIn && !isPaused && hasPermission
+      enabled: isLoggedIn && !isPaused && hasPermission && hasValidAccess
     },
     {
       label: 'Pause for 15 minutes',
       click: () => stateManager?.pauseRecording(15 * 60 * 1000, mainWindow),
-      enabled: isLoggedIn && !isPaused && hasPermission
+      enabled: isLoggedIn && !isPaused && hasPermission && hasValidAccess
     },
     {
       label: 'Pause for 30 minutes',
       click: () => stateManager?.pauseRecording(30 * 60 * 1000, mainWindow),
-      enabled: isLoggedIn && !isPaused && hasPermission
+      enabled: isLoggedIn && !isPaused && hasPermission && hasValidAccess
     },
     {
       label: 'Pause for 1 hour',
       click: () => stateManager?.pauseRecording(60 * 60 * 1000, mainWindow),
-      enabled: isLoggedIn && !isPaused && hasPermission
+      enabled: isLoggedIn && !isPaused && hasPermission && hasValidAccess
     },
     {
       label: 'Pause for today',
       click: () => stateManager?.pauseUntilNextWorkPeriod(mainWindow),
-      enabled: isLoggedIn && !isPaused && hasPermission
+      enabled: isLoggedIn && !isPaused && hasPermission && hasValidAccess
     },
     {
       label: 'Resume',
       click: () => startRecording(),
-      enabled: isLoggedIn && isPaused && hasPermission
+      enabled: isLoggedIn && isPaused && hasPermission && hasValidAccess
     }
   )
 
@@ -1209,6 +1235,10 @@ function createWindow() {
       
       // Initialize capture with auth error handler
       initCapture(mainWindow, handleCaptureAuthErrors, stateManager.getIdToken);
+
+      // Initialize permission handlers
+      initScreenCapturePermissionHandling(mainWindow, stateManager, checkAndAdjustRecording, sendOverlayState);
+      initWindowsPermissionHandling(mainWindow, stateManager, checkAndAdjustRecording, sendOverlayState);
     })
 
     // Remove macOS-specific auto-hide on blur to behave like a normal window
@@ -1340,8 +1370,8 @@ function createOverlayWindow() {
 
     overlayWindow.once('ready-to-show', () => {
       positionOverlayWindow()
-      // Only show overlay if authenticated
-      if (stateManager?.isAuthenticated()) {
+      // Only show overlay if authenticated and has valid access
+      if (stateManager?.isAuthenticated() && stateManager?.hasValidAccess()) {
         overlayWindow.showInactive()
       }
       sendOverlayState()
@@ -1497,6 +1527,10 @@ function startRecording() {
   if (!stateManager?.isAuthenticated()) {
     return;
   }
+  
+  if (!stateManager?.hasValidAccess()) {
+    return;
+  }
 
   startCaptureInterval(); // Call without token
 
@@ -1571,45 +1605,6 @@ ipcMain.on('checkScreenCapturePermission', async () => {
     });
   }
 });
-
-// Add a new IPC handler for requesting screen capture permission
-ipcMain.on('requestScreenCapturePermission', async () => {
-  // On macOS this would open System Preferences > Security & Privacy > Screen Recording
-  // On Windows there isn't a direct way to open system settings for this
-  const { shell } = require('electron')
-
-  if (process.platform === 'darwin') {
-    // macOS
-    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
-  } else if (process.platform === 'win32') {
-    // Windows - open general privacy settings
-    shell.openExternal('ms-settings:privacy')
-  } else {
-    // Linux or other platforms
-  }
-
-  // After opening settings, we should check permission again when app regains focus
-  const focusListener = async () => {
-    // Remove listener immediately to prevent multiple triggers
-    app.removeListener('browser-window-focus', focusListener);
-
-    const oldPermission = stateManager?.hasScreenCapturePermission();
-    await checkScreenCapturePermission();
-
-    if (stateManager?.hasScreenCapturePermission() !== oldPermission && mainWindow) { // Check if permission *changed*
-      mainWindow.webContents.send('screenCapturePermission', {
-        hasPermission: stateManager?.hasScreenCapturePermission(),
-        isWaylandSession: stateManager?.isWaylandSession()
-      });
-
-      // Re-evaluate recording state based on permission change
-      checkAndAdjustRecording();
-      sendOverlayState();
-    }
-  };
-  
-  app.on('browser-window-focus', focusListener);
-})
 
 /**
  * Handles authentication errors reported by the capture module
