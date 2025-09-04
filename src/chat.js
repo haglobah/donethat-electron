@@ -28,6 +28,7 @@ let includeScreenOnNextMessage = true
 const MIN_INPUT_HEIGHT = 28
 let typingTimer = null
 const TYPING_DELAY_MS = 300
+const INACTIVITY_RESET_MS = 10 * 60 * 1000
 
 // Simple UI state
 let pendingMessages = []
@@ -457,6 +458,41 @@ function animateResize(toHeight, opts = {}) {
 }
 
 
+function getLastMessageTimestamp() {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    const t = m && typeof m.ts === 'number' ? m.ts : undefined
+    if (Number.isFinite(t)) return t
+  }
+  return undefined
+}
+
+function resetChatForNewConversation() {
+  const wasEmpty = (messages.length === 0) && (pendingMessages.length === 0)
+  if (wasEmpty) {
+    return
+  }
+  messages = []
+  pendingMessages = []
+  includeScreenOnNextMessage = true
+  updateIncludeScreenBtn()
+
+  renderChat()
+  lastSentHeight = 40
+  ipcRenderer.send('overlay:resize', 40)
+  chatVisible = false
+  ipcRenderer.invoke('chat:reset').catch(() => {})
+}
+
+function maybeResetChatOnOverlayShow() {
+  const lastTs = getLastMessageTimestamp()
+  if (!Number.isFinite(lastTs)) return
+  if (Date.now() - lastTs >= INACTIVITY_RESET_MS) {
+    resetChatForNewConversation()
+  }
+}
+
+
 async function addMessageFromInput() {
   const text = input0.value.trim()
   if (!text) return
@@ -694,25 +730,15 @@ if (openAppBtn) {
 
 if (clearBtn) {
   clearBtn.addEventListener('click', () => {
-    messages = []
-    pendingMessages = []
-    // Reset screenshot state for new chat
-    includeScreenOnNextMessage = true
-    updateIncludeScreenBtn()
-    renderChat()
-    ipcRenderer.send('overlay:resize', 40)
-    chatVisible = false
-    
-    // Reset chat state in main process so next message creates a new chat
-    ipcRenderer.invoke('chat:reset').catch(error => {
-      console.error('[CHAT] Error resetting chat state:', error)
-    })
+    resetChatForNewConversation()
   })
 }
 
 // Focus input when window gains focus
 window.addEventListener('focus', () => {
   try {
+    // Run inactivity reset and focus input on window focus
+    maybeResetChatOnOverlayShow()
     input0.focus()
     const len = (input0.value || '').length
     input0.setSelectionRange(len, len)

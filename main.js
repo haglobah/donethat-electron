@@ -694,7 +694,6 @@ ipcMain.on('overlay:toggle', () => {
       positionOverlayWindow();
       overlayWindow.show();
       overlayWindow.focus();
-      try { setTimeout(() => overlayWindow.webContents.send('overlay:focus-input'), 0) } catch (e) { }
     }
   } catch (e) {}
 });
@@ -707,7 +706,6 @@ ipcMain.on('overlay:show', () => {
     positionOverlayWindow();
     overlayWindow.show();
     overlayWindow.focus();
-    try { overlayWindow.webContents.send('overlay:focus-input') } catch (e) {}
   } catch (e) {}
 });
 
@@ -749,7 +747,6 @@ ipcMain.on('overlay:show-if-hidden', () => {
         overlayWindow.show();
         overlayWindow.focus();
       }
-      try { overlayWindow.webContents.send('overlay:focus-input') } catch (e) {}
     }
   } catch (e) {
     console.error('[MAIN] Error in overlay:show-if-hidden:', e)

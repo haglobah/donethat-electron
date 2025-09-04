@@ -36,6 +36,26 @@ const state = {
   chatIpcInitialized: false
 };
 
+// Helper to parse Firestore Timestamp createdAt to millis; ignore other types
+function parseCreatedAtForTs(createdAt, docId) {
+  try {
+    if (!createdAt || typeof createdAt.toDate !== 'function') {
+      // Only Firestore Timestamp supported
+      return undefined;
+    }
+    const d = createdAt.toDate();
+    const t = d && typeof d.getTime === 'function' ? d.getTime() : undefined;
+    if (!Number.isFinite(t)) {
+      console.warn('[CHAT] createdAt.toDate() invalid for message', docId);
+      return undefined;
+    }
+    return t;
+  } catch (e) {
+    console.warn('[CHAT] Error parsing createdAt for message', docId, e);
+    return undefined;
+  }
+}
+
 // Getters
 function getState() {
   return { ...state }; // Return a copy to prevent direct mutation
@@ -153,12 +173,15 @@ function subscribeToMessages(chatId) {
   state.stopMessageListener = onSnapshot(q, (snap) => {
     const messages = snap.docs.map((d) => {
       const m = d.data() || {};
+      const ts = parseCreatedAtForTs(m.createdAt, d.id);
       return {
         id: d.id,
         // Preserve assistant role so renderer logic can react (e.g., requestScreen)
         role: m.role === 'assistant' ? 'assistant' : 'user',
         text: m.content || '',
         status: m.status || 'sent',
+        // Pass through a numeric timestamp for inactivity checks (with logging)
+        ts,
         // Pass through assistant request for next-user screenshot if present
         requestScreen: typeof m.requestScreen === 'boolean' ? m.requestScreen : undefined
       };
