@@ -153,6 +153,10 @@ function setupDisableCaptureListener() {
         console.error('Error updating settings after feature disabled:', error);
       }
     }
+
+    // After updating state and persisting, bring app to front and navigate to Settings
+    try { ipcRenderer.send('focus-app-window'); } catch (_) {}
+    try { if (navigateToView) navigateToView('settings'); } catch (_) {}
   });
 }
 
@@ -201,6 +205,12 @@ function setupPermissionResultListener() {
         checkbox.checked = false;
         inputData[type] = false;
       }
+    }
+
+    // If permission was denied, bring app to front and navigate to Settings after state persisted
+    if (!hasPermission) {
+      try { ipcRenderer.send('focus-app-window'); } catch (_) {}
+      try { if (navigateToView) navigateToView('settings'); } catch (_) {}
     }
   });
 }

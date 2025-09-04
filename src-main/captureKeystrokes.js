@@ -1,5 +1,6 @@
 const log = require('electron-log');
 const { GlobalKeyboardListener } = require('node-global-key-listener');
+const { BrowserWindow } = require('electron');
 
 // Module state
 let isTracking = false;
@@ -15,6 +16,8 @@ const MAX_KEYSTROKE_HISTORY = 1000; // Limit keystroke history to avoid memory i
  */
 async function checkPermissions() {
   try {
+    // On macOS (and other non-Linux), passively probe by attempting to create a listener.
+    // If TCC (Input Monitoring) isn't granted, this will fail and we'll disable the feature.
     // For Linux systems, try creating a listener with options to prevent pkexec errors
     if (process.platform === 'linux') {
       try {
@@ -24,12 +27,11 @@ async function checkPermissions() {
         return true;
       } catch (linuxError) {
         log.error('Linux keystroke check failed:', linuxError);
-        
-        // Send notice to renderer about Linux keystrokes permission
-        const { BrowserWindow } = require('electron');
+        // Send notice to renderer about Linux keystrokes permission and emit permission=false
         const mainWindow = BrowserWindow.getAllWindows().find(w => !w.isDestroyed());
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('linux-keystrokes-permission-notice');
+          mainWindow.webContents.send('keystrokesPermission', false);
         }
         
         // Return false to let the capture system handle disabling
@@ -43,6 +45,12 @@ async function checkPermissions() {
     return true;
   } catch (error) {
     log.error('Keystroke tracking permission check failed:', error);
+    try {
+      const mainWindow = BrowserWindow.getAllWindows().find(w => !w.isDestroyed());
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('keystrokesPermission', false);
+      }
+    } catch (_) {}
     return false;
   }
 }

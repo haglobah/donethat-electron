@@ -421,10 +421,16 @@ async function checkPermission() {
     
     // Remember the result forever
     hasMicrophonePermission = hasPermission;
+    
+    // If missing, notify renderer via permission event for consistent handling
+    if (!hasPermission && mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.send('audioPermission', false); } catch (_) {}
+    }
     return hasPermission;
   } catch (error) {
     log.error('Error checking audio permission:', error);
     hasMicrophonePermission = false;
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('audioPermission', false); } catch (_) {}
     return false;
   }
 }
