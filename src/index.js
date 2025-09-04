@@ -155,6 +155,13 @@ function navigateToView(viewName) {
     // If opening dashboard, proactively attempt login message to portal
     if (viewName === 'dashboard') {
       sendPortalLoginIfPossible();
+      // Refresh webview only when transitioning from a different view to dashboard
+      try {
+        if (currentView !== 'dashboard' && portalView) {
+          hideWebviewError();
+          portalView.reload();
+        }
+      } catch (e) { console.error('[Webview] Error reloading on navigateToView(dashboard):', e); }
     }
     // Update the current view state
     updateCurrentView(viewName);
@@ -317,6 +324,18 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('online', () => {
     hideWebviewError();
     try { if (portalView) portalView.reload(); } catch (e) { console.error('[Webview] reload on online failed', e); }
+  });
+
+  // Reload portal when app window regains focus while on dashboard (app was hidden/minimized)
+  window.addEventListener('focus', () => {
+    try {
+      if (getCurrentView && getCurrentView() === 'dashboard' && portalView) {
+        hideWebviewError();
+        portalView.reload();
+        // Also attempt to re-send auth token after focus
+        sendPortalLoginIfPossible();
+      }
+    } catch (e) { console.error('[Webview] reload on window focus failed', e); }
   });
   const openChatBtn = document.getElementById('openChatBtn');
   const openSettingsViewBtn = document.getElementById('openSettingsViewBtn');
