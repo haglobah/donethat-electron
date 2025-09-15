@@ -157,6 +157,10 @@ let savedOverlayPosition = null
 let saveOverlayPositionDebounce = null
 let overlayPositionUserSet = false
 
+// Track last time we reloaded the embedded webview to avoid excessive reloads
+const RELOAD_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+let lastWebviewReloadAt = 0;
+
 if (DEBUG) {
   // For debugging, replace console with more verbose electron-log
   const originalConsole = { ...console };
@@ -1312,6 +1316,19 @@ function createWindow() {
       }
       // Notify renderer to reload the embedded webview when app window is shown/unhidden
       try { mainWindow.webContents.send('webview:reload'); } catch (e) {}
+      // Record time of last reload
+      try { lastWebviewReloadAt = Date.now(); } catch (e) {}
+    });
+
+    // Conditionally request webview reload when the main window gains focus
+    mainWindow.on('focus', () => {
+      try {
+        const now = Date.now();
+        if (!lastWebviewReloadAt || (now - lastWebviewReloadAt) > RELOAD_MIN_INTERVAL_MS) {
+          try { mainWindow.webContents.send('webview:reload'); } catch (e) {}
+          lastWebviewReloadAt = now;
+        }
+      } catch (e) {}
     });
 
     // Hide Dock icon when main window is hidden (macOS)

@@ -300,6 +300,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Grab the portal webview if present
   portalView = document.getElementById('portalView');
+
+  // Respond to main process request to reload webview (throttled in main)
+  try {
+    ipcRenderer.on('webview:reload', () => {
+      try {
+        if (getCurrentView && getCurrentView() === 'dashboard' && portalView) {
+          hideWebviewError();
+          portalView.reload();
+          // Re-send token after reload
+          sendPortalLoginIfPossible();
+        }
+      } catch (e) { console.error('[Webview] Error reloading on IPC webview:reload:', e); }
+    });
+  } catch (e) {}
   
   // Reload webview when window opens (only once)
   if (portalView) {
@@ -326,17 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try { if (portalView) portalView.reload(); } catch (e) { console.error('[Webview] reload on online failed', e); }
   });
 
-  // Reload portal when app window regains focus while on dashboard (app was hidden/minimized)
-  window.addEventListener('focus', () => {
-    try {
-      if (getCurrentView && getCurrentView() === 'dashboard' && portalView) {
-        hideWebviewError();
-        portalView.reload();
-        // Also attempt to re-send auth token after focus
-        sendPortalLoginIfPossible();
-      }
-    } catch (e) { console.error('[Webview] reload on window focus failed', e); }
-  });
+  // Reloads on focus are coordinated via main process (webview:reload)
   const openChatBtn = document.getElementById('openChatBtn');
   const openSettingsViewBtn = document.getElementById('openSettingsViewBtn');
   
