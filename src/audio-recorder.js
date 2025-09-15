@@ -5,6 +5,20 @@ let recordingStartTime = null;
 let isRecording = false;
 let chunkTimestamps = [];
 let MAX_BUFFER_DURATION_MS;
+// Guard to prevent implicit resume after sleep; set true only when main explicitly starts
+window.allowAudioResume = false;
+
+// Helper: is our own recorder currently active
+window.isRecorderActive = function() {
+  try {
+    const active = !!(mediaRecorder && mediaRecorder.state && mediaRecorder.state !== 'inactive');
+    const tracks = (mediaRecorder && mediaRecorder.stream) ? mediaRecorder.stream.getAudioTracks() : [];
+    const trackLive = tracks && tracks.length > 0 && tracks[0].readyState === 'live' && tracks[0].enabled === true;
+    return active && trackLive;
+  } catch (_) {
+    return false;
+  }
+}
 
 /**
  * Get the best supported audio MIME type
@@ -63,6 +77,8 @@ window.startAudioRecording = async function() {
   }
   
   try {
+    
+    window.allowAudioResume = true;
     audioChunks = [];
     chunkTimestamps = [];
     
@@ -86,6 +102,14 @@ window.startAudioRecording = async function() {
     }
     
     mediaRecorder = new MediaRecorder(stream, options);
+    
+    
+    // Explicitly guard resume events (Chromium may auto-resume after sleep)
+    mediaRecorder.onresume = () => {
+      if (!window.allowAudioResume) {
+        window.shutdownAudioRecording();
+      }
+    };
     
     mediaRecorder.ondataavailable = (event) => {
       if (event.data.size > 0) {
@@ -335,10 +359,12 @@ window.stopAudioRecording = async function() {
 window.shutdownAudioRecording = function() {
   if (mediaRecorder && isRecording) {
     mediaRecorder.stream.getTracks().forEach(track => track.stop());
+    try { mediaRecorder.stop(); } catch (_) {}
     mediaRecorder = null;
     isRecording = false;
     audioChunks = [];
     chunkTimestamps = [];
+    window.allowAudioResume = false;
   }
 };
 

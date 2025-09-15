@@ -41,6 +41,21 @@ function initialize(window, config = {}) {
   ipcMain.handle('audio-capture-result', async (event, audioData) => {
     return await processAudioFromRenderer(audioData);
   });
+
+  // Power management: stop audio on system suspend; no implicit resume
+  try {
+    const { powerMonitor } = require('electron');
+    powerMonitor.on('suspend', async () => {
+      try {
+        await shutdownRecording();
+      } catch (_) {}
+    });
+    powerMonitor.on('resume', () => {
+      try {
+        initializeSessionDetectionIfNeeded({});
+      } catch (_) {}
+    });
+  } catch (_) {}
   
   // Listen for audio device changes from renderer
   ipcMain.on('audio-device-changed', (event, info) => {
@@ -77,6 +92,27 @@ function initializeSessionDetection(config) {
     
     // Set up callbacks
     audioSessionDetector.onSessionStart(async (deviceId) => {
+      // If our own recorder is already active, shut it down and do not start again
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          const isOurRecorderActive = await mainWindow.webContents.executeJavaScript('window.isRecorderActive && window.isRecorderActive()');
+          if (isOurRecorderActive) {
+            await mainWindow.webContents.executeJavaScript('window.shutdownAudioRecording && window.shutdownAudioRecording()');
+            isRecording = false;
+            if (transcriptionInterval) { clearInterval(transcriptionInterval); transcriptionInterval = null }
+            stopPeriodicChecks();
+            // Verify shutdown actually took effect; retry once after short delay
+            try {
+              await new Promise(r => setTimeout(r, 200));
+              const stillActive = await mainWindow.webContents.executeJavaScript('window.isRecorderActive && window.isRecorderActive()');
+              if (stillActive) {
+                await mainWindow.webContents.executeJavaScript('window.shutdownAudioRecording && window.shutdownAudioRecording()');
+              }
+            } catch (_) {}
+            return;
+          }
+        }
+      } catch (_) {}
       // Check permission before starting recording
       const hasPermission = await checkPermission();
       if (!hasPermission) {
@@ -91,7 +127,6 @@ function initializeSessionDetection(config) {
     
     
     audioSessionDetector.onSessionEnd(() => {
-      log.info('Audio session ended, stopping recording');
       stopRecordingInternal().catch(error => {
         log.error('Failed to stop recording after session detection:', error);
         // Force stop recording even if there's an error
@@ -189,10 +224,8 @@ async function performPeriodicCheck() {
     const isOtherAppUsingMic = await checkIfOtherAppUsingMic();
     
     if (isOtherAppUsingMic) {
-      
       await resumeRecording();
     } else {
-      
       await stopRecordingInternal();
     }
     
@@ -231,10 +264,8 @@ async function performLowAudioCheck() {
     const isOtherAppUsingMic = await checkIfOtherAppUsingMic();
     
     if (isOtherAppUsingMic) {
-      
       await resumeRecording();
     } else {
-      
       await stopRecordingInternal();
     }
     

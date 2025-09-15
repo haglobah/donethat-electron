@@ -294,6 +294,7 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
   
   // Handler for updating input data settings
   ipcMain.on('updateInputDataSettings', (event, settings) => {
+    log.debug('[capture] IPC updateInputDataSettings', settings);
     updateInputDataSettings(settings);
   });
 
