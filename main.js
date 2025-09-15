@@ -1158,6 +1158,8 @@ function buildContextMenu() {
 }
 
 // Central function to evaluate and adjust recording state based on all factors
+let hasShownInactiveBanner = false;
+
 function checkAndAdjustRecording() {
     const isCurrentlyRecording = isCapturing();
 
@@ -1176,6 +1178,22 @@ function checkAndAdjustRecording() {
     
     // Update application menu when recording state changes
     createApplicationMenu();
+
+    // Show sticky banner if account is inactive (once per session)
+    if (isAuthenticated && !hasValidAccess && !hasShownInactiveBanner) {
+      try {
+        if (mainWindow) {
+          try { mainWindow.show(); mainWindow.focus(); } catch (e) {}
+          mainWindow.webContents.send('inapp:notify', {
+            id: 'subscription-inactive',
+            title: 'Subscription Required',
+            message: 'Your subscription is inactive. Recording is paused until you renew.',
+            sticky: true
+          });
+          hasShownInactiveBanner = true;
+        }
+      } catch (e) {}
+    }
 
     // Regular start/stop logic
     if (isCurrentlyRecording && !shouldBeRecording) {
