@@ -3,6 +3,7 @@ const { getAuth } = require("firebase/auth");
 const { httpsCallable } = require("firebase/functions");
 const { firebaseApp, functions } = require("./firebase.js");
 const { logAnalyticsEvent } = require('./analytics.js');
+const { hasWindowsPermission } = require('./app-state.js');
 const { ipcRenderer } = require("electron");
 
 const { refreshAuthToken } = require('./auth.js');
@@ -179,6 +180,14 @@ function setupPermissionResultListener() {
     // Set checkbox and local state according to permission result
     checkbox.checked = hasPermission;
     inputData[type] = hasPermission;
+    // If OS-level Accessibility is granted, force windows to true locally
+    if (type !== 'windows') {
+      try {
+        if (hasWindowsPermission && hasWindowsPermission()) {
+          inputData.windows = true;
+        }
+      } catch (_) {}
+    }
 
     // Keep Active applications non-revokable once enabled
     if (type === 'windows') {
@@ -191,10 +200,15 @@ function setupPermissionResultListener() {
     
     // Save to server
     try {
-      await saveUserSettings('inputData', inputData);
+      const partial = { [type]: hasPermission, __partial: true };
+      // Preserve windows=true during unrelated updates to avoid clobbering by server race
+      if (type !== 'windows' && inputData && inputData.windows === true) {
+        partial.windows = true;
+      }
+      await saveUserSettings('inputData', partial);
       
-      // Send updated input data to main process
-      ipcRenderer.send('updateInputDataSettings', inputData);
+      // Send only the changed flag to main process to avoid clobbering other states
+      ipcRenderer.send('updateInputDataSettings', { [type]: hasPermission });
       
       logAnalyticsEvent(`permission_${hasPermission ? 'granted' : 'denied'}_setting_updated`, {
         type: type,
@@ -314,13 +328,49 @@ async function saveUserSettings(type, value) {
         enabled: value
       });
     } else if (type === 'inputData') { // Renamed type
-      settingsData.inputData = value; // Use inputData
-      logAnalyticsEvent('settings_updated', {
-        type: 'inputData',
-        windows: value.windows,
-        keystrokes: value.keystrokes,
-        audio: value.audio
-      });
+      // Support partial updates to avoid clobbering concurrent permission states
+      if (value && value.__partial) {
+        try {
+          const result = await getUserSettingsFunction();
+          const current = result?.data?.inputData || {};
+          const partial = { ...value };
+          delete partial.__partial;
+          const merged = {
+            windows: partial.windows !== undefined ? !!partial.windows : !!current.windows,
+            keystrokes: partial.keystrokes !== undefined ? !!partial.keystrokes : !!current.keystrokes,
+            audio: partial.audio !== undefined ? !!partial.audio : !!current.audio
+          };
+          settingsData.inputData = merged;
+          logAnalyticsEvent('settings_updated', {
+            type: 'inputData',
+            windows: merged.windows,
+            keystrokes: merged.keystrokes,
+            audio: merged.audio,
+            mode: 'partial-merge'
+          });
+        } catch (mergeErr) {
+          console.warn('Partial inputData merge failed, falling back to local value:', mergeErr);
+          const fallback = { ...value };
+          delete fallback.__partial;
+          settingsData.inputData = fallback;
+          logAnalyticsEvent('settings_updated', {
+            type: 'inputData',
+            windows: fallback.windows,
+            keystrokes: fallback.keystrokes,
+            audio: fallback.audio,
+            mode: 'partial-fallback'
+          });
+        }
+      } else {
+        settingsData.inputData = value; // Full replace
+        logAnalyticsEvent('settings_updated', {
+          type: 'inputData',
+          windows: value.windows,
+          keystrokes: value.keystrokes,
+          audio: value.audio,
+          mode: 'full'
+        });
+      }
     } else if (type === 'app') { // Add handling for 'app' type
       settingsData.app = value; // value should be { version: '...', osPlatform: '...', osRelease: '...' }
       logAnalyticsEvent('settings_updated', {
@@ -402,14 +452,30 @@ async function updateSettingsUI(settings) {
 
   // Handle input data settings
   const loadedInputData = settings?.inputData || {}; // Use inputData
+  const prevInputData = { ...inputData };
   inputData = {
     windows: !!loadedInputData.windows,         // Use windows key
     keystrokes: !!loadedInputData.keystrokes,
     audio: !!loadedInputData.audio
   };
 
-  // Send current input data settings to main process
-  ipcRenderer.send('updateInputDataSettings', inputData);
+  // If OS-level Accessibility is granted, never allow windows=false from settings clobber
+  try {
+    if (hasWindowsPermission && hasWindowsPermission()) {
+      inputData.windows = true;
+    }
+  } catch (_) {}
+
+
+  // Compute and send only changed flags to main to avoid clobbering
+  const delta = {};
+  // IMPORTANT: Do not include windows in delta from settings load.
+  // Windows permission state is managed by permissions.js via system events.
+  if (prevInputData.keystrokes !== inputData.keystrokes) delta.keystrokes = inputData.keystrokes;
+  if (prevInputData.audio !== inputData.audio) delta.audio = inputData.audio;
+  if (Object.keys(delta).length > 0) {
+    ipcRenderer.send('updateInputDataSettings', delta);
+  }
 
   const keystrokesCheckbox = document.getElementById('keystrokesCheckbox');
   const audioCheckbox = document.getElementById('audioCheckbox');
