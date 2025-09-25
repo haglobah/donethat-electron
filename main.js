@@ -1388,6 +1388,10 @@ function createWindow() {
     mainWindow.on('focus', () => {
       try {
         const now = Date.now();
+        // Skip reloads if we're within an active auth sequence suppression window
+        if (now < suppressWebviewReloadUntil) {
+          return;
+        }
         if (!lastWebviewReloadAt || (now - lastWebviewReloadAt) > RELOAD_MIN_INTERVAL_MS) {
           try { mainWindow.webContents.send('webview:reload'); } catch (e) {}
           lastWebviewReloadAt = now;
@@ -1403,8 +1407,6 @@ function createWindow() {
         // Hide from taskbar on Windows/Linux when main window is hidden
         try { mainWindow.setSkipTaskbar(true); } catch (e) {}
       }
-      // Reset refresh guard so next show triggers an immediate reload
-      try { lastWebviewReloadAt = 0; } catch (e) {}
     });
 
     // Enable context menus
