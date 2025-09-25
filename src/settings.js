@@ -180,14 +180,6 @@ function setupPermissionResultListener() {
     // Set checkbox and local state according to permission result
     checkbox.checked = hasPermission;
     inputData[type] = hasPermission;
-    // If OS-level Accessibility is granted, force windows to true locally
-    if (type !== 'windows') {
-      try {
-        if (hasWindowsPermission && hasWindowsPermission()) {
-          inputData.windows = true;
-        }
-      } catch (_) {}
-    }
 
     // Keep Active applications non-revokable once enabled
     if (type === 'windows') {
@@ -201,10 +193,6 @@ function setupPermissionResultListener() {
     // Save to server
     try {
       const partial = { [type]: hasPermission, __partial: true };
-      // Preserve windows=true during unrelated updates to avoid clobbering by server race
-      if (type !== 'windows' && inputData && inputData.windows === true) {
-        partial.windows = true;
-      }
       await saveUserSettings('inputData', partial);
       
       // Send only the changed flag to main process to avoid clobbering other states
@@ -451,20 +439,14 @@ async function updateSettingsUI(settings) {
   }
 
   // Handle input data settings
-  const loadedInputData = settings?.inputData || {}; // Use inputData
+  const loadedInputData = settings?.inputData || {};
   const prevInputData = { ...inputData };
+  // Passive windows: do not read persisted windows; use live OS permission for local state only
   inputData = {
-    windows: !!loadedInputData.windows,         // Use windows key
+    windows: (typeof hasWindowsPermission === 'function') ? hasWindowsPermission() : prevInputData.windows,
     keystrokes: !!loadedInputData.keystrokes,
     audio: !!loadedInputData.audio
   };
-
-  // If OS-level Accessibility is granted, never allow windows=false from settings clobber
-  try {
-    if (hasWindowsPermission && hasWindowsPermission()) {
-      inputData.windows = true;
-    }
-  } catch (_) {}
 
 
   // Compute and send only changed flags to main to avoid clobbering

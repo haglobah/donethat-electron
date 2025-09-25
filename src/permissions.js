@@ -153,10 +153,12 @@ ipcRenderer.on('screenCapturePermission', (event, data) => {
       }
     } catch (_) {}
     
-    // Only navigate if we're not already on settings view
-    const currentView = getCurrentView ? getCurrentView() : null;
-    if (currentView !== 'settings') {
-      navigateToView('signup-next');
+    // Navigate to signup-next only when screen recording is missing
+    if (!hasPermission) {
+      const currentView = getCurrentView ? getCurrentView() : null;
+      if (currentView !== 'settings') {
+        navigateToView('signup-next');
+      }
     }
 });
 

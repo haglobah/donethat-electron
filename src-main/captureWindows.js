@@ -426,9 +426,14 @@ function initWindowsPermissionHandling(mainWindow, stateManager, checkAndAdjustR
       app.on('browser-window-focus', focusListener);
     } else {
       // Just check permission without opening settings
-      const hasPermission = await checkPermissions();
+      // Harden against transient false by confirming twice before emitting false
+      let hasPermission = await checkPermissions();
+      if (!hasPermission) {
+        try { await new Promise(res => setTimeout(res, 500)); } catch (_) {}
+        const second = await checkPermissions();
+        hasPermission = hasPermission || second; // only stay false if both checks are false
+      }
       stateManager?.updateWindowsPermission(hasPermission);
-      
       if (mainWindow) {
         mainWindow.webContents.send('windowsPermission', hasPermission);
       }
