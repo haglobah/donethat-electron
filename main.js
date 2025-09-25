@@ -473,6 +473,36 @@ function setupAutoStart() {
 ////// MAIN /////
 
 app.whenReady().then(async () => {
+  // Register Hotkey IPC early so renderer can invoke during startup
+  ipcMain.handle('hotkey:get', async () => {
+    try {
+      const suffix = String(HOTKEY_SUFFIX || 'D').trim().slice(-1).toUpperCase();
+      return { success: true, suffix, accelerator: getHotkeyAccelerator(), label: getHotkeyLabel() };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('hotkey:set', async (_event, payload) => {
+    try {
+      const raw = (payload && payload.suffix) || '';
+      const clean = String(raw).trim();
+      if (!clean || !/^[a-zA-Z]$/.test(clean.slice(-1))) {
+        return { success: false, error: 'Suffix must be a single A-Z character.' };
+      }
+      HOTKEY_SUFFIX = clean.slice(-1).toUpperCase();
+      try { overlayStore?.set('hotkeySuffix', HOTKEY_SUFFIX); } catch (_) {}
+      registerGlobalShortcut();
+      // Refresh menus so accelerators/labels update
+      createApplicationMenu();
+      const payloadOut = { success: true, suffix: HOTKEY_SUFFIX, accelerator: getHotkeyAccelerator(), label: getHotkeyLabel() };
+      try { mainWindow?.webContents?.send('hotkey:updated', payloadOut); } catch (_) {}
+      return payloadOut;
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
   // Create window as early as possible (kept hidden) to avoid losing early deep-links
   createWindow()
 
@@ -596,35 +626,7 @@ app.whenReady().then(async () => {
     } catch (e) { log.error('Failed to install update from banner:', e); }
   });
 
-  // Hotkey IPC
-  ipcMain.handle('hotkey:get', async () => {
-    try {
-      const suffix = String(HOTKEY_SUFFIX || 'D').trim().slice(-1).toUpperCase();
-      return { success: true, suffix, accelerator: getHotkeyAccelerator(), label: getHotkeyLabel() };
-    } catch (e) {
-      return { success: false, error: String(e && e.message || e) };
-    }
-  });
-
-  ipcMain.handle('hotkey:set', async (_event, payload) => {
-    try {
-      const raw = (payload && payload.suffix) || '';
-      const clean = String(raw).trim();
-      if (!clean || !/^[a-zA-Z]$/.test(clean.slice(-1))) {
-        return { success: false, error: 'Suffix must be a single A-Z character.' };
-      }
-      HOTKEY_SUFFIX = clean.slice(-1).toUpperCase();
-      try { overlayStore?.set('hotkeySuffix', HOTKEY_SUFFIX); } catch (_) {}
-      registerGlobalShortcut();
-      // Refresh menus so accelerators/labels update
-      createApplicationMenu();
-      const payloadOut = { success: true, suffix: HOTKEY_SUFFIX, accelerator: getHotkeyAccelerator(), label: getHotkeyLabel() };
-      try { mainWindow?.webContents?.send('hotkey:updated', payloadOut); } catch (_) {}
-      return payloadOut;
-    } catch (e) {
-      return { success: false, error: String(e && e.message || e) };
-    }
-  });
+  
 
   // Create overlay window (hidden initially)
   createOverlayWindow()
