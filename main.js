@@ -1730,7 +1730,14 @@ function stopRecording() {
   
   // Send state updates
   if (mainWindow) {
-    mainWindow.webContents.send('pauseStateChanged', true)
+    // Always emit pauseStateChanged, include cause to let renderer decide UI
+    let cause = 'other';
+    try {
+      if (isScreenLocked) cause = 'lock-screen';
+      else if (isSystemSuspended) cause = 'system-suspend';
+      else if (stateManager?.isPaused && stateManager.isPaused()) cause = 'paused-state';
+    } catch (e) {}
+    try { mainWindow.webContents.send('pauseStateChanged', true, { cause }); } catch (e) {}
     mainWindow.webContents.send('analytics-event', { 
       eventName: 'recording_state_changed',
       eventParams: { status: 'stopped' } 
