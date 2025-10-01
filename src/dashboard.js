@@ -432,7 +432,7 @@ ipcRenderer.on('pauseStateChanged', (_event, isPaused, meta) => {
       }
       showBanner('DoneThat is paused and not recording your work', {
         title: 'Recording Paused',
-        sticky: true,
+        sticky: false,
         action: { label: 'Resume Recording', channel: 'resumeRecording' }
       });
     }
