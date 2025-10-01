@@ -160,7 +160,6 @@ async function startTracking() {
 async function recordCurrentWindow() {
   // Prevent overlapping calls - if a previous call is still processing, skip this one
   if (processingRecordWindow) {
-    log.debug('Skipping overlapping window tracking call')
     return
   }
   
@@ -180,6 +179,7 @@ async function recordCurrentWindow() {
       const nowTs = Date.now()
       const baseCooldown = Math.max(3000, currentTrackingIntervalMs)
       permissionCooldownUntil = nowTs + baseCooldown
+      try { log.warn(`[windows] permission=false detected; cooldown=${baseCooldown}ms; since=${firstPermissionDeniedAt ? (nowTs-firstPermissionDeniedAt)+'ms' : 'first-false'}`) } catch (_) {}
 
       // Start denial window if this is the first false
       if (firstPermissionDeniedAt === 0) {

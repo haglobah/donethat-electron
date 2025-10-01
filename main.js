@@ -157,6 +157,9 @@ let overlayStore = null
 let savedOverlayPosition = null
 let saveOverlayPositionDebounce = null
 let overlayPositionUserSet = false
+// Track OS suspension/lock state to gate recording
+let isSystemSuspended = false
+let isScreenLocked = false
 
 // Deep-link auth flow coordination
 let pendingDeepLinkToken = null;
@@ -592,11 +595,22 @@ app.whenReady().then(async () => {
 
   // --- Add powerMonitor listener here ---
   powerMonitor.on('resume', () => {
-    // Clear the potentially delayed timeout from before sleep
+    isSystemSuspended = false;
     if (stateManager) {
         stateManager.resume();
     }
-    // Immediately check the state and schedule the *next* check
+    checkAndAdjustRecording();
+  });
+  powerMonitor.on('unlock-screen', () => {
+    isScreenLocked = false;
+    checkAndAdjustRecording();
+  });
+  powerMonitor.on('suspend', () => {
+    isSystemSuspended = true;
+    checkAndAdjustRecording();
+  });
+  powerMonitor.on('lock-screen', () => {
+    isScreenLocked = true;
     checkAndAdjustRecording();
   });
   // --- End powerMonitor listener ---
@@ -1231,7 +1245,7 @@ function checkAndAdjustRecording() {
     const hasPermission = stateManager?.hasScreenCapturePermission();
     const hasValidAccess = stateManager?.hasValidAccess();
     const isPaused = stateManager?.isPaused();
-    const shouldBeRecording = isAuthenticated && hasPermission && hasValidAccess && !isPaused;
+    const shouldBeRecording = isAuthenticated && hasPermission && hasValidAccess && !isPaused && !isSystemSuspended && !isScreenLocked;
 
     // to capture some cases where auth is loaded later
     // but not recording it's not triggering above function because
@@ -1661,6 +1675,8 @@ app.on('will-quit', () => {
 
 // Update the focus handler to use state manager
 app.on('browser-window-focus', async () => {
+  // Safety: assume focused window implies unlocked/active session
+  try { isSystemSuspended = false; isScreenLocked = false; } catch (e) {}
   const oldPermission = stateManager?.hasScreenCapturePermission() ?? false;
   await checkScreenCapturePermission();
 
