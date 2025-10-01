@@ -41,7 +41,6 @@ app.on('second-instance', (event, commandLine, workingDirectory) => {
       const urlObj = new URL(url);
       const token = urlObj.searchParams.get('token');
       if (token) {
-        logDeepLinkEvent('second-instance-url-received', { hasWindow: !!mainWindow });
         enqueueDeepLinkToken(token);
       }
     } catch (error) {
@@ -167,14 +166,9 @@ let rendererReadyForAuth = false;
 // Suppress disruptive webview reloads during active auth attempts
 let suppressWebviewReloadUntil = 0;
 
-function logDeepLinkEvent(kind, details) {
-  try { log.info(`[DEEPLINK] ${kind}`, details || ''); } catch (_) {}
-}
-
 function enqueueDeepLinkToken(token) {
   if (!token) return;
   pendingDeepLinkToken = token;
-  logDeepLinkEvent('token-queued', { hasWindow: !!mainWindow, rendererReadyForAuth });
   tryDeliverDeepLinkToken();
 }
 
@@ -188,7 +182,6 @@ function tryDeliverDeepLinkToken() {
     pendingDeepLinkToken = null;
     // Briefly suppress webview reloads to avoid interrupting auth UI
     try { suppressWebviewReloadUntil = Date.now() + 30000; } catch (_) {}
-    logDeepLinkEvent('token-delivered');
     try { mainWindow.webContents.send('firebase-custom-token', token); } catch (e) { log.warn('Failed to send firebase-custom-token to renderer:', e); }
   } catch (e) {
     log.error('Error in tryDeliverDeepLinkToken:', e);
@@ -510,7 +503,6 @@ app.whenReady().then(async () => {
   ipcMain.on('renderer:ready-for-auth', () => {
     try {
       rendererReadyForAuth = true;
-      logDeepLinkEvent('renderer-ready');
       tryDeliverDeepLinkToken();
     } catch (e) {}
   });
@@ -697,7 +689,6 @@ app.whenReady().then(async () => {
     const token = url.searchParams.get('token');
     
     if (token) {
-      logDeepLinkEvent('open-url-received', { hasWindow: !!mainWindow });
       enqueueDeepLinkToken(token);
     } else if (mainWindow) {
       // Forward other donethat:// URLs for internal navigation
@@ -712,7 +703,6 @@ app.whenReady().then(async () => {
       const urlObj = new URL(url);
       const token = urlObj.searchParams.get('token');
       if (token) {
-        logDeepLinkEvent('argv-url-received', { hasWindow: !!mainWindow });
         enqueueDeepLinkToken(token);
       } else if (mainWindow) {
         // Forward other donethat:// URLs for internal navigation
