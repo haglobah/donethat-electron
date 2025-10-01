@@ -105,7 +105,7 @@ async function handleAuthError(error) {
 
       // Show notification for retry > 0
       if (retryCount >= 0) {
-        showBanner('Connection issue. Please check your internet connection.', { title: 'Network Issue', sticky: true });
+        showBanner('Connection issue. Please check your internet connection.', { title: 'Network Issue', sticky: false, noFocus: true });
       }
 
       logAnalyticsEvent('auth_error_retry', {
@@ -143,7 +143,7 @@ async function handleAuthError(error) {
     } else {
       // Max retries reached. If offline, stop backoff and wait for online to retry immediately
       const isOffline = (typeof navigator !== 'undefined' && navigator.onLine === false);
-      showBanner('Connection issue. Waiting to retry when back online…', { title: 'Network Issue', sticky: true });
+      showBanner('Connection issue. Waiting to retry when back online…', { title: 'Network Issue', sticky: false, noFocus: true });
 
       logAnalyticsEvent('auth_error_max_retries', {
         error_code: error.code,

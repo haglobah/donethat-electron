@@ -211,11 +211,6 @@ if (summarySubmitBtn) {
       summarySubmitBtn.disabled = false;
       summarySubmitBtn.textContent = 'Submit';
 
-      const now = new Date();
-      const isRecentSummary = currentPeriodEndTime && (now.getTime() - currentPeriodEndTime < (60 * 60 * 1000));
-
-      const shouldPauseAndDelayReset = isRecentSummary;
-
       // Send both the current timestamp and the period end time
       ipcRenderer.send("summarySubmitted", {
         timestamp: Date.now(),
@@ -228,9 +223,7 @@ if (summarySubmitBtn) {
           has_comment: !!commentText
       });
 
-      if (shouldPauseAndDelayReset) {
-          ipcRenderer.send("pauseUntilTomorrow");
-      }
+      // Pause handled on click; no additional pause here
       
       // Reload the webview after successful submission
       const webview = document.getElementById('portalView');
@@ -262,18 +255,37 @@ if (summarySubmitBtn) {
   if (generateSummaryBtn) {
     generateSummaryBtn.addEventListener('click', async () => {
       summaryLoadingSpinner.classList.remove('hidden');
-  
+      let pausedByFinishDay = false;
+      // Immediately pause until tomorrow when finishing the day, if not already paused
+      try {
+        if (!getIsPaused()) {
+          ipcRenderer.send("pauseUntilTomorrow");
+          pausedByFinishDay = true;
+        }
+      } catch (e) {
+        // No-op if IPC is unavailable
+      }
+
       // Call the actual Cloud Function instead of using dummy data
       generateRawSummaryFunction()
         .then((result) => {
           summaryLoadingSpinner.classList.add('hidden');
-  
+
           // Process the result from the cloud function
           const bulletPointsData = result.data.bulletPoints || [];
           const bulletTimesData = result.data.bulletTimes || [];
           currentSummaryId = result.data.summaryId;
           const period = result.data.period;
           currentPeriodEndTime = period?.end;
+
+          // If the summary is not recent and we actively paused, resume now
+          try {
+            const now = new Date();
+            const isRecentSummary = currentPeriodEndTime && (now.getTime() - currentPeriodEndTime < (60 * 60 * 1000));
+            if (!isRecentSummary && pausedByFinishDay) {
+              ipcRenderer.send('resumeRecording');
+            }
+          } catch (_) {}
           
           // Convert to BulletPoint objects with time data
           bulletPoints = bulletPointsData.map((text, index) => ({
@@ -408,21 +420,19 @@ function resumeRecording() {
 }
 
 // Add pause state change listener
-ipcRenderer.on('pauseStateChanged', (_event, isPaused) => {
+ipcRenderer.on('pauseStateChanged', () => {
   // Add a small delay back to ensure app state is updated first
   setTimeout(() => {
-    // Only show when event indicates paused and state still reflects paused
+    // Check if app is paused and show notification if so
     if (getIsPaused()) {
-      showBanner('DoneThat is paused and not recording your work', {
+             showBanner('DoneThat is paused and not recording your work', {
         title: 'Recording Paused',
-        sticky: false,
+        sticky: true,
         action: { label: 'Resume Recording', channel: 'resumeRecording' }
       });
     }
   }, 100);
 });
-
-
 
 // Function to render existing custom bullets
 function renderCustomBullets() {

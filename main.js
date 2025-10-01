@@ -566,8 +566,12 @@ app.whenReady().then(async () => {
   ipcMain.on('inapp:notify', (_event, payload) => {
     try { if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) overlayWindow.hide(); } catch (e) {}
     if (mainWindow) {
-      try { mainWindow.show(); } catch (e) {}
-      try { mainWindow.focus(); } catch (e) {}
+      // Respect noFocus for non-intrusive banners (e.g., transient network issues)
+      const noFocus = !!(payload && payload.noFocus);
+      if (!noFocus) {
+        try { mainWindow.show(); } catch (e) {}
+        try { mainWindow.focus(); } catch (e) {}
+      }
       try { mainWindow.webContents.send('inapp:notify', payload); } catch (e) {}
     }
   });
