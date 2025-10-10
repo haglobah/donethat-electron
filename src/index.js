@@ -478,6 +478,55 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // Update button (only visible on Windows/Linux when update is available)
+  const updateBtn = document.getElementById('updateBtn');
+  if (updateBtn) {
+    updateBtn.addEventListener('click', () => {
+      try { ipcRenderer.send('update:install', { forceRunAfter: true }); } catch (e) {}
+    });
+  }
+
+  // Handle update availability notifications
+  ipcRenderer.on('update:available', () => {
+    if (updateBtn) {
+      updateBtn.classList.remove('hidden');
+    }
+  });
+
+  ipcRenderer.on('update:not-available', () => {
+    if (updateBtn) {
+      updateBtn.classList.add('hidden');
+    }
+  });
+
+  // Check update status on startup (only for Windows/Linux)
+  (async () => {
+    if (process.platform === 'win32' || process.platform === 'linux') {
+      try {
+        const status = await ipcRenderer.invoke('update:check-status');
+        if (status && status.available) {
+          if (updateBtn) {
+            updateBtn.classList.remove('hidden');
+          }
+        } else {
+          if (updateBtn) {
+            updateBtn.classList.add('hidden');
+          }
+        }
+      } catch (e) {
+        // Hide button on error
+        if (updateBtn) {
+          updateBtn.classList.add('hidden');
+        }
+      }
+    } else {
+      // Hide button on macOS (uses silent updates)
+      if (updateBtn) {
+        updateBtn.classList.add('hidden');
+      }
+    }
+  })();
   // Settings/back icon swap
   const settingsOrBackBtn = document.getElementById('settingsOrBackBtn');
   const settingsOrBackIcon = document.getElementById('settingsOrBackIcon');

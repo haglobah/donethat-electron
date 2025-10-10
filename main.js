@@ -159,6 +159,8 @@ let overlayPositionUserSet = false
 // Track OS suspension/lock state to gate recording
 let isSystemSuspended = false
 let isScreenLocked = false
+// Track update availability for Windows/Linux update button
+let updateAvailable = false
 
 // Deep-link auth flow coordination
 let pendingDeepLinkToken = null;
@@ -276,6 +278,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-downloaded', (info) => {
     log.info('Update downloaded:', info.version)
+    updateAvailable = true
 
     if (app.isPackaged) {
       // Different update strategies per platform
@@ -283,11 +286,12 @@ function setupAutoUpdater() {
         // Windows - only use notifications, NEVER silent install
         log.info('Windows platform: using notification-based update');
         
-        // Show notification for user to manually install
+        // Show update button and notification for user to manually install
         try {
           if (mainWindow) {
             mainWindow.show();
             mainWindow.focus();
+            mainWindow.webContents.send('update:available');
             mainWindow.webContents.send('inapp:notify', {
               id: 'update-available',
               title: 'DoneThat Update',
@@ -315,6 +319,7 @@ function setupAutoUpdater() {
           if (mainWindow) {
             mainWindow.show();
             mainWindow.focus();
+            mainWindow.webContents.send('update:available');
             mainWindow.webContents.send('inapp:notify', {
               id: 'update-available',
               title: 'DoneThat Update Available',
@@ -630,7 +635,7 @@ app.whenReady().then(async () => {
   })
 
   
-  // IPC to install update from in-app notification
+  // IPC to install update from in-app notification or update button
   ipcMain.on('update:install', (_event, payload) => {
     try {
       const runAfter = payload && payload.forceRunAfter === true;
@@ -642,6 +647,11 @@ app.whenReady().then(async () => {
         autoUpdater.quitAndInstall();
       }
     } catch (e) { log.error('Failed to install update from banner:', e); }
+  });
+
+  // IPC to check update availability status
+  ipcMain.handle('update:check-status', () => {
+    return { available: updateAvailable };
   });
 
   
