@@ -791,7 +791,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   ipcRenderer.on('inapp:notify', (_event, payload) => {
-    try { ipcRenderer.send('focus-app-window'); } catch (e) {}
+    // Only focus the main window if the notification is allowed to focus
+    try {
+      const noFocus = !!(payload && payload.noFocus);
+      if (!noFocus) {
+        ipcRenderer.send('focus-app-window');
+      }
+    } catch (e) {}
     showInappNotification(payload);
   });
 
