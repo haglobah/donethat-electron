@@ -599,6 +599,11 @@ app.whenReady().then(async () => {
   });
   powerMonitor.on('unlock-screen', () => {
     isScreenLocked = false;
+    // Rebase timers after unlock as some Windows devices may not emit 'resume'
+    // and existing setTimeouts would otherwise extend pauses by sleep duration
+    if (stateManager) {
+      try { stateManager.resume(); } catch (e) {}
+    }
     checkAndAdjustRecording();
   });
   powerMonitor.on('suspend', () => {
