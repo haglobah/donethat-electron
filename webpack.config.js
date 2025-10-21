@@ -24,8 +24,8 @@ export default {
   resolve: {
     // Add aliases to use browser versions of Firebase modules
     alias: {
-      '@firebase/auth': path.resolve(__dirname, 'node_modules/@firebase/auth/dist/esm2017', 'index.js'),
-      '@firebase/app': path.resolve(__dirname, 'node_modules/@firebase/app/dist/esm', 'index.esm2017.js'),
+      '@firebase/auth': path.resolve(__dirname, 'node_modules/@firebase/auth/dist/esm', 'index.js'),
+      '@firebase/app': path.resolve(__dirname, 'node_modules/@firebase/app/dist/esm', 'index.esm.js'),
     },
     // Add file extensions to resolve
     extensions: ['.js', '.jsx', '.ts', '.tsx', '.cjs']

@@ -10,6 +10,13 @@ This document explains the DoneThat Desktop app to autonomous coding agents. It 
 - Optional local ML via `@xenova/transformers` for Whisper transcription
 - Packaging via `electron-builder`
 
+### Firebase Module Resolution
+
+- Uses Firebase v12+ with webpack aliases for browser versions
+- Webpack aliases: `@firebase/auth` → `node_modules/@firebase/auth/dist/esm/index.js`
+- Webpack aliases: `@firebase/app` → `node_modules/@firebase/app/dist/esm/index.esm.js`
+- Import syntax: use `firebase/` imports in code, webpack resolves to browser versions
+
 ## High-Level Architecture
 
 - Main process: orchestrates capture, state, permissions, tray/menu, auto-updates, overlay creation. Entry: `main.js`.
