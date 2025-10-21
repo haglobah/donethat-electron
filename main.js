@@ -7,6 +7,7 @@ const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notificati
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
+const { AuthServer } = require('./src-main/auth-server')
 const {
   checkScreenCapturePermission: moduleCheckPermission,
   getWaylandStatus,
@@ -168,6 +169,9 @@ let rendererReadyForAuth = false;
 // Suppress disruptive webview reloads during active auth attempts
 let suppressWebviewReloadUntil = 0;
 
+// Localhost server for OAuth callback
+let authServer = null;
+
 function enqueueDeepLinkToken(token) {
   if (!token) return;
   pendingDeepLinkToken = token;
@@ -187,6 +191,25 @@ function tryDeliverDeepLinkToken() {
     try { mainWindow.webContents.send('firebase-custom-token', token); } catch (e) { log.warn('Failed to send firebase-custom-token to renderer:', e); }
   } catch (e) {
     log.error('Error in tryDeliverDeepLinkToken:', e);
+  }
+}
+
+// Start localhost server for OAuth callback
+async function startAuthServer() {
+  if (authServer && authServer.isRunning()) {
+    return authServer.getPort();
+  }
+
+  authServer = new AuthServer();
+  const port = await authServer.start(enqueueDeepLinkToken);
+  return port;
+}
+
+// Stop the auth server
+function stopAuthServer() {
+  if (authServer) {
+    authServer.stop();
+    authServer = null;
   }
 }
 
@@ -265,7 +288,6 @@ function hideMainWindowIfVisible() {
 function setupAutoUpdater() {
   // Use the centralized logger
   autoUpdater.logger = log
-
   // Add configuration for GitHub provider
   autoUpdater.allowPrerelease = false
   autoUpdater.autoDownload = true
@@ -510,6 +532,27 @@ app.whenReady().then(async () => {
       rendererReadyForAuth = true;
       tryDeliverDeepLinkToken();
     } catch (e) {}
+  });
+
+  // IPC handlers for localhost auth server
+  ipcMain.handle('auth:start-server', async () => {
+    try {
+      const port = await startAuthServer();
+      return { success: true, port };
+    } catch (error) {
+      log.error('Failed to start auth server:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('auth:stop-server', () => {
+    try {
+      stopAuthServer();
+      return { success: true };
+    } catch (error) {
+      log.error('Failed to stop auth server:', error);
+      return { success: false, error: error.message };
+    }
   });
 
   // Create window as early as possible (kept hidden) to avoid losing early deep-links
@@ -900,6 +943,9 @@ app.on('before-quit', () => {
   if (screenshotInterval) {
     clearInterval(screenshotInterval);
   }
+  
+  // Stop auth server
+  stopAuthServer();
   
   // Clean up state (timeouts and save pause state if needed)
   stateManager?.cleanupOnQuit();

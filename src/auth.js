@@ -508,7 +508,7 @@ signInForm.addEventListener("submit", (e) => {
   wirePasswordToggle('toggleSignUpPasswordBtn', 'signUpPassword');
 
   // Handle Google Sign In/Up (single button for both)
-  googleSignInBtn.addEventListener("click", (e) => {
+  googleSignInBtn.addEventListener("click", async (e) => {
     e.preventDefault();
     
     try {
@@ -522,7 +522,16 @@ signInForm.addEventListener("submit", (e) => {
       
       const googleSignInStart = httpsCallable(functions, 'authGoogleSignInStart');
       
-      googleSignInStart()
+      // Start the localhost auth server first
+      const serverResult = await ipcRenderer.invoke('auth:start-server');
+      if (!serverResult.success) {
+        throw new Error(`Failed to start auth server: ${serverResult.error}`);
+      }
+
+      // Call the Firebase function with the localhost port
+      googleSignInStart({ 
+        port: serverResult.port 
+      })
         .then((result) => {
           // The function should return a URL to open
           const url = result.data?.authUrl || result.data?.url || result.data?.data?.url;
@@ -546,12 +555,16 @@ signInForm.addEventListener("submit", (e) => {
           showBanner(`Failed to start Google Sign In: ${error.message}`, { title: 'Google Sign In', sticky: true });
           hideSpinner();
           try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
+          // Stop the auth server on error
+          try { ipcRenderer.invoke('auth:stop-server'); } catch (_) {}
         });
     } catch (error) {
       console.error('Google Sign In setup error:', error);
       showBanner(`Failed to setup Google Sign In: ${error.message}`, { title: 'Google Sign In', sticky: true });
       hideSpinner();
       try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
+      // Stop the auth server on setup error
+      try { ipcRenderer.invoke('auth:stop-server'); } catch (_) {}
     }
   });
 
@@ -565,6 +578,8 @@ signInForm.addEventListener("submit", (e) => {
         logAnalyticsEvent('google_sign_in_success');
         hideSpinner();
         try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
+        // Stop the auth server after successful authentication
+        ipcRenderer.invoke('auth:stop-server');
       })
       .catch((error) => {
         logAnalyticsEvent('google_sign_in_token_error', {
@@ -575,6 +590,8 @@ signInForm.addEventListener("submit", (e) => {
         console.error("Firebase custom token sign-in error:", error);
         hideSpinner();
         try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
+        // Stop the auth server on error too
+        ipcRenderer.invoke('auth:stop-server');
       });
   });
   
