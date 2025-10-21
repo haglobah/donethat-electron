@@ -421,22 +421,8 @@ function resumeRecording() {
 
 // Add pause state change listener
 ipcRenderer.on('pauseStateChanged', (_event, isPaused, meta) => {
-  // Add a small delay back to ensure app state is updated first
-  setTimeout(() => {
-    // Check if app is paused and show notification if so
-    if (isPaused && getIsPaused()) {
-      const cause = meta && meta.cause;
-      // Suppress banner for lock screen or system suspend
-      if (cause === 'lock-screen' || cause === 'system-suspend') {
-        return;
-      }
-      showBanner('DoneThat is paused and not recording your work', {
-        title: 'Recording Paused',
-        sticky: false,
-        action: { label: 'Resume Recording', channel: 'resumeRecording' }
-      });
-    }
-  }, 100);
+  // Pause state changed - no notification needed
+  // The workday ended notification will handle informing the user when appropriate
 });
 
 // Function to render existing custom bullets

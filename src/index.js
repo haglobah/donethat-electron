@@ -557,7 +557,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Recording dropdown
   const recordingBtn = document.getElementById('recordingStateBtn');
-  const recordingIcon = document.getElementById('recordingStateIcon');
+  const recordingText = document.getElementById('recordingStateText');
   const recordingMenu = document.getElementById('recordingMenu');
   const pauseTodayBtn = document.getElementById('pauseTodayBtn');
   const resumeNowBtn = document.getElementById('resumeNowBtn');
@@ -628,16 +628,18 @@ document.addEventListener('DOMContentLoaded', () => {
     } 
   });
 
-  // Update recording icon on pause/resume changes
+  // Update recording text on pause/resume changes
   function setRecordingIcon(isPaused) {
-    if (!recordingIcon || !recordingBtn) return;
+    if (!recordingText || !recordingBtn) return;
     if (isPaused) {
-      recordingIcon.textContent = '||';
-      recordingIcon.classList.remove('active');
+      recordingText.textContent = 'Paused';
+      recordingText.classList.remove('active');
+      recordingBtn?.classList.remove('active');
       recordingBtn?.setAttribute('title', 'Paused');
     } else {
-      recordingIcon.textContent = '●';
-      recordingIcon.classList.add('active'); // orange dot when recording
+      recordingText.textContent = 'Recording';
+      recordingText.classList.add('active'); // orange text when recording
+      recordingBtn?.classList.add('active'); // orange border when recording
       recordingBtn?.setAttribute('title', 'Recording');
     }
     updateRecordingMenuState(isPaused);

@@ -293,7 +293,13 @@ function isActiveWorkPeriod(date = new Date()) {
 function _checkWorkdayEndNotification() {
   const threeHoursInMillis = 3 * 60 * 60 * 1000;
 
-  if (lastSummaryTimestamp && (Date.now() - lastSummaryTimestamp > threeHoursInMillis)) {
+  // Only show notification if:
+  // 1. We have a last summary timestamp
+  // 2. 3+ hours have passed since last summary
+  // 3. The app was NOT already paused (to avoid showing notification when user manually paused)
+  if (lastSummaryTimestamp && 
+      (Date.now() - lastSummaryTimestamp > threeHoursInMillis) && 
+      !isPaused()) {
     // Create notification with same options structure as start notification
     try {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -301,8 +307,8 @@ function _checkWorkdayEndNotification() {
         mainWindow.webContents.send('inapp:notify', {
           id: 'workday-ended',
           title: 'Workday Ended',
-          message: 'Remember to generate your summary in DoneThat!',
-          sticky: true
+          message: 'Remember to generate your summary. You can change your work hours in settings.',
+          sticky: false
         });
       }
     } catch (e) {}
@@ -369,7 +375,7 @@ function pauseUntilNextWorkPeriod(mainWindow, silent=false) {
   if (startParts.length < 2 || endParts.length < 2) {
     // Invalid format, fall back to pausing for a day
     log.error('Invalid work hours format when trying to pause until next period');
-    pauseRecording(24 * 60 * 60 * 1000, mainWindow);
+    pauseRecording(24 * 60 * 60 * 1000, mainWindow, 'workday-start');
     return;
   }
   
@@ -403,7 +409,7 @@ function pauseUntilNextWorkPeriod(mainWindow, silent=false) {
   // If no workday found in the next week, just pause for a day
   if (daysAhead >= 7) {
     log.warn('No workday found in the next week, pausing for 24 hours');
-    pauseRecording(24 * 60 * 60 * 1000, mainWindow);
+    pauseRecording(24 * 60 * 60 * 1000, mainWindow, 'workday-start');
     return;
   }
   
@@ -412,13 +418,22 @@ function pauseUntilNextWorkPeriod(mainWindow, silent=false) {
   
   const duration = nextWorkdayDate.getTime() - now.getTime();
   
+  // If the duration is less than 5 minutes, don't pause at all
+  const FIVE_MINUTES_MS = 5 * 60 * 1000;
+  if (duration > 0 && duration < FIVE_MINUTES_MS) {
+    log.info(`Time until next workday start is only ${Math.round(duration / 1000 / 60)} minutes, skipping pause`);
+    // Don't pause, just schedule the next work end check
+    _scheduleNextWorkEndCheck();
+    return;
+  }
+  
   // Ensure duration is positive
   if (duration > 0) {
     pauseRecording(duration, mainWindow, 'workday-start');
   } else {
     log.error('Calculated pause duration was not positive');
     // Fallback: Pause for 1 hour
-    pauseRecording(60 * 60 * 1000, mainWindow);
+    pauseRecording(60 * 60 * 1000, mainWindow, 'workday-start');
   }
 }
 
