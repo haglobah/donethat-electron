@@ -237,6 +237,18 @@ function resume() {
   }
   _scheduleNextWorkEndCheck();
   loadPauseState();
+  
+  // Check if we should be paused based on work hours when app starts
+  // This handles the case where user is already authenticated and it's past work hours
+  const now = new Date();
+  if (!isActiveWorkPeriod(now) && !isPaused()) {
+    pauseUntilNextWorkPeriod(mainWindow, true); // silent=true to avoid notification on startup
+  }
+  
+  // Ensure all state is synchronized after initialization
+  if (checkAndAdjustRecording) {
+    checkAndAdjustRecording();
+  }
 }
 
 // Helper function to check if currently paused
