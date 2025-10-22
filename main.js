@@ -151,6 +151,7 @@ let tray = null
 let mainWindow = null
 let overlayWindow = null
 let screenshotInterval = null
+let isInitialStartup = true
 // Persist overlay position
 let overlayStore = null
 let savedOverlayPosition = null
@@ -638,6 +639,9 @@ app.whenReady().then(async () => {
   
   // Initial state check and schedule daily check
   checkAndAdjustRecording();
+  
+  // Mark initial startup as complete
+  isInitialStartup = false;
 
   // --- Add powerMonitor listener here ---
   powerMonitor.on('resume', () => {
@@ -970,7 +974,8 @@ function updateTrayIcon(isActuallyRecording) {
   const hasValidAccess = stateManager?.hasValidAccess() ?? false;
 
   // Show main window for authentication, account, or permission issues
-  if (!loggedIn || !hasValidAccess || !hasScreenPermission || !hasWindowsPermission) {
+  // But not during initial startup to avoid showing window for authenticated users
+  if (!isInitialStartup && (!loggedIn || !hasValidAccess || !hasScreenPermission || !hasWindowsPermission)) {
     if (mainWindow && !mainWindow.isVisible()) {
       showWindowBelowTray();
     }
@@ -1576,10 +1581,7 @@ function createOverlayWindow() {
 
     overlayWindow.once('ready-to-show', () => {
       positionOverlayWindow()
-      // Only show overlay if authenticated and has valid access
-      if (stateManager?.isAuthenticated() && stateManager?.hasValidAccess()) {
-        overlayWindow.showInactive()
-      }
+
       sendOverlayState()
     })
 

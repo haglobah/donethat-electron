@@ -31,9 +31,7 @@ class AuthServer {
           
           if (url.pathname === '/auth') {
             const token = url.searchParams.get('token');
-            if (token) {
-              log.info('Received OAuth token via localhost callback');
-              
+            if (token) {              
               // Call the token received callback
               if (this.onTokenReceived) {
                 this.onTokenReceived(token);
@@ -64,7 +62,6 @@ class AuthServer {
       });
 
       this.server.listen(this.port, '127.0.0.1', () => {
-        log.info(`Auth server listening on http://127.0.0.1:${this.port}`);
         resolve(this.port);
       });
 
@@ -89,7 +86,6 @@ class AuthServer {
       this.server.close();
       this.server = null;
       this.onTokenReceived = null;
-      log.info('Auth server stopped');
     }
   }
 
