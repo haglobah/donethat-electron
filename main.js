@@ -157,9 +157,6 @@ let overlayStore = null
 let savedOverlayPosition = null
 let saveOverlayPositionDebounce = null
 let overlayPositionUserSet = false
-// Track OS suspension/lock state to gate recording
-let isSystemSuspended = false
-let isScreenLocked = false
 // Track update availability for Windows/Linux update button
 let updateAvailable = false
 
@@ -590,7 +587,6 @@ app.whenReady().then(async () => {
   stateManager = await initState({
     checkRecording: checkAndAdjustRecording, // for pause state changes
     navigateToView: navigateToView, // for notifications
-    getUserAwayState: () => isScreenLocked || isSystemSuspended, // for checking if user is away
     mainWindow: mainWindow, // window reference
     overlayWindow: overlayWindow // overlay window reference
   });
@@ -642,33 +638,6 @@ app.whenReady().then(async () => {
   
   // Mark initial startup as complete
   isInitialStartup = false;
-
-  // --- Add powerMonitor listener here ---
-  powerMonitor.on('resume', () => {
-    isSystemSuspended = false;
-    if (stateManager) {
-        stateManager.resume();
-    }
-    checkAndAdjustRecording();
-  });
-  powerMonitor.on('unlock-screen', () => {
-    isScreenLocked = false;
-    // Rebase timers after unlock as some Windows devices may not emit 'resume'
-    // and existing setTimeouts would otherwise extend pauses by sleep duration
-    if (stateManager) {
-      try { stateManager.resume(); } catch (e) {}
-    }
-    checkAndAdjustRecording();
-  });
-  powerMonitor.on('suspend', () => {
-    isSystemSuspended = true;
-    checkAndAdjustRecording();
-  });
-  powerMonitor.on('lock-screen', () => {
-    isScreenLocked = true;
-    checkAndAdjustRecording();
-  });
-  // --- End powerMonitor listener ---
 
   // Handle left-click to show a fresh context menu
   tray.on('click', () => {
@@ -972,6 +941,7 @@ function updateTrayIcon(isActuallyRecording) {
   const hasScreenPermission = stateManager?.hasScreenCapturePermission() ?? false;
   const hasWindowsPermission = stateManager?.hasWindowsPermission() ?? false;
   const hasValidAccess = stateManager?.hasValidAccess() ?? false;
+  const isSystemIdle = stateManager?.isSystemIdle() ?? false;
 
   // Show main window for authentication, account, or permission issues
   // But not during initial startup to avoid showing window for authenticated users
@@ -981,9 +951,13 @@ function updateTrayIcon(isActuallyRecording) {
     }
   }
 
-  if (isActuallyRecording) {
+  if (isActuallyRecording && !isSystemIdle) {
     iconPath = iconRecordingPath;
     tooltip = 'DoneThat - Recording';
+  } else if (isSystemIdle && loggedIn && hasValidAccess) {
+    // Show idle state when screen locked or system suspended (but still recording in background)
+    iconPath = iconPausedPath;
+    tooltip = 'DoneThat - System Idle';
   } else if (!hasScreenPermission) {
     iconPath = iconErrorPath;
     tooltip = 'DoneThat - No Screen Capture Permission';
@@ -1306,7 +1280,8 @@ function checkAndAdjustRecording() {
     const hasPermission = stateManager?.hasScreenCapturePermission();
     const hasValidAccess = stateManager?.hasValidAccess();
     const isPaused = stateManager?.isPaused();
-    const shouldBeRecording = isAuthenticated && hasPermission && hasValidAccess && !isPaused && !isSystemSuspended && !isScreenLocked;
+    const isSystemIdle = stateManager?.isSystemIdle() ?? false;
+    const shouldBeRecording = isAuthenticated && hasPermission && hasValidAccess && !isPaused && !isSystemIdle;
 
     // to capture some cases where auth is loaded later
     // but not recording it's not triggering above function because
@@ -1732,8 +1707,11 @@ app.on('will-quit', () => {
 
 // Update the focus handler to use state manager
 app.on('browser-window-focus', async () => {
-  // Safety: assume focused window implies unlocked/active session
-  try { isSystemSuspended = false; isScreenLocked = false; } catch (e) {}
+  // Fallback: clear lock/suspend flags when user can focus our app
+  // If they can interact with our window, the system is definitely not locked/suspended
+  // This catches cases where powerMonitor unlock/resume events don't fire
+  stateManager?.clearSystemIdleFlags();
+  
   const oldPermission = stateManager?.hasScreenCapturePermission() ?? false;
   await checkScreenCapturePermission();
 
@@ -1795,8 +1773,8 @@ function stopRecording() {
     // Always emit pauseStateChanged, include cause to let renderer decide UI
     let cause = 'other';
     try {
-      if (isScreenLocked) cause = 'lock-screen';
-      else if (isSystemSuspended) cause = 'system-suspend';
+      const isSystemIdle = stateManager?.isSystemIdle() ?? false;
+      if (isSystemIdle) cause = 'system-idle';
       else if (stateManager?.isPaused && stateManager.isPaused()) cause = 'paused-state';
     } catch (e) {}
     try { mainWindow.webContents.send('pauseStateChanged', true, { cause }); } catch (e) {}

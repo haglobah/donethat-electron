@@ -23,9 +23,105 @@ let userStatus = 'active'; // User status - 'active' or 'inactive'
 // Function references that will be set by main.js
 let checkAndAdjustRecording = null;
 let navigateToView = null;
-let getUserAwayState = null; // Function to get current user away state (screen locked or system suspended)
 let mainWindow = null;
 let overlayWindow = null;
+
+// State validation heartbeat
+let stateValidationIntervalId = null;
+
+// Track manual resume override for work hours
+let manualOverrideWorkHours = false;
+
+// Track system lock/suspend state
+let isScreenLocked = false;
+let isSystemSuspended = false;
+
+/**
+ * Periodic state validator that ensures consistency after sleep/wake cycles.
+ * Runs every minute to catch timer failures and state drift.
+ * Reuses existing logic - no duplication.
+ */
+function _validateState() {
+  try {
+    // Safety check: detect user activity to clear potentially stuck suspend flag
+    // Note: We can't use idle time for lock screen (user can move mouse on lock screen)
+    // but we CAN use it for suspend (system activity = not suspended)
+    if (isSystemSuspended) {
+      try {
+        const { powerMonitor } = require('electron');
+        const idleTime = powerMonitor.getSystemIdleTime();
+        
+        // If system has been active in the last 60 seconds, it can't be suspended
+        // Also require idle time > 0 to avoid broken platforms that always return 0
+        if (idleTime > 0 && idleTime < 60) {
+          log.info('Detected system activity while suspended flag was set - clearing flag');
+          isSystemSuspended = false;
+        }
+      } catch (e) {
+        log.warn('Could not check system idle time for suspend detection:', e);
+      }
+    }
+    
+    const now = new Date();
+    const isActive = isActiveWorkPeriod(now);
+    const paused = isPaused();
+    const pauseReason = pauseState.reason;
+    const pauseExpired = pauseState.endTime && pauseState.endTime < now;
+    
+    // Integrated pause expiry and work hours logic
+    if (pauseExpired) {
+      // Pause expired - only clear it if we should be recording
+      if (isActive || manualOverrideWorkHours) {
+        // Either in work hours OR user manually overrode - resume recording
+        _clearPauseStateAndCheckRecording();
+      } else {
+        // Outside work hours and no override - replace with work-hours pause
+        pauseUntilNextWorkPeriod(mainWindow, true); // silent=true
+      }
+    } else if (!isActive && !paused && !manualOverrideWorkHours) {
+      // Outside work hours but not paused (and no manual override) - should be paused
+      pauseUntilNextWorkPeriod(mainWindow, true); // silent=true
+    } else if (isActive && paused && pauseReason === 'workday-start') {
+      // In work hours but paused due to work-hours - should be active
+      _clearPauseStateAndCheckRecording();
+      // Clear manual override when work hours naturally start
+      manualOverrideWorkHours = false;
+    } else if (isActive && !paused && manualOverrideWorkHours) {
+      // Work hours started naturally while user had manual override - clear it
+      manualOverrideWorkHours = false;
+    }
+    
+    // Ensure recording state matches all conditions
+    // This catches any other state drift (permissions, auth, etc.)
+    if (checkAndAdjustRecording) {
+      checkAndAdjustRecording();
+    }
+  } catch (error) {
+    log.error('Error in state validation heartbeat:', error);
+  }
+}
+
+/**
+ * Starts the periodic state validation heartbeat
+ */
+function startStateValidation() {
+  if (stateValidationIntervalId) {
+    clearInterval(stateValidationIntervalId);
+  }
+  // Run every 60 seconds to catch timer failures after sleep/wake
+  stateValidationIntervalId = setInterval(_validateState, 60000);
+  log.info('State validation heartbeat started');
+}
+
+/**
+ * Stops the periodic state validation heartbeat
+ */
+function stopStateValidation() {
+  if (stateValidationIntervalId) {
+    clearInterval(stateValidationIntervalId);
+    stateValidationIntervalId = null;
+  }
+}
 
 /**
  * Show storage error message to the user
@@ -95,7 +191,6 @@ async function initState(options = {}) {
   // Store callback functions
   checkAndAdjustRecording = options.checkRecording;
   navigateToView = options.navigateToView;
-  getUserAwayState = options.getUserAwayState;
   mainWindow = options.mainWindow;
   overlayWindow = options.overlayWindow;
   try {
@@ -115,6 +210,9 @@ async function initState(options = {}) {
     
     // Set up IPC handlers
     setupIPCHandlers();
+    
+    // Set up power monitor handlers
+    setupPowerMonitorHandlers();
 
     return {
       store,
@@ -245,6 +343,9 @@ function resume() {
     pauseUntilNextWorkPeriod(mainWindow, true); // silent=true to avoid notification on startup
   }
   
+  // Start periodic state validation heartbeat to catch timer failures
+  startStateValidation();
+  
   // Ensure all state is synchronized after initialization
   if (checkAndAdjustRecording) {
     checkAndAdjustRecording();
@@ -327,7 +428,7 @@ function _checkWorkdayEndNotification() {
   }
 }
 
-function _resumeRecording() {
+function _clearPauseStateAndCheckRecording() {
   // Clear pause state to avoid issues
   pauseState = { endTime: null, timeoutId: null, reason: null };
 
@@ -349,7 +450,7 @@ function pauseRecording(duration, mainWindow, reason = null) {
   // Set pause state
   pauseState = {
     endTime: endTime,
-    timeoutId: setTimeout(() => _resumeRecording(), duration),
+    timeoutId: setTimeout(() => _clearPauseStateAndCheckRecording(), duration),
     reason: reason
   };
 
@@ -375,6 +476,9 @@ function pauseRecording(duration, mainWindow, reason = null) {
 // Function to pause until the start of the next active work period (either today or next workday)
 function pauseUntilNextWorkPeriod(mainWindow, silent=false) {
   const now = new Date();
+  
+  // Clear manual override flag when applying work-hours pause
+  manualOverrideWorkHours = false;
   
   if (!silent) {
     _checkWorkdayEndNotification();
@@ -462,6 +566,12 @@ function recordingStarted(mainWindow) {
   // Clear the saved pause state
   safeStoreOperation(() => store.delete('pauseState'), 'clear pause state');
 
+  // If user manually resumes outside work hours, set override flag
+  const now = new Date();
+  if (!isActiveWorkPeriod(now)) {
+    manualOverrideWorkHours = true;
+  }
+
   _scheduleNextWorkEndCheck();
 
   // Common operations for all resume cases
@@ -510,7 +620,7 @@ function loadPauseState() {
       
       pauseState = {
         endTime: endTime,
-        timeoutId: setTimeout(() => _resumeRecording(), remainingDuration),
+        timeoutId: setTimeout(() => _clearPauseStateAndCheckRecording(), remainingDuration),
         reason: savedState.reason
       };
       
@@ -656,7 +766,7 @@ function setupIPCHandlers() {
   });
   
   ipcMain.on('logout', (event) => {
-    clearIdToken();
+    resetSessionState();
     
     // Stop recording on logout
     if (checkAndAdjustRecording) {
@@ -988,14 +1098,7 @@ function _scheduleNextWorkEndCheck() {
     const firedLate = now - intendedFireTs > LATE_GRACE_MS;
 
     // Check if user is away (screen locked or system suspended) to avoid notifications
-    let isUserAway = false;
-    if (getUserAwayState && typeof getUserAwayState === 'function') {
-      try {
-        isUserAway = getUserAwayState();
-      } catch (error) {
-        log.warn('Could not check user away state:', error);
-      }
-    }
+    const isUserAway = isSystemIdle();
 
     // When work period ends, pause until next work period
     // Use silent=true when firing late OR when user is away to suppress the banner
@@ -1012,6 +1115,9 @@ function _scheduleNextWorkEndCheck() {
  */
 function cleanupOnQuit() {
   try {
+    // Stop state validation heartbeat
+    stopStateValidation();
+    
     // Clear pause timeout if active
     if (pauseState.timeoutId) {
       clearTimeout(pauseState.timeoutId);
@@ -1047,11 +1153,112 @@ function setIdToken(token) {
 }
 
 /**
- * Clear the authentication token (logout)
+ * Clear the authentication token only
  */
 function clearIdToken() {
   idToken = null;
+}
 
+/**
+ * Reset all session-specific state on logout
+ * Keeps user preferences (work hours, settings) but clears session data
+ */
+function resetSessionState() {
+  // Clear token
+  clearIdToken();
+  
+  // Clear pause state and timers
+  if (pauseState.timeoutId) {
+    clearTimeout(pauseState.timeoutId);
+  }
+  pauseState = {
+    endTime: null,
+    timeoutId: null,
+    reason: null
+  };
+  
+  // Clear saved pause state from store
+  safeStoreOperation(() => {
+    if (store) {
+      store.delete('pauseState');
+    }
+  }, 'clear pause state on logout');
+  
+  // Clear work period check timeout
+  if (workPeriodCheckTimeoutId) {
+    clearTimeout(workPeriodCheckTimeoutId);
+    workPeriodCheckTimeoutId = null;
+  }
+  
+  // Clear manual override flag
+  manualOverrideWorkHours = false;
+  
+  // Clear system state flags
+  isScreenLocked = false;
+  isSystemSuspended = false;
+  
+  // Reset user status to default (avoid showing inactive when logged out)
+  userStatus = 'active';
+}
+
+/**
+ * Check if system is idle (locked or suspended)
+ */
+function isSystemIdle() {
+  return isScreenLocked || isSystemSuspended;
+}
+
+/**
+ * Clear lock/suspend flags when we detect user activity
+ * Called as a worst-case fallback when user interacts with the app
+ */
+function clearSystemIdleFlags() {
+  if (isScreenLocked || isSystemSuspended) {
+    log.info('Clearing lock/suspend flags due to app interaction (fallback)');
+    isScreenLocked = false;
+    isSystemSuspended = false;
+  }
+}
+
+/**
+ * Setup power monitor event handlers
+ * Called automatically during initState()
+ */
+function setupPowerMonitorHandlers() {
+  const { powerMonitor } = require('electron');
+  
+  powerMonitor.on('resume', () => {
+    isSystemSuspended = false;
+    // Rebase timers after system resume
+    resume();
+    if (checkAndAdjustRecording) {
+      checkAndAdjustRecording();
+    }
+  });
+  
+  powerMonitor.on('unlock-screen', () => {
+    isScreenLocked = false;
+    // Rebase timers after unlock as some Windows devices may not emit 'resume'
+    // and existing setTimeouts would otherwise extend pauses by sleep duration
+    resume();
+    if (checkAndAdjustRecording) {
+      checkAndAdjustRecording();
+    }
+  });
+  
+  powerMonitor.on('suspend', () => {
+    isSystemSuspended = true;
+    if (checkAndAdjustRecording) {
+      checkAndAdjustRecording();
+    }
+  });
+  
+  powerMonitor.on('lock-screen', () => {
+    isScreenLocked = true;
+    if (checkAndAdjustRecording) {
+      checkAndAdjustRecording();
+    }
+  });
 }
 
 /**
@@ -1129,6 +1336,9 @@ module.exports = {
   cleanupOnQuit,
   setIdToken,
   clearIdToken,
+  resetSessionState,
+  isSystemIdle,
+  clearSystemIdleFlags,
   getGeminiApiKey,
   getAutoSubmit: () => autoSubmit
 }
