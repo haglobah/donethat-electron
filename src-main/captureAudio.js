@@ -560,6 +560,11 @@ async function startRecordingInternal() {
         // If we get IPC serialization errors, stop recording to prevent hanging
         if (e.message.includes('could not be cloned') || e.message.includes('serialization')) {
           log.warn('IPC serialization error detected, stopping recording to prevent hanging');
+          // Clear interval first before calling stop to prevent re-entry
+          if (transcriptionInterval) {
+            clearInterval(transcriptionInterval);
+            transcriptionInterval = null;
+          }
           if (isRecording && mainWindow && !mainWindow.isDestroyed()) {
             await stopRecordingInternal();
           }
