@@ -801,6 +801,12 @@ ipcMain.handle('overlay:get-state', () => {
     return { success: true };
   })
 
+  // Handle screenshot capture for feedback - captures the display with the focused window
+  ipcMain.handle('capture-feedback-screenshot', async () => {
+    const { captureFeedbackScreenshot } = require('./src-main/feedback');
+    return await captureFeedbackScreenshot(mainWindow);
+  })
+
 
 
 

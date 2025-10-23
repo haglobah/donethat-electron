@@ -957,6 +957,19 @@ body {
   line-height: 1;
 }
 
+/* Feedback textarea styling */
+.feedback-textarea {
+  @apply w-full p-3 border border-gray-300 rounded-lg text-sm resize-none;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.feedback-textarea:focus {
+  @apply outline-none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-focus);
+}
+
 /* Auth page layout */
 .auth-page {
   min-height: calc(100vh - 0px);

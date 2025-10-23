@@ -11,6 +11,7 @@ const { initializeAuth } = require('./auth.js');
 const { initializeDashboard, resetSummaryState } = require('./dashboard.js');
 const { initializePermissions } = require('./permissions.js');
 const { initializeAnalytics, trackPageView } = require('./analytics.js');
+const { initializeFeedback } = require('./feedback.js');
 const { routeLink } = require('./link-router.js');
 const { 
   hasScreenCapturePermission,
@@ -392,6 +393,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeDashboard(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   initializeSettings(loadUserSettingsCallback, showBlockingSpinner, hideBlockingSpinner, navigateToView);
   initializePermissions(navigateToView, getCurrentView, updateTopbarVisibility);
+  initializeFeedback();
   initializeAnalytics();
 
   // Grab the portal webview if present

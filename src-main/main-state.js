@@ -238,7 +238,9 @@ async function initState(options = {}) {
       setIdToken,
       clearIdToken,
       cleanupOnQuit,
-      resume
+      resume,
+      isSystemIdle,
+      clearSystemIdleFlags
     };
   } catch (error) {
     log.error('Failed to initialize state:', error);
