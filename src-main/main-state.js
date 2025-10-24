@@ -110,7 +110,6 @@ function startStateValidation() {
   }
   // Run every 60 seconds to catch timer failures after sleep/wake
   stateValidationIntervalId = setInterval(_validateState, 60000);
-  log.info('State validation heartbeat started');
 }
 
 /**

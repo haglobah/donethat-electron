@@ -286,7 +286,7 @@ function setupAutoUpdater() {
   // Use the centralized logger
   autoUpdater.logger = log
   // Add configuration for GitHub provider
-  autoUpdater.allowPrerelease = false
+  autoUpdater.allowDowngrade = false // Prevent auto-downgrade when distributing test/beta versions
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = app.isPackaged; // Only install on quit in packaged app
   autoUpdater.forceDevUpdateConfig = true; // Force check in dev mode
