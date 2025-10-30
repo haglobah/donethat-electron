@@ -155,7 +155,9 @@ if (summaryCustomInput && summaryAddCustomBtn) {
   const addCustomBullet = () => {
     const text = summaryCustomInput.value.trim();
     const timeInput = document.getElementById('summaryCustomTimeInput');
-    const timeMinutes = timeInput && timeInput.value ? parseInt(timeInput.value) : null;
+    // Input is provided in hours; convert to minutes for storage
+    const timeHours = timeInput && timeInput.value ? parseFloat(timeInput.value) : null;
+    const timeMinutes = (typeof timeHours === 'number' && !isNaN(timeHours)) ? Math.max(0, Math.round(timeHours * 60)) : null;
     
     if (text) {
       customBullets.push({
