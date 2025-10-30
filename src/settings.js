@@ -106,6 +106,8 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
 
   // Set up Gemini API key listeners
   setupGeminiApiKeyListeners();
+  // Set up OpenAI-compatible config listeners
+  setupOpenAICompatibleListeners();
   // Set up hotkey configuration UI
   setupHotkeyConfiguration();
   // Set up dependency: disable screenshots in meetings requires microphone enabled
@@ -734,6 +736,138 @@ function setupGeminiApiKeyListeners() {
       } catch (error) {
         console.error('Error clearing Gemini API key:', error);
         showBanner(`Error clearing API key: ${error.message}`, { title: 'Settings', sticky: true });
+      }
+    });
+  }
+}
+
+// Set up OpenAI-compatible config listeners
+function setupOpenAICompatibleListeners() {
+  const openaiEndpointInput = document.getElementById('openaiEndpointInput');
+  const openaiModelInput = document.getElementById('openaiModelInput');
+  const openaiApiKeyInput = document.getElementById('openaiApiKeyInput');
+  const toggleOpenaiKeyBtn = document.getElementById('toggleOpenaiKeyBtn');
+  const clearOpenaiConfigBtn = document.getElementById('clearOpenaiConfigBtn');
+  const MASK = '************************';
+  let hasStoredConfig = false;
+  let isShowingKey = false;
+  let storedConfig = { endpoint: null, model: null, apiKey: null };
+
+  if (openaiEndpointInput && openaiApiKeyInput) {
+    // On mount, load existing config
+    (async () => {
+      try {
+        const result = await ipcRenderer.invoke('get-openai-compatible-config');
+        if (result && result.success && result.config) {
+          storedConfig = result.config;
+          hasStoredConfig = !!(storedConfig.endpoint || storedConfig.model || storedConfig.apiKey);
+          if (storedConfig.endpoint) {
+            openaiEndpointInput.value = storedConfig.endpoint;
+          }
+          if (storedConfig.model) {
+            openaiModelInput.value = storedConfig.model;
+          }
+          if (storedConfig.apiKey) {
+            openaiApiKeyInput.value = MASK;
+            openaiApiKeyInput.type = 'password';
+          }
+        }
+      } catch (error) {
+        console.error('Error loading OpenAI-compatible config:', error);
+      }
+    })();
+
+    // Save config on blur for all fields
+    const saveConfig = async () => {
+      const endpoint = openaiEndpointInput.value.trim();
+      const model = openaiModelInput.value.trim();
+      const rawApiKey = openaiApiKeyInput.value.trim();
+
+      let apiKey = null;
+      if (hasStoredConfig && !isShowingKey && rawApiKey === MASK) {
+        // Still masked, keep existing key
+        apiKey = storedConfig.apiKey;
+      } else if (rawApiKey) {
+        apiKey = rawApiKey;
+      }
+
+      try {
+        if (endpoint || model || apiKey) {
+          await ipcRenderer.invoke('save-openai-compatible-config', { endpoint, model, apiKey });
+          logAnalyticsEvent('openai_config_saved', {
+            has_endpoint: !!endpoint,
+            has_model: !!model,
+            has_key: !!apiKey
+          });
+          hasStoredConfig = true;
+          storedConfig = { endpoint, model, apiKey };
+          if (apiKey && !isShowingKey) {
+            openaiApiKeyInput.value = MASK;
+            openaiApiKeyInput.type = 'password';
+          }
+        } else {
+          await ipcRenderer.invoke('clear-openai-compatible-config');
+          logAnalyticsEvent('openai_config_cleared', {});
+          hasStoredConfig = false;
+          storedConfig = { endpoint: null, model: null, apiKey: null };
+        }
+      } catch (error) {
+        console.error('Error saving OpenAI-compatible config:', error);
+        showBanner(`Error saving configuration: ${error.message}`, { title: 'Settings', sticky: true });
+      }
+    };
+
+    openaiEndpointInput.addEventListener('blur', saveConfig);
+    openaiModelInput.addEventListener('blur', saveConfig);
+    openaiApiKeyInput.addEventListener('blur', saveConfig);
+  }
+
+  if (toggleOpenaiKeyBtn) {
+    toggleOpenaiKeyBtn.addEventListener('click', () => {
+      const input = openaiApiKeyInput;
+      if (input.type === 'password') {
+        input.type = 'text';
+        isShowingKey = true;
+        // Populate with real key if we have a stored one and field currently masked
+        if (hasStoredConfig && storedConfig.apiKey && input.value === MASK) {
+          input.value = storedConfig.apiKey;
+        }
+        toggleOpenaiKeyBtn.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+            <line x1="1" y1="1" x2="23" y2="23"></line>
+          </svg>
+        `;
+      } else {
+        input.type = 'password';
+        isShowingKey = false;
+        if (hasStoredConfig && storedConfig.apiKey) {
+          input.value = MASK;
+        }
+        toggleOpenaiKeyBtn.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+        `;
+      }
+    });
+  }
+
+  if (clearOpenaiConfigBtn) {
+    clearOpenaiConfigBtn.addEventListener('click', async () => {
+      try {
+        await ipcRenderer.invoke('clear-openai-compatible-config');
+        openaiEndpointInput.value = '';
+        openaiModelInput.value = '';
+        openaiApiKeyInput.value = '';
+        hasStoredConfig = false;
+        isShowingKey = false;
+        storedConfig = { endpoint: null, model: null, apiKey: null };
+        logAnalyticsEvent('openai_config_cleared', {});
+      } catch (error) {
+        console.error('Error clearing OpenAI-compatible config:', error);
+        showBanner(`Error clearing configuration: ${error.message}`, { title: 'Settings', sticky: true });
       }
     });
   }

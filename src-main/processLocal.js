@@ -1,5 +1,5 @@
 const log = require('electron-log');
-const { getGeminiApiKey } = require('./main-state');
+const { getGeminiApiKey, getOpenAICompatibleConfig } = require('./main-state');
 
 // Firebase URLs for config and processing
 const FIREBASE_CONFIG_URL = 'https://europe-west1-donethat.cloudfunctions.net/inputConfig';
@@ -22,12 +22,23 @@ const CAPTION_TOKENS = 200;
 const MAX_SCREENSHOT_SIZE = 2000000; // 2MB per screenshot
 
 /**
- * Check if local processing is available (has Gemini API key)
+ * Check if local processing is available (has Gemini API key or OpenAI-compatible config)
  */
 async function isLocalProcessingAvailable() {
   try {
-    const result = await getGeminiApiKey();
-    return result.success && result.apiKey;
+    // Check for Gemini key first (preferred)
+    const geminiResult = await getGeminiApiKey();
+    if (geminiResult.success && geminiResult.apiKey) {
+      return true;
+    }
+
+    // Check for OpenAI-compatible config
+    const openaiResult = await getOpenAICompatibleConfig();
+    if (openaiResult.success && openaiResult.config && openaiResult.config.endpoint) {
+      return true;
+    }
+
+    return false;
   } catch (error) {
     log.error('Error checking local processing availability:', error);
     return false;
@@ -89,30 +100,52 @@ async function getConfig(idToken) {
 }
 
 /**
+ * Create LLM instance based on available provider
+ */
+async function createLLMInstance(modelConfig, config) {
+  // Check for Gemini key first (preferred)
+  const geminiResult = await getGeminiApiKey();
+  if (geminiResult.success && geminiResult.apiKey) {
+    const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
+    return new ChatGoogleGenerativeAI({
+      apiKey: geminiResult.apiKey,
+      model: modelConfig.model,
+      maxOutputTokens: modelConfig.maxOutputTokens || CAPTION_TOKENS
+    }).withStructuredOutput(config.outputSchema);
+  }
+
+  // Fall back to OpenAI-compatible
+  const openaiResult = await getOpenAICompatibleConfig();
+  if (openaiResult.success && openaiResult.config && openaiResult.config.endpoint && openaiResult.config.model) {
+    const { ChatOpenAI } = await import('@langchain/openai');
+    const baseURL = openaiResult.config.endpoint.replace(/\/$/, ''); // Remove trailing slash
+    return new ChatOpenAI({
+      apiKey: openaiResult.config.apiKey || undefined,
+      model: openaiResult.config.model,
+      maxTokens: modelConfig.maxOutputTokens || CAPTION_TOKENS,
+      configuration: {
+        baseURL: baseURL
+      }
+    }).withStructuredOutput(config.outputSchema);
+  }
+
+  throw new Error('No LLM provider available');
+}
+
+/**
  * Initialize LLM models with structured output
  */
 async function initializeLLM(idToken) {
   try {
     const config = await getConfig(idToken);
-    
-    // Get Gemini API key
-    const geminiResult = await getGeminiApiKey();
-    if (!geminiResult.success || !geminiResult.apiKey) {
-      throw new Error('No valid Gemini API key available');
-    }
-    
-    // Initialize LLM models based on config (only Gemini)
-    const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
-    
-    llmModels = config.llmModels
-      .filter(modelConfig => modelConfig.provider === 'gemini')
-      .map(modelConfig => new ChatGoogleGenerativeAI({
-          apiKey: geminiResult.apiKey,
-          model: modelConfig.model,
-          maxOutputTokens: modelConfig.maxOutputTokens || CAPTION_TOKENS
-        }).withStructuredOutput(config.outputSchema)
-      );
-    
+
+    // Initialize LLM models based on config (support both providers)
+    llmModels = await Promise.all(
+      config.llmModels.map(async (modelConfig) => {
+        return await createLLMInstance(modelConfig, config);
+      })
+    );
+
   } catch (error) {
     log.error('Error initializing LLM:', error);
     throw error;
@@ -410,7 +443,7 @@ async function processDataLocally(idToken, screenshots, previousScreenshots, inp
   try {
     // Check if local processing is available
     if (!await isLocalProcessingAvailable()) {
-      throw new Error('Local processing not available - no Gemini API key');
+      throw new Error('Local processing not available - no API keys or configuration');
     }
 
     // Format application activity
@@ -431,6 +464,12 @@ async function processDataLocally(idToken, screenshots, previousScreenshots, inp
     let idleTime = undefined;
     if (inputData.idleTime !== undefined) {
       idleTime = inputData.idleTime;
+    }
+
+    // Skip local processing if system idle time exceeds 5 minutes (300 seconds)
+    if (typeof idleTime === 'number' && idleTime >= 300) {
+      log.warn('Skipping local processing due to idle time > 5 minutes');
+      return { success: false, skipped: true, reason: 'idle' };
     }
 
     // Analyze screenshots locally

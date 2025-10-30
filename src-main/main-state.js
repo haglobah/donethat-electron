@@ -1012,6 +1012,78 @@ function setupIPCHandlers() {
       throw error;
     }
   });
+
+  // OpenAI-compatible config handlers
+  ipcMain.handle('save-openai-compatible-config', async (event, config) => {
+    try {
+      if (!config || typeof config !== 'object') {
+        throw new Error('Invalid config provided');
+      }
+
+      const { endpoint, apiKey } = config;
+
+      if (endpoint && typeof endpoint !== 'string') {
+        throw new Error('Invalid endpoint provided');
+      }
+
+      if (apiKey && typeof apiKey !== 'string') {
+        throw new Error('Invalid API key provided');
+      }
+
+      // Encrypt the API key if provided
+      let encryptedKey = null;
+      if (apiKey) {
+        encryptedKey = encryptData(apiKey);
+      }
+
+      // Save config to store
+      safeStoreOperation(() => {
+        if (store) {
+          store.set('openaiCompatibleConfig', {
+            endpoint: endpoint || null,
+            model: config.model || null,
+            apiKey: encryptedKey
+          });
+        } else {
+          throw new Error('Store not initialized');
+        }
+      }, 'save OpenAI-compatible config');
+
+      log.info('OpenAI-compatible config saved successfully');
+      return { success: true };
+    } catch (error) {
+      log.error('Error saving OpenAI-compatible config:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('get-openai-compatible-config', async (event) => {
+    try {
+      const result = await getOpenAICompatibleConfig();
+      return result;
+    } catch (error) {
+      log.error('Error retrieving OpenAI-compatible config (ipc):', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('clear-openai-compatible-config', async (event) => {
+    try {
+      safeStoreOperation(() => {
+        if (store) {
+          store.delete('openaiCompatibleConfig');
+        } else {
+          throw new Error('Store not initialized');
+        }
+      }, 'delete OpenAI-compatible config');
+
+      log.info('OpenAI-compatible config cleared successfully');
+      return { success: true };
+    } catch (error) {
+      log.error('Error clearing OpenAI-compatible config:', error);
+      throw error;
+    }
+  });
 }
 
 /**
@@ -1281,7 +1353,7 @@ async function getGeminiApiKey() {
 
     // Decrypt the API key
     const decryptedKey = decryptData(encryptedKey);
-    
+
     return { success: true, apiKey: decryptedKey };
   } catch (error) {
     log.error('Error retrieving Gemini API key:', error);
@@ -1318,6 +1390,54 @@ async function getGeminiApiKey() {
   }
 }
 
+/**
+ * Get OpenAI-compatible config (for internal use)
+ */
+async function getOpenAICompatibleConfig() {
+  try {
+    const storedConfig = safeStoreOperation(() => {
+      if (store) {
+        return store.get('openaiCompatibleConfig');
+      } else {
+        return null;
+      }
+    }, 'get OpenAI-compatible config');
+
+    if (!storedConfig) {
+      return { success: true, config: null };
+    }
+
+    // Decrypt the API key if present
+    let apiKey = null;
+    if (storedConfig.apiKey) {
+      try {
+        apiKey = decryptData(storedConfig.apiKey);
+      } catch (error) {
+        log.error('Error decrypting OpenAI-compatible API key:', error);
+        // Clear corrupted config
+        safeStoreOperation(() => {
+          if (store) {
+            store.delete('openaiCompatibleConfig');
+          }
+        }, 'delete corrupted OpenAI-compatible config');
+        return { success: true, config: null };
+      }
+    }
+
+    return {
+      success: true,
+      config: {
+        endpoint: storedConfig.endpoint,
+        model: storedConfig.model,
+        apiKey: apiKey
+      }
+    };
+  } catch (error) {
+    log.error('Error retrieving OpenAI-compatible config:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   initState,
   resume,
@@ -1341,5 +1461,6 @@ module.exports = {
   isSystemIdle,
   clearSystemIdleFlags,
   getGeminiApiKey,
+  getOpenAICompatibleConfig,
   getAutoSubmit: () => autoSubmit
 }
