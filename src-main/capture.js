@@ -13,6 +13,7 @@ const windowsCapture = require('./captureWindows');
 
 // Variable to track the capture interval
 let screenshotInterval = null;
+let initialCaptureDelayTimer = null;
 let captureIntervalMinutes; // Set in main
 let reauthenticateCallback = null; // Store reauthenticate callback function
 let mainWindowRef = null; // Store mainWindow reference
@@ -1004,11 +1005,14 @@ function startCaptureInterval() {
   }
   windowStartRetryCount = 0;
 
-  // Run first cycle immediately
-  _runCaptureCycle().catch(error => {
-    log.error('Error during initial capture cycle run:', error);
-    // handleCaptureError is called within _runCaptureCycle
-  });
+  // Wait 1 minute before first capture
+  initialCaptureDelayTimer = setTimeout(() => {
+    initialCaptureDelayTimer = null;
+    _runCaptureCycle().catch(error => {
+      log.error('Error during initial capture cycle run:', error);
+      // handleCaptureError is called within _runCaptureCycle
+    });
+  }, 60000);
 
   // Set up interval for subsequent cycles
   screenshotInterval = setInterval(() => {
@@ -1029,6 +1033,11 @@ function stopCaptureInterval() {
   if (screenshotInterval) {
     clearInterval(screenshotInterval);
     screenshotInterval = null;
+  }
+  // Cancel initial capture delay
+  if (initialCaptureDelayTimer) {
+    clearTimeout(initialCaptureDelayTimer);
+    initialCaptureDelayTimer = null;
   }
   // Cancel any pending window-tracking start retries
   if (windowStartRetryTimer) {
