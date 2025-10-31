@@ -402,20 +402,9 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, au
     }
 
     // Truncate description field to <200 tokens if it exists
-    if (response && typeof response === 'object') {
-      if (response.description && typeof response.description === 'string') {
-        const originalLength = response.description.length;
-        response.description = truncateToTokens(response.description, CAPTION_TOKENS);
-        const truncatedLength = response.description.length;
-        console.log('Description truncation:', {
-          hadDescription: true,
-          originalLength,
-          truncatedLength,
-          wasTruncated: originalLength > truncatedLength
-        });
-      } else {
-        console.log('Description truncation: no description field found');
-      }
+    // Schema uses uppercase keys (DESCRIPTION, CATEGORY, ONELINE)
+    if (response && typeof response === 'object' && response.DESCRIPTION && typeof response.DESCRIPTION === 'string') {
+      response.DESCRIPTION = truncateToTokens(response.DESCRIPTION, CAPTION_TOKENS);
     }
 
     return response;
