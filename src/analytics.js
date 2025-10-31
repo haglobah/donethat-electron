@@ -8,6 +8,9 @@ const { auth } = require('./firebase.js');
 const os = require('os');
 const { hasValidAccess, getState } = require('./app-state.js');
 
+// Disable Google Analytics event sending
+const ANALYTICS_ENABLED = false;
+
 let appVersion = null;
 
 // Create a random client ID for this session
@@ -122,6 +125,11 @@ class Analytics {
           
           // Track app close
           window.addEventListener('beforeunload', () => {
+            // Early return if analytics is disabled
+            if (!ANALYTICS_ENABLED) {
+              return;
+            }
+
             // Use synchronous approach for beforeunload
             const sessionDurationMs = Date.now() - this.sessionStartTime;
             
@@ -248,6 +256,11 @@ class Analytics {
    * @param {Object} params - Event parameters
    */
   async logEvent(eventName, params = {}) {
+    // Early return if analytics is disabled
+    if (!ANALYTICS_ENABLED) {
+      return false;
+    }
+
     // Make sure we're initialized
     if (!this.initialized) {
       await this.initialize();
