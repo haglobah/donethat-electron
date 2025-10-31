@@ -1040,7 +1040,7 @@ function createApplicationMenu() {
         click: () => navigateToView('signup-next')
       },
       {
-        label: 'Settings',
+        label: 'Permissions',
         click: () => navigateToView('settings'),
         enabled: isLoggedIn
       },
