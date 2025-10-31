@@ -928,6 +928,7 @@ body {
   flex: 1 1 auto;
   min-height: 0;
 }
+/* (removed settings-specific wrappers; using global .auth-container and .auth-card) */
 #settingsView .auth-page {
   min-height: auto;
   justify-content: flex-start;
@@ -943,6 +944,10 @@ body {
   align-items: center;
   column-gap: 8px;
   margin: 46px 0 16px 0; /* More vertical space before/after divider */
+}
+.auth-card > .section-divider:first-child {
+  /* Avoid margin collapse pushing the divider outside the tile */
+  margin-top: 0;
 }
 .section-divider::after {
   content: "";
@@ -1016,6 +1021,22 @@ body {
   padding: 28px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.06);
   margin-bottom: 24px; /* modest whitespace below tile */
+}
+
+/* Normalize settings tiles layout precisely */
+#settingsView .auth-card {
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* Settings: ensure placeholders are a neutral grey for local processing inputs */
+#settingsView #geminiApiKeyInput::placeholder,
+#settingsView #openaiEndpointInput::placeholder,
+#settingsView #openaiModelInput::placeholder,
+#settingsView #openaiApiKeyInput::placeholder {
+  color: #9ca3af; /* gray-400 */
+  opacity: 1;     /* ensure consistent color across browsers */
 }
 
 .auth-legal {

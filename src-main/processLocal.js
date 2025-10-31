@@ -18,8 +18,22 @@ let llmModels = null;
 let latestConfig = null;
 
 // Constants from online version
-const CAPTION_TOKENS = 200;
+const CAPTION_TOKENS = 200; // Target tokens for description truncation
+const MAX_OUTPUT_TOKENS = 1000; // Max tokens allowed for model output
 const MAX_SCREENSHOT_SIZE = 2000000; // 2MB per screenshot
+
+/**
+ * Truncate text to approximately maxTokens tokens (rough estimate: 1 token ≈ 4 chars)
+ */
+function truncateToTokens(text, maxTokens) {
+  if (!text || typeof text !== 'string') return text;
+  const maxChars = maxTokens * 4; // Rough estimate
+  if (text.length <= maxChars) return text;
+  // Truncate and ensure we don't cut in the middle of a word if possible
+  const truncated = text.substring(0, maxChars);
+  const lastSpace = truncated.lastIndexOf(' ');
+  return lastSpace > maxChars * 0.8 ? truncated.substring(0, lastSpace) : truncated;
+}
 
 /**
  * Check if local processing is available (has Gemini API key or OpenAI-compatible config)
@@ -99,53 +113,56 @@ async function getConfig(idToken) {
   }
 }
 
-/**
- * Create LLM instance based on available provider
- */
-async function createLLMInstance(modelConfig, config) {
-  // Check for Gemini key first (preferred)
-  const geminiResult = await getGeminiApiKey();
-  if (geminiResult.success && geminiResult.apiKey) {
-    const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
-    return new ChatGoogleGenerativeAI({
-      apiKey: geminiResult.apiKey,
-      model: modelConfig.model,
-      maxOutputTokens: modelConfig.maxOutputTokens || CAPTION_TOKENS
-    }).withStructuredOutput(config.outputSchema);
-  }
-
-  // Fall back to OpenAI-compatible
-  const openaiResult = await getOpenAICompatibleConfig();
-  if (openaiResult.success && openaiResult.config && openaiResult.config.endpoint && openaiResult.config.model) {
-    const { ChatOpenAI } = await import('@langchain/openai');
-    const baseURL = openaiResult.config.endpoint.replace(/\/$/, ''); // Remove trailing slash
-    return new ChatOpenAI({
-      apiKey: openaiResult.config.apiKey || undefined,
-      model: openaiResult.config.model,
-      maxTokens: modelConfig.maxOutputTokens || CAPTION_TOKENS,
-      configuration: {
-        baseURL: baseURL
-      }
-    }).withStructuredOutput(config.outputSchema);
-  }
-
-  throw new Error('No LLM provider available');
-}
 
 /**
  * Initialize LLM models with structured output
  */
-async function initializeLLM(idToken) {
+async function initializeLLM(idToken, testMode = false) {
   try {
     const config = await getConfig(idToken);
 
-    // Initialize LLM models based on config (support both providers)
-    llmModels = await Promise.all(
-      config.llmModels.map(async (modelConfig) => {
-        return await createLLMInstance(modelConfig, config);
-      })
-    );
+    // Determine provider availability
+    const geminiKey = await getGeminiApiKey();
+    const openaiCompat = await getOpenAICompatibleConfig();
 
+    // If Gemini is configured, use the models from cloud config that are for Gemini
+    if (geminiKey.success && geminiKey.apiKey) {
+      const geminiModels = (config.llmModels || []).filter(m => m.provider === 'gemini');
+      const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
+      llmModels = await Promise.all(
+        geminiModels.map(async (m) => new ChatGoogleGenerativeAI({
+          apiKey: geminiKey.apiKey,
+          model: m.model,
+          maxOutputTokens: m.maxOutputTokens || MAX_OUTPUT_TOKENS,
+          temperature: 0.2 // some randomness so the retries make sense
+        }).withStructuredOutput(config.outputSchema, { safe: true }))
+      );
+      if (!llmModels || llmModels.length === 0) {
+        throw new Error('No Gemini models available in config');
+      }
+      return;
+    }
+
+    // Otherwise, if OpenAI-compatible is configured, build a single model using that config
+    if (openaiCompat.success && openaiCompat.config && openaiCompat.config.endpoint && openaiCompat.config.model) {
+      const { ChatOpenAI } = await import('@langchain/openai');
+      // Use provided endpoint as-is (minus trailing slash) to stay flexible
+      const baseURL = openaiCompat.config.endpoint.replace(/\/$/, '');
+      const outputSchema = config.outputSchema;
+      const chat = new ChatOpenAI({
+        apiKey: openaiCompat.config.apiKey || undefined,
+        model: openaiCompat.config.model,
+        maxTokens: MAX_OUTPUT_TOKENS,
+        maxRetries: testMode ? 0 : undefined,
+        temperature: 0.2, // some randomness so the retries make sense
+        response_format: { type: 'json_object' },
+        configuration: { baseURL }
+      }).withStructuredOutput(outputSchema, { safe: true });
+      llmModels = [chat];
+      return;
+    }
+
+    throw new Error('No LLM provider available');
   } catch (error) {
     log.error('Error initializing LLM:', error);
     throw error;
@@ -155,12 +172,12 @@ async function initializeLLM(idToken) {
 /**
  * Invoke LLM with fallback through multiple models
  */
-async function invokeWithFallback(messages) {
+async function invokeWithFallback(messages, testMode = false) {
   if (!llmModels || llmModels.length === 0) {
     throw new Error('No LLM models available');
   }
 
-  const maxAttemptsPerModel = 3; // initial + 2 retries
+  const maxAttemptsPerModel = testMode ? 1 : 3; // only 1 attempt in test mode
   let lastError = null;
 
   for (const llm of llmModels) {
@@ -170,6 +187,11 @@ async function invokeWithFallback(messages) {
         const response = await llm.invoke(messages);
         return response;
       } catch (error) {
+        if (testMode) {
+          // In test mode, throw immediately to see the actual error
+          throw error;
+        }
+
         attempt += 1;
         lastError = error;
         const remaining = maxAttemptsPerModel - attempt;
@@ -341,7 +363,7 @@ function buildBlocks(config, validScreenshots, previousScreenshots, applicationA
 /**
  * Analyze screenshots using local LLM processing
  */
-async function analyzeScreenshots(screenshots, previousScreenshots, activity, audioTranscript, idleTime, idToken) {
+async function analyzeScreenshots(screenshots, previousScreenshots, activity, audioTranscript, idleTime, idToken, testMode = false) {
   try {
     // Validate current screenshots - this is critical
     if (!screenshots || screenshots.length === 0) {
@@ -357,7 +379,7 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, au
 
     // Initialize LLM if not already done
     if (!llmModels) {
-      await initializeLLM(idToken);
+      await initializeLLM(idToken, testMode);
     }
     
     // Ensure we have up-to-date config
@@ -371,7 +393,7 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, au
     // Call LLM with fallback and retries
     const response = await invokeWithFallback([
       new HumanMessage({ content: blocks })
-    ]);
+    ], testMode);
 
     // If all LLMs failed, skip this round
     if (!response) {
@@ -379,7 +401,23 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, au
       return null;
     }
 
-    // Structured object is returned directly by withStructuredOutput
+    // Truncate description field to <200 tokens if it exists
+    if (response && typeof response === 'object') {
+      if (response.description && typeof response.description === 'string') {
+        const originalLength = response.description.length;
+        response.description = truncateToTokens(response.description, CAPTION_TOKENS);
+        const truncatedLength = response.description.length;
+        console.log('Description truncation:', {
+          hadDescription: true,
+          originalLength,
+          truncatedLength,
+          wasTruncated: originalLength > truncatedLength
+        });
+      } else {
+        console.log('Description truncation: no description field found');
+      }
+    }
+
     return response;
   } catch (error) {
     log.error('Error in local screenshot analysis:', error);
@@ -489,9 +527,15 @@ async function processDataLocally(idToken, screenshots, previousScreenshots, inp
         applicationActivity,
         audioTranscript,
         idleTime,
-        idToken
+        idToken,
+        testMode
       );
     } catch (err) {
+      // In test mode, pass through the real error
+      if (testMode) {
+        throw err;
+      }
+
       // Notify user directly on local analysis errors
       try {
         const { BrowserWindow } = require('electron');
@@ -526,7 +570,6 @@ async function processDataLocally(idToken, screenshots, previousScreenshots, inp
 
     // Skip Firebase submission in test mode
     if (testMode) {
-      log.info('Test mode: skipping Firebase submission');
       return { success: true, test: true };
     }
 
@@ -548,5 +591,7 @@ async function processDataLocally(idToken, screenshots, previousScreenshots, inp
 
 module.exports = {
   isLocalProcessingAvailable,
-  processDataLocally
+  processDataLocally,
+  // Allow main process to reset cached config and models when FE updates settings
+  resetLLMModels: () => { llmModels = null; }
 };

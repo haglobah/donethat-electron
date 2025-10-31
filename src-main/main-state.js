@@ -976,7 +976,7 @@ function setupIPCHandlers() {
         }
       }, 'save encrypted Gemini API key');
 
-      log.info('Gemini API key saved successfully');
+      try { require('./processLocal').resetLLMModels(); } catch (_) {}
       return { success: true };
     } catch (error) {
       log.error('Error saving Gemini API key:', error);
@@ -1005,6 +1005,7 @@ function setupIPCHandlers() {
         }
       }, 'delete Gemini API key');
 
+      try { require('./processLocal').resetLLMModels(); } catch (_) {}
       log.info('Gemini API key cleared successfully');
       return { success: true };
     } catch (error) {
@@ -1049,6 +1050,7 @@ function setupIPCHandlers() {
         }
       }, 'save OpenAI-compatible config');
 
+      try { require('./processLocal').resetLLMModels(); } catch (_) {}
       log.info('OpenAI-compatible config saved successfully');
       return { success: true };
     } catch (error) {
@@ -1077,6 +1079,7 @@ function setupIPCHandlers() {
         }
       }, 'delete OpenAI-compatible config');
 
+      try { require('./processLocal').resetLLMModels(); } catch (_) {}
       log.info('OpenAI-compatible config cleared successfully');
       return { success: true };
     } catch (error) {
@@ -1088,11 +1091,15 @@ function setupIPCHandlers() {
   // Test local processing handler
   ipcMain.handle('test-local-processing', async (event) => {
     try {
-      const { collectInputData } = require('./capture');
       const { processDataLocally } = require('./processLocal');
 
-      // Get current input data (screenshots, audio, etc.)
-      const inputData = await collectInputData(false); // Don't reset buffers for test
+      // Use minimal dummy input data for testing - avoids complex collection that might hang
+      const inputData = {
+        activity: [],
+        audioTranscript: 'Test audio transcript',
+        idleTime: 0
+      };
+
       const screenshots = await require('./captureScreenshots').captureScreenshot();
 
       // Check if we have local processing available

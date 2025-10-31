@@ -1069,5 +1069,6 @@ module.exports = {
   isCapturing,
   setCaptureInterval,
   initCapture,
-  shouldDisableScreenshotsInMeetings
+  shouldDisableScreenshotsInMeetings,
+  collectInputData
 }; 

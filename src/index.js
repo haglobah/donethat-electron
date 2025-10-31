@@ -236,6 +236,16 @@ function navigateToView(viewName) {
     allViews.forEach(view => view.classList.add('hidden'));
     // Show the requested view
     viewToShow.classList.remove('hidden');
+    // Ensure settings tiles are contained
+    if (viewName === 'settings' || viewName === 'permissions') {
+      try {
+        const container = document.querySelector('#settingsView .auth-container');
+        if (container) {
+          const cards = Array.from(document.querySelectorAll('#settingsView .auth-card'));
+          cards.forEach((el) => { if (!container.contains(el)) container.appendChild(el); });
+        }
+      } catch (_) {}
+    }
     
     // Show custom screenshot section on Linux when settings view is displayed
     if ((viewName === 'settings' || viewName === 'permissions') && process.platform === 'linux') {
