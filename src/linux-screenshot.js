@@ -10,6 +10,7 @@ class LinuxScreenshotManager {
     this.testIcon = null;
     this.testMessage = null;
     this.isLinux = process.platform === 'linux';
+    this.hideTimer = null;
     
     this.init();
   }
@@ -86,6 +87,7 @@ class LinuxScreenshotManager {
     this.testButton.disabled = true;
     this.testButton.textContent = 'Testing...';
     this.hideTestResult();
+    if (this.hideTimer) { clearTimeout(this.hideTimer); this.hideTimer = null; }
 
     try {
       const result = await ipcRenderer.invoke('test-linux-screenshot-command', command);
@@ -121,6 +123,13 @@ class LinuxScreenshotManager {
     }
 
     this.testMessage.textContent = message;
+
+    // Auto-hide after 10 seconds
+    if (this.hideTimer) { clearTimeout(this.hideTimer); }
+    this.hideTimer = setTimeout(() => {
+      try { this.hideTestResult(); } catch (_) {}
+      this.hideTimer = null;
+    }, 10000);
   }
 
   hideTestResult() {

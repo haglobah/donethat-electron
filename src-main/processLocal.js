@@ -22,6 +22,7 @@ const CAPTION_TOKENS = 200; // Target tokens for description truncation
 const MAX_OUTPUT_TOKENS = 1000; // Max tokens allowed for model output
 const MAX_SCREENSHOT_SIZE = 2000000; // 2MB per screenshot
 
+
 /**
  * Truncate text to approximately maxTokens tokens (rough estimate: 1 token ≈ 4 chars)
  */
@@ -87,6 +88,7 @@ async function getConfig(idToken) {
       } catch (e) {}
       const err = new Error(`Failed to fetch config: ${response.status}`);
       err.status = response.status;
+      err.source = 'FIREBASE';
       if (response.status === 401 && errorBody && errorBody.error === 'token_expired') {
         err.code = 'TOKEN_EXPIRED';
       } else if (response.status === 401 || response.status === 403) {
@@ -445,6 +447,7 @@ async function submitResults(idToken, timestamp, structured, parameters) {
       } catch (e) {}
       const err = new Error(`Failed to submit results: ${response.status}`);
       err.status = response.status;
+      err.source = 'FIREBASE';
       if (response.status === 401 && errorBody && errorBody.error === 'token_expired') {
         err.code = 'TOKEN_EXPIRED';
       } else if (response.status === 401 || response.status === 403) {

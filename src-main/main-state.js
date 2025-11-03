@@ -1131,10 +1131,45 @@ function setupIPCHandlers() {
         return { success: false, message: 'No local processing configuration found. Set up Gemini API key or OpenAI-compatible endpoint first.' };
       }
 
-      // Run local processing only (no cloud upload)
-      await processDataLocally('test-token', screenshots, null, inputData, true);
+      // Attempt with current token; on FIREBASE auth error, request refresh and retry once
+      let token = idToken || null;
+      try {
+        await processDataLocally(token, screenshots, null, inputData, true);
+        return { success: true, message: 'Local processing test successful' };
+      } catch (err) {
+        const isFirebase = err && err.source === 'FIREBASE';
+        const isAuth = isFirebase && (err.code === 'TOKEN_EXPIRED' || err.code === 'AUTH_ERROR' || err.status === 401 || err.status === 403);
+        if (!isAuth) {
+          throw err;
+        }
+        // Ask renderer to refresh token and wait for response
+        try {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('refresh-token');
+          }
+        } catch (_) {}
 
-      return { success: true, message: 'Local processing test successful' };
+        // Wait for token-refreshed event (max 10s)
+        token = await new Promise((resolve) => {
+          let done = false;
+          const timer = setTimeout(() => { if (!done) { done = true; resolve(null); } }, 10000);
+          const handler = (_e, newToken) => {
+            if (done) return;
+            done = true;
+            try { clearTimeout(timer); } catch (_) {}
+            resolve(newToken || null);
+          };
+          try { ipcMain.once('token-refreshed', handler); } catch (_) { resolve(null); }
+        });
+
+        if (!token) {
+          return { success: false, message: 'Token refresh failed. Please sign in again.' };
+        }
+
+        // Retry once with refreshed token
+        await processDataLocally(token, screenshots, null, inputData, true);
+        return { success: true, message: 'Local processing test successful' };
+      }
     } catch (error) {
       log.error('Error in local processing test:', error);
       return { success: false, message: error.message };

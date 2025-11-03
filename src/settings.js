@@ -936,6 +936,7 @@ function setupTestLocalProcessing() {
   const testResult = document.getElementById('localProcessingTestResult');
   const testIcon = document.getElementById('localProcessingTestIcon');
   const testMessage = document.getElementById('localProcessingTestMessage');
+  let testResultHideTimer = null;
 
   if (!testBtn || !testResult || !testIcon || !testMessage) return;
 
@@ -944,6 +945,7 @@ function setupTestLocalProcessing() {
       testBtn.disabled = true;
       testBtn.textContent = 'Testing...';
       testResult.classList.add('hidden');
+      if (testResultHideTimer) { clearTimeout(testResultHideTimer); testResultHideTimer = null; }
 
       const result = await ipcRenderer.invoke('test-local-processing');
       const success = result && result.success;
@@ -958,6 +960,11 @@ function setupTestLocalProcessing() {
 
       testMessage.textContent = result?.message || (success ? 'Success' : 'Failed');
       testResult.classList.remove('hidden');
+      // Auto-hide after 10 seconds
+      testResultHideTimer = setTimeout(() => {
+        try { testResult.classList.add('hidden'); } catch (_) {}
+        testResultHideTimer = null;
+      }, 10000);
 
     } catch (error) {
       console.error('Error testing local processing:', error);
@@ -967,6 +974,11 @@ function setupTestLocalProcessing() {
       testResult.classList.add('border-red-200');
       testMessage.textContent = `Error: ${error.message}`;
       testResult.classList.remove('hidden');
+      // Auto-hide after 10 seconds
+      testResultHideTimer = setTimeout(() => {
+        try { testResult.classList.add('hidden'); } catch (_) {}
+        testResultHideTimer = null;
+      }, 10000);
     } finally {
       testBtn.disabled = false;
       testBtn.textContent = 'Test';
