@@ -280,20 +280,10 @@ function startChatListeners() {
     
     if (newChatId !== state.currentChatId && chatCreatedAt > oneMinuteAgo) {
       state.currentChatId = newChatId;
-      // Clear chat window first, then show overlay (only if user has valid access and not in DND)
+      // Clear chat window first, then show overlay (only if user has valid access)
       try { ipcRenderer.send('chat:set-messages', []); } catch (_) {}
       if (hasValidAccess()) {
-        // Check do not disturb mode before showing overlay
-        try {
-          const isDND = await ipcRenderer.invoke('check-do-not-disturb');
-          if (!isDND) {
-            try { ipcRenderer.send('overlay:show-if-hidden'); } catch (_) {}
-          }
-        } catch (error) {
-          // If check fails, default to showing overlay
-          console.error('[CHAT] Error checking do not disturb:', error);
-          try { ipcRenderer.send('overlay:show-if-hidden'); } catch (_) {}
-        }
+        try { ipcRenderer.send('overlay:show-if-hidden'); } catch (_) {}
       }
       subscribeToMessages(state.currentChatId);
     }

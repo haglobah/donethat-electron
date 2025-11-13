@@ -75,11 +75,9 @@
     "electron-updater": "^6.6.2",
     "firebase": "^12.5.0",
     "get-windows": "^9.2.3",
-    "macos-notification-state": "^3.0.0",
     "node-fetch": "^3.3.2",
     "sharp": "^0.34.5",
-    "tailwindcss": "^4.1.17",
-    "windows-notification-state": "^2.0.0"
+    "tailwindcss": "^4.1.17"
   },
   "build": {
     "appId": "com.donethat.app",

@@ -1184,26 +1184,6 @@ function setupIPCHandlers() {
     }
   });
 
-  ipcMain.handle('check-do-not-disturb', async () => {
-    try {
-      if (process.platform === 'darwin') {
-        // macOS: Use recommended module to check notification state
-        const { getDoNotDisturb } = require('macos-notification-state');
-        return getDoNotDisturb();
-      } else if (process.platform === 'win32') {
-        // Windows: Use recommended module to check notification state
-        const { getDoNotDisturb } = require('windows-notification-state');
-        return getDoNotDisturb();
-      } else {
-        // Linux: Not implemented, return false (don't block)
-        return false;
-      }
-    } catch (error) {
-      log.warn('Error checking do not disturb:', error);
-      // If check fails, assume DND is off (fail open)
-      return false;
-    }
-  });
 
   // App exclusions handlers
   ipcMain.handle('get-app-exclusions', async (event) => {
