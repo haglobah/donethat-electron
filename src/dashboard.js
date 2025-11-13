@@ -113,6 +113,8 @@ function hideSummaryOverlay() {
   // Reset to initial state
   function resetSummaryState() {
     document.getElementById('summaryLoadingSpinner').classList.add('hidden'); // Ensure spinner is hidden
+    const finishDayMessage = document.getElementById('finishDayMessage');
+    if (finishDayMessage) finishDayMessage.classList.add('hidden');
     currentSummaryId = null;
     customBullets = []; // Reset custom bullets
     currentPeriodEndTime = null; // Reset the stored period end time
@@ -257,6 +259,8 @@ if (summarySubmitBtn) {
   if (generateSummaryBtn) {
     generateSummaryBtn.addEventListener('click', async () => {
       summaryLoadingSpinner.classList.remove('hidden');
+      const finishDayMessage = document.getElementById('finishDayMessage');
+      if (finishDayMessage) finishDayMessage.classList.remove('hidden');
       let pausedByFinishDay = false;
       // Immediately pause until tomorrow when finishing the day, if not already paused
       try {
@@ -272,6 +276,8 @@ if (summarySubmitBtn) {
       generateRawSummaryFunction()
         .then((result) => {
           summaryLoadingSpinner.classList.add('hidden');
+          const finishDayMessage = document.getElementById('finishDayMessage');
+          if (finishDayMessage) finishDayMessage.classList.add('hidden');
 
           // Process the result from the cloud function
           const bulletPointsData = result.data.bulletPoints || [];
@@ -396,6 +402,8 @@ if (summarySubmitBtn) {
         })
         .catch((error) => {
           summaryLoadingSpinner.classList.add('hidden');
+          const finishDayMessage = document.getElementById('finishDayMessage');
+          if (finishDayMessage) finishDayMessage.classList.add('hidden');
           console.error("Error generating summary:", error);
           
           // Show error notification instead of just logging

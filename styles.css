@@ -220,7 +220,11 @@
 
 /* Spinner overlay */
 .spinner-overlay {
-  @apply absolute inset-0 bg-white/80 flex items-center justify-center z-10;
+  @apply absolute inset-0 bg-white/80 flex flex-col items-center justify-center z-10;
+}
+
+.finish-day-message {
+  @apply text-sm text-gray-500 mt-6 text-center max-w-md px-4;
 }
 
 

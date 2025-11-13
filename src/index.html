@@ -389,7 +389,10 @@
           <webview id="portalView" src="https://app.donethat.ai" class="portal-frame" allowpopups partition="persist:donethat" preload="./portal-preload.js" webpreferences="contextIsolation=false"></webview>
         </div>
       </div>
-      <div id="summaryLoadingSpinner" class="spinner-overlay hidden"><div class="spinner"></div></div>
+      <div id="summaryLoadingSpinner" class="spinner-overlay hidden">
+        <div class="spinner"></div>
+        <div id="finishDayMessage" class="finish-day-message hidden">Our AI is crunching the data, this can take a bit. On days when you don't click Finish Day, we will automatically finish your day around midnight.</div>
+      </div>
     </div>
     
 
