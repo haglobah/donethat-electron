@@ -95,6 +95,97 @@ textarea::placeholder {
   display: none !important;
 }
 
+/* Recent Chats List Styles */
+.recent-chats-container {
+  display: none;
+  height: 24px;
+  margin-bottom: 4px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.recent-chats-list {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  padding: 0;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+  align-items: center;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.recent-chats-list:active {
+  cursor: grabbing;
+}
+
+.recent-chats-list::-webkit-scrollbar {
+  height: 2px;
+}
+
+.recent-chats-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.recent-chats-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 1px;
+}
+
+.recent-chat-item {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  flex-shrink: 0;
+  height: 20px;
+  display: flex;
+  align-items: center;
+}
+
+.recent-chat-item:hover {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.recent-chat-preview {
+  font-size: 10px;
+  line-height: 1.2;
+  color: #111;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.recent-chats-load-more {
+  padding: 2px 8px;
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  color: var(--color-neutral-600);
+  flex-shrink: 0;
+  height: 20px;
+}
+
+/* Chat Notice Styles */
+.chat-notice {
+  display: none;
+  padding: 4px 8px;
+  font-size: 9px;
+  color: var(--color-neutral-600);
+  text-align: center;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
 /* Common view container */
 .view-container {
   @apply w-full justify-center pt-0;

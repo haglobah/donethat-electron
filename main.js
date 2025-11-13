@@ -825,6 +825,38 @@ ipcMain.handle('overlay:get-state', () => {
     return { success: true };
   })
 
+  // Handle request for recent chats list
+  ipcMain.handle('chat:get-recent-chats', () => {
+    // Forward to main window to get recent chats
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('chat:get-recent-chats');
+    }
+    return { success: true, pending: true };
+  })
+
+  // Handle recent chats list from main window
+  ipcMain.on('chat:recent-chats-updated', (event, recentChats) => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('chat:recent-chats-updated', recentChats);
+    }
+  })
+
+  // Handle loading a specific chat by ID
+  ipcMain.handle('chat:load-chat', async (event, chatId) => {
+    // Forward to main window to load chat
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('chat:load-chat', chatId);
+    }
+    return { success: true, pending: true };
+  })
+
+  // Handle chat load result from main window
+  ipcMain.on('chat:load-chat-result', (event, result) => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('chat:load-chat-result', result);
+    }
+  })
+
   // Handle screenshot capture for feedback - captures the display with the focused window
   ipcMain.handle('capture-feedback-screenshot', async () => {
     const { captureFeedbackScreenshot } = require('./src-main/feedback');

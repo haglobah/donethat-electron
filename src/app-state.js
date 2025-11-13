@@ -33,7 +33,8 @@ const state = {
   currentChatId: null,
   stopChatListener: null,
   stopMessageListener: null,
-  chatIpcInitialized: false
+  chatIpcInitialized: false,
+  recentChats: []
 };
 
 // Helper to parse Firestore Timestamp createdAt to millis; ignore other types
@@ -203,6 +204,67 @@ function startChatListeners() {
 
   state.stopChatListener = onSnapshot(q, async (snap) => {
     const docs = snap.docs;
+    
+    // Build recent chats list with metadata - only include desktop channel chats
+    const recentChatsList = docs
+      .filter((doc) => {
+        const data = doc.data();
+        return data?.channel === 'desktop';
+      })
+      .map((doc) => {
+        const data = doc.data() || {};
+        
+        // Handle updatedAt - could be Firestore Timestamp, Date, number, or missing
+        let updatedAt = Date.now();
+        if (data.updatedAt) {
+          if (typeof data.updatedAt.toDate === 'function') {
+            updatedAt = data.updatedAt.toDate().getTime();
+          } else if (data.updatedAt instanceof Date) {
+            updatedAt = data.updatedAt.getTime();
+          } else if (typeof data.updatedAt === 'number') {
+            updatedAt = data.updatedAt;
+          } else {
+            console.warn('[APP-STATE] Unexpected updatedAt format for chat', doc.id, data.updatedAt);
+          }
+        }
+        
+        // Handle createdAt - could be Firestore Timestamp, Date, number, or missing
+        let createdAt = Date.now();
+        if (data.createdAt) {
+          if (typeof data.createdAt.toDate === 'function') {
+            createdAt = data.createdAt.toDate().getTime();
+          } else if (data.createdAt instanceof Date) {
+            createdAt = data.createdAt.getTime();
+          } else if (typeof data.createdAt === 'number') {
+            createdAt = data.createdAt;
+          } else {
+            console.warn('[APP-STATE] Unexpected createdAt format for chat', doc.id, data.createdAt);
+          }
+        }
+        
+        // Get preview text from title field
+        let previewText = 'New conversation';
+        if (typeof data.title === 'string' && data.title.trim()) {
+          previewText = data.title.trim();
+        }
+        
+        return {
+          id: doc.id,
+          updatedAt: updatedAt,
+          createdAt: createdAt,
+          previewText: previewText
+        };
+      });
+    
+    state.recentChats = recentChatsList;
+    
+    // Send recent chats list to overlay
+    try { 
+      ipcRenderer.send('chat:recent-chats-updated', recentChatsList);
+    } catch (e) {
+      console.error('[APP-STATE] Error sending chat:recent-chats-updated:', e);
+    }
+    
     if (!docs || docs.length === 0) {
       state.currentChatId = null;
       try { ipcRenderer.send('chat:set-messages', []); } catch (_) {}
@@ -246,6 +308,7 @@ function stopChatListeners() {
   state.stopChatListener = null;
   state.stopMessageListener = null;
   state.currentChatId = null;
+  state.recentChats = [];
 }
 
 function setupChatIpcBridge() {
@@ -282,6 +345,35 @@ function setupChatIpcBridge() {
     state.currentChatId = null;
     try { ipcRenderer.send('chat:set-messages', []); } catch (_) {}
   });
+
+  // Handle request for recent chats list
+  ipcRenderer.on('chat:get-recent-chats', () => {
+    try { 
+      ipcRenderer.send('chat:recent-chats-updated', state.recentChats);
+    } catch (e) {
+      console.error('[APP-STATE] Error responding to chat:get-recent-chats:', e);
+    }
+  });
+
+  // Handle loading a specific chat by ID
+  ipcRenderer.on('chat:load-chat', (_event, chatId) => {
+    if (!chatId || !auth?.currentUser) {
+      try { ipcRenderer.send('chat:load-chat-result', { success: false, error: 'Invalid chat ID or not authenticated' }); } catch (_) {}
+      return;
+    }
+    loadChatById(chatId);
+  });
+}
+
+function loadChatById(chatId) {
+  if (!chatId || !auth?.currentUser) {
+    try { ipcRenderer.send('chat:load-chat-result', { success: false, error: 'Invalid chat ID or not authenticated' }); } catch (_) {}
+    return;
+  }
+  
+  state.currentChatId = chatId;
+  subscribeToMessages(chatId);
+  try { ipcRenderer.send('chat:load-chat-result', { success: true, chatId }); } catch (_) {}
 }
 
 function initializeChat() {
@@ -322,5 +414,6 @@ module.exports = {
   updatePauseState,
   updateDateCreated,
   resetState,
-  initializeChat
+  initializeChat,
+  loadChatById
 };

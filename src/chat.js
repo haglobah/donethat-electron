@@ -9,6 +9,8 @@ const openAppBtn = document.getElementById('openAppBtn')
 const closeOverlayBtn = document.getElementById('closeOverlayBtn')
 const clearBtn = document.getElementById('clearBtn')
 const chatContainer = document.getElementById('chatContainer')
+const recentChatsContainer = document.getElementById('recentChatsContainer')
+const chatNotice = document.getElementById('chatNotice')
 
 // Event delegation for chat links - handle all link clicks at container level
 chatContainer.addEventListener('click', (e) => {
@@ -35,6 +37,12 @@ let pendingMessages = []
 // Keep a stable mapping from message keys to DOM rows to minimize reflows/flicker
 const rowByKey = new Map()
 
+// Recent chats state
+let recentChats = []
+let recentChatsPage = 0
+const CHATS_PER_PAGE = 3
+let isLoadingChat = false
+
 function getMessageKey(message, index) {
   return message.id || message.ts || `idx-${index}`
 }
@@ -54,18 +62,27 @@ function createRowForMessage(message) {
 }
 
 function computeDesiredHeight() {
-  // Keep input height fixed so icons and overlay don't shift while typing
+  // Input box is COMPLETELY FIXED - always the same height
   const inputH = MIN_INPUT_HEIGHT
   const chrome = 16
   const chatH = chatContainer.scrollHeight
-  return chatH + inputH + chrome
+  // Add fixed height for recent chats container if visible (super short, 24px + 4px margin)
+  const recentChatsH = (recentChatsContainer && recentChatsContainer.style.display !== 'none') ? 28 : 0
+  // Add fixed height for chat notice if visible (only when there are messages)
+  const noticeH = (chatNotice && chatNotice.style.display !== 'none') ? (chatNotice.offsetHeight || 16) : 0
+  return chatH + inputH + chrome + recentChatsH + noticeH
 }
 
 function applyScrollAndClamp(desired) {
-  const inputH = input0.offsetHeight || 18
+  // Input box is COMPLETELY FIXED - always the same height
+  const inputH = MIN_INPUT_HEIGHT
   const chrome = 16
   const MAX_H = 600
-  const maxChat = Math.max(0, Math.min(desired, MAX_H) - inputH - chrome)
+  // Fixed height for recent chats container if visible (super short, 24px + 4px margin)
+  const recentChatsH = (recentChatsContainer && recentChatsContainer.style.display !== 'none') ? 28 : 0
+  // Fixed height for chat notice if visible
+  const noticeH = (chatNotice && chatNotice.style.display !== 'none') ? (chatNotice.offsetHeight || 16) : 0
+  const maxChat = Math.max(0, Math.min(desired, MAX_H) - inputH - chrome - recentChatsH - noticeH)
   chatContainer.style.maxHeight = maxChat + 'px'
   chatContainer.style.overflowY = desired > MAX_H ? 'auto' : 'hidden'
   chatContainer.scrollTop = chatContainer.scrollHeight
@@ -405,6 +422,14 @@ function renderChat() {
   // Hide the message container when empty so the input is visually centered
   chatContainer.style.display = toRender.length > 0 ? '' : 'none'
 
+  // Show/hide chat notice based on whether there are messages
+  if (chatNotice) {
+    chatNotice.style.display = toRender.length > 0 ? 'block' : 'none'
+  }
+
+  // Update recent chats visibility based on active chat state
+  updateRecentChatsVisibility()
+
   // Event delegation for chat links - handled once at container level
 
   requestAnimationFrame(() => {
@@ -476,6 +501,7 @@ function resetChatForNewConversation() {
   pendingMessages = []
   includeScreenOnNextMessage = true
   updateIncludeScreenBtn()
+  recentChatsPage = 0
 
   renderChat()
   lastSentHeight = 40
@@ -614,6 +640,10 @@ function updateIncludeScreenBtn() {
 input0.addEventListener('input', () => {
   // Do not auto-resize the input; keep fixed height and let it scroll
   // No overlay resize on typing to keep icons/overlay stable
+  // Hide recent chats when user starts typing
+  if (recentChatsContainer && recentChatsContainer.style.display !== 'none') {
+    updateRecentChatsVisibility()
+  }
 })
 
 // IPC handlers for communication with main window
@@ -715,6 +745,26 @@ ipcRenderer.on('chat:message-update', (event, result) => {
   // On success, keep optimistic message until Firestore snapshot includes the new message
 })
 
+// Handle recent chats list updates
+ipcRenderer.on('chat:recent-chats-updated', (event, newRecentChats) => {
+  recentChats = Array.isArray(newRecentChats) ? newRecentChats : []
+  recentChatsPage = 0
+  updateRecentChatsVisibility()
+})
+
+// Handle chat load result
+ipcRenderer.on('chat:load-chat-result', (event, result) => {
+  isLoadingChat = false
+  if (result.success) {
+    // Chat loading is successful, messages will arrive via chat:receive-messages
+    // Reset recent chats page
+    recentChatsPage = 0
+  } else {
+    console.error('[CHAT] Failed to load chat:', result.error)
+    updateRecentChatsVisibility()
+  }
+})
+
 // UI event handlers
 if (closeOverlayBtn) {
   closeOverlayBtn.addEventListener('click', () => {
@@ -748,6 +798,11 @@ window.addEventListener('focus', () => {
       chatVisible = true
       animateResize(computeDesiredHeight(), { overshoot: true })
     }
+    
+    // Request recent chats list when overlay opens
+    if (messages.length === 0 && pendingMessages.length === 0) {
+      ipcRenderer.invoke('chat:get-recent-chats').catch(() => {})
+    }
   } catch (e) {}
 })
 
@@ -761,7 +816,7 @@ window.addEventListener('keydown', (e) => {
 
 // Update close tooltip for platform
 try {
-  const isMac = navigator.platform.toUpperCase().includes('MAC')
+  const isMac = process.platform === 'darwin'
   const closeBtn = document.getElementById('closeOverlayBtn')
   if (closeBtn) {
     closeBtn.title = `Close chat (Esc, ${isMac ? 'Cmd' : 'Ctrl'}+Shift+D)`
@@ -769,6 +824,184 @@ try {
 } catch (e) {}
 
 
+
+function renderRecentChatsList() {
+  if (!recentChatsContainer) return
+
+  const hasActiveChat = messages.length > 0 || pendingMessages.length > 0
+  if (hasActiveChat || isLoadingChat) {
+    recentChatsContainer.style.display = 'none'
+    // Trigger height recalculation after hiding
+    requestAnimationFrame(() => {
+      const desired = computeDesiredHeight()
+      applyScrollAndClamp(desired)
+      if (desired !== lastSentHeight) {
+        lastSentHeight = desired
+        ipcRenderer.send('overlay:resize', desired)
+      }
+    })
+    return
+  }
+
+  if (recentChats.length === 0) {
+    recentChatsContainer.style.display = 'none'
+    return
+  }
+
+  recentChatsContainer.style.display = 'block'
+
+  const endIndex = Math.min((recentChatsPage + 1) * CHATS_PER_PAGE, recentChats.length)
+  const chatsToShow = recentChats.slice(0, endIndex)
+  const hasMore = endIndex < recentChats.length
+
+  let html = '<div class="recent-chats-list">'
+  
+  chatsToShow.forEach((chat, index) => {
+    let preview = chat.previewText || 'New conversation'
+    // Truncate to max 30 characters and add ellipsis
+    const MAX_PREVIEW_LENGTH = 30
+    if (preview.length > MAX_PREVIEW_LENGTH) {
+      preview = preview.substring(0, MAX_PREVIEW_LENGTH) + '...'
+    }
+    html += `
+      <div class="recent-chat-item" data-chat-id="${chat.id}">
+        <span class="recent-chat-preview">${escapeHtml(preview)}</span>
+      </div>
+    `
+  })
+
+  if (hasMore) {
+    html += '<div class="recent-chats-load-more">→</div>'
+  }
+
+  html += '</div>'
+  recentChatsContainer.innerHTML = html
+
+  // Infinite scroll detection and drag scrolling - attach listener to the scrollable list (horizontal scroll)
+  const listEl = recentChatsContainer.querySelector('.recent-chats-list')
+  if (listEl) {
+    // Add drag scrolling support (re-add each time since innerHTML replaces the element)
+    let isDragging = false
+    let startX = 0
+    let scrollLeft = 0
+    let dragDistance = 0
+
+    listEl.addEventListener('mousedown', (e) => {
+      isDragging = true
+      dragDistance = 0
+      startX = e.pageX - listEl.offsetLeft
+      scrollLeft = listEl.scrollLeft
+      listEl.style.cursor = 'grabbing'
+    })
+
+    listEl.addEventListener('mouseleave', () => {
+      isDragging = false
+      listEl.style.cursor = 'grab'
+    })
+
+    listEl.addEventListener('mouseup', (e) => {
+      // Only trigger click if we didn't drag much (less than 5px movement)
+      if (isDragging && Math.abs(dragDistance) < 5) {
+        const chatItem = e.target.closest('.recent-chat-item')
+        if (chatItem) {
+          const chatId = chatItem.getAttribute('data-chat-id')
+          if (chatId && !isLoadingChat) {
+            loadChatById(chatId)
+          }
+        }
+      }
+      isDragging = false
+      dragDistance = 0
+      listEl.style.cursor = 'grab'
+    })
+
+    listEl.addEventListener('mousemove', (e) => {
+      if (!isDragging) return
+      e.preventDefault()
+      const x = e.pageX - listEl.offsetLeft
+      const walk = (x - startX) * 2
+      dragDistance = walk
+      listEl.scrollLeft = scrollLeft - walk
+    })
+
+    // Prevent text selection while dragging
+    listEl.addEventListener('selectstart', (e) => {
+      if (isDragging) {
+        e.preventDefault()
+      }
+    })
+
+    // Infinite scroll for loading more chats
+    if (hasMore) {
+      listEl.addEventListener('scroll', () => {
+        const scrollLeft = listEl.scrollLeft
+        const scrollWidth = listEl.scrollWidth
+        const clientWidth = listEl.clientWidth
+        
+        // Load more when scrolled near right edge (within 50px)
+        if (scrollWidth - scrollLeft - clientWidth < 50) {
+          loadMoreRecentChats()
+        }
+      })
+    }
+  }
+
+  // Recalculate height after rendering to account for recent chats container
+  requestAnimationFrame(() => {
+    const desired = computeDesiredHeight()
+    applyScrollAndClamp(desired)
+    if (desired !== lastSentHeight) {
+      lastSentHeight = desired
+      ipcRenderer.send('overlay:resize', desired)
+    }
+  })
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div')
+  div.textContent = text
+  return div.innerHTML
+}
+
+function updateRecentChatsVisibility() {
+  const hasActiveChat = messages.length > 0 || pendingMessages.length > 0
+  if (hasActiveChat || isLoadingChat) {
+    if (recentChatsContainer) {
+      recentChatsContainer.style.display = 'none'
+    }
+  } else {
+    renderRecentChatsList()
+  }
+}
+
+function loadMoreRecentChats() {
+  const currentEnd = (recentChatsPage + 1) * CHATS_PER_PAGE
+  if (currentEnd < recentChats.length) {
+    recentChatsPage++
+    renderRecentChatsList()
+  }
+}
+
+async function loadChatById(chatId) {
+  if (isLoadingChat || !chatId) return
+  
+  isLoadingChat = true
+  updateRecentChatsVisibility()
+  
+  try {
+    const result = await ipcRenderer.invoke('chat:load-chat', chatId)
+    if (!result.success) {
+      console.error('[CHAT] Failed to load chat:', result.error)
+      isLoadingChat = false
+      updateRecentChatsVisibility()
+    }
+    // Success will be handled by chat:load-chat-result IPC
+  } catch (error) {
+    console.error('[CHAT] Error loading chat:', error)
+    isLoadingChat = false
+    updateRecentChatsVisibility()
+  }
+}
 
 // Initialize
 updateIncludeScreenBtn()

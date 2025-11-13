@@ -65,8 +65,10 @@
   </head>
   <body class="w-full h-full overflow-visible">
     <div id="overlayRoot" class="overlay-root relative w-full h-full">
-      <div class="overlay-card w-full p-2 relative flex flex-col justify-center drag-region">
+      <div class="overlay-card w-full p-2 relative flex flex-col drag-region">
+        <div id="recentChatsContainer" class="recent-chats-container no-drag"></div>
         <div id="chatContainer" class="z-chat space-y-2 overflow-y-auto pb-2 flex-1"></div>
+        <div id="chatNotice" class="chat-notice no-drag">Don can make mistakes. Please report issues.</div>
         <div class="z-input">
           <div class="w-full flex justify-center input-row">
             <div class="input-wrap flex-1 max-w-full no-drag">
