@@ -16,6 +16,8 @@ let configCache = {
 let llmModels = null;
 // latest config snapshot for downstream use
 let latestConfig = null;
+// Local provider: 'gemini' or 'openai'
+let localProvider = null;
 
 // Constants from online version
 const CAPTION_TOKENS = 200; // Target tokens for description truncation
@@ -37,27 +39,36 @@ function truncateToTokens(text, maxTokens) {
 }
 
 /**
- * Check if local processing is available (has Gemini API key or OpenAI-compatible config)
+ * Determine which local provider is configured ('gemini' or 'openai')
+ * @returns {Promise<string>} 'gemini' or 'openai'
  */
-async function isLocalProcessingAvailable() {
+async function getLocalProvider() {
   try {
     // Check for Gemini key first (preferred)
     const geminiResult = await getGeminiApiKey();
     if (geminiResult.success && geminiResult.apiKey) {
-      return true;
+      return 'gemini';
     }
 
     // Check for OpenAI-compatible config
     const openaiResult = await getOpenAICompatibleConfig();
     if (openaiResult.success && openaiResult.config && openaiResult.config.endpoint) {
-      return true;
+      return 'openai';
     }
 
-    return false;
+    return null;
   } catch (error) {
-    log.error('Error checking local processing availability:', error);
-    return false;
+    log.error('Error determining local provider:', error);
+    return null;
   }
+}
+
+/**
+ * Check if local processing is available (has Gemini API key or OpenAI-compatible config)
+ */
+async function isLocalProcessingAvailable() {
+  const provider = await getLocalProvider();
+  return provider !== null;
 }
 
 /**
@@ -124,11 +135,14 @@ async function initializeLLM(idToken, testMode = false) {
     const config = await getConfig(idToken);
 
     // Determine provider availability
-    const geminiKey = await getGeminiApiKey();
-    const openaiCompat = await getOpenAICompatibleConfig();
+    localProvider = await getLocalProvider();
+    if (!localProvider) {
+      throw new Error('No LLM provider available');
+    }
 
     // If Gemini is configured, use the models from cloud config that are for Gemini
-    if (geminiKey.success && geminiKey.apiKey) {
+    if (localProvider === 'gemini') {
+      const geminiKey = await getGeminiApiKey();
       const geminiModels = (config.llmModels || []).filter(m => m.provider === 'gemini');
       const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
       llmModels = await Promise.all(
@@ -146,7 +160,8 @@ async function initializeLLM(idToken, testMode = false) {
     }
 
     // Otherwise, if OpenAI-compatible is configured, build a single model using that config
-    if (openaiCompat.success && openaiCompat.config && openaiCompat.config.endpoint && openaiCompat.config.model) {
+    if (localProvider === 'openai') {
+      const openaiCompat = await getOpenAICompatibleConfig();
       const { ChatOpenAI } = await import('@langchain/openai');
       // Use provided endpoint as-is (minus trailing slash) to stay flexible
       const baseURL = openaiCompat.config.endpoint.replace(/\/$/, '');
@@ -163,8 +178,6 @@ async function initializeLLM(idToken, testMode = false) {
       llmModels = [chat];
       return;
     }
-
-    throw new Error('No LLM provider available');
   } catch (error) {
     log.error('Error initializing LLM:', error);
     throw error;
@@ -300,8 +313,9 @@ function validateAndProcessImage(imageData) {
 
 /**
  * Build content blocks based on config spec (mirror online version)
+ * @param {string} provider - 'gemini' or 'openai' to determine image format
  */
-function buildBlocks(config, validScreenshots, previousScreenshots, applicationActivity, audioTranscript, idleTime) {
+function buildBlocks(config, validScreenshots, previousScreenshots, applicationActivity, audioTranscript, idleTime, provider = 'gemini') {
   const spec = config.contentBlocksSpec || {};
   const imageKey = spec.imagePartKey || 'image_url';
   const blocks = [ { type: 'text', text: config.prefilledPrompt } ];
@@ -328,7 +342,12 @@ function buildBlocks(config, validScreenshots, previousScreenshots, applicationA
         const validatedImage = validateAndProcessImage(url);
         if (validatedImage) {
           const imageBlock = { type: 'image_url' };
-          imageBlock[imageKey] = validatedImage;
+          // OpenAI-compatible APIs need { url: '...' }, Gemini needs just the string
+          if (provider === 'openai') {
+            imageBlock[imageKey] = { url: validatedImage };
+          } else {
+            imageBlock[imageKey] = validatedImage;
+          }
           blocks.push(imageBlock);
         }
       }
@@ -346,7 +365,12 @@ function buildBlocks(config, validScreenshots, previousScreenshots, applicationA
 
   processedScreenshots.forEach(img => {
     const imageBlock = { type: 'image_url' };
-    imageBlock[imageKey] = img;
+    // OpenAI-compatible APIs need { url: '...' }, Gemini needs just the string
+    if (provider === 'openai') {
+      imageBlock[imageKey] = { url: img };
+    } else {
+      imageBlock[imageKey] = img;
+    }
     blocks.push(imageBlock);
   });
 
@@ -384,10 +408,13 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, au
       await initializeLLM(idToken, testMode);
     }
     
+    // Get the local provider (use cached value if available, otherwise fetch)
+    const provider = localProvider || await getLocalProvider() || 'gemini';
+    
     // Ensure we have up-to-date config
     const config = latestConfig || await getConfig(idToken);
-    // Build content blocks using spec
-    const blocks = buildBlocks(config, validScreenshots, previousScreenshots, activity, audioTranscript, idleTime);
+    // Build content blocks using spec with correct provider format
+    const blocks = buildBlocks(config, validScreenshots, previousScreenshots, activity, audioTranscript, idleTime, provider);
 
     // Import HumanMessage
     const { HumanMessage } = await import('@langchain/core/messages');
@@ -585,5 +612,8 @@ module.exports = {
   isLocalProcessingAvailable,
   processDataLocally,
   // Allow main process to reset cached config and models when FE updates settings
-  resetLLMModels: () => { llmModels = null; }
+  resetLLMModels: () => { 
+    llmModels = null; 
+    localProvider = null;
+  }
 };

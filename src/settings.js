@@ -1305,8 +1305,13 @@ function setupTestLocalProcessing() {
   if (!testBtn || !testResult || !testIcon || !testMessage) return;
 
   testBtn.addEventListener('click', async () => {
+    // Prevent multiple simultaneous tests
+    if (testBtn.disabled) return;
+    
     try {
+      // Disable button and update text
       testBtn.disabled = true;
+      testBtn.setAttribute('disabled', 'disabled');
       testBtn.textContent = 'Testing...';
       testResult.classList.add('hidden');
       if (testResultHideTimer) { clearTimeout(testResultHideTimer); testResultHideTimer = null; }
@@ -1336,7 +1341,7 @@ function setupTestLocalProcessing() {
       testIcon.innerHTML = '<svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
       testResult.classList.remove('border-gray-300', 'border-green-200', 'border-red-200');
       testResult.classList.add('border-red-200');
-      testMessage.textContent = `Error: ${error.message}`;
+      testMessage.textContent = `Error: ${error.message || 'Unknown error occurred'}`;
       testResult.classList.remove('hidden');
       // Auto-hide after 10 seconds
       testResultHideTimer = setTimeout(() => {
@@ -1344,7 +1349,9 @@ function setupTestLocalProcessing() {
         testResultHideTimer = null;
       }, 10000);
     } finally {
+      // Always reset button state after test completes
       testBtn.disabled = false;
+      testBtn.removeAttribute('disabled');
       testBtn.textContent = 'Test';
     }
   });
