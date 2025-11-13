@@ -312,7 +312,75 @@ async function maskExcludedApps(screenshots, excludedApps, windowData, displayBo
       return screenshots
     }
     
-    // Process each screenshot
+    // Detect merged screenshot scenario (Linux: 1 screenshot containing all displays)
+    const isMergedScreenshot = screenshots.length === 1 && displayBounds.length > 1
+    
+    if (isMergedScreenshot) {
+      // Merged screenshot case: process all windows across all displays
+      const screenshot = screenshots[0]
+      
+      // Calculate merged screenshot bounds (virtual desktop bounds)
+      const minX = Math.min(...displayBounds.map(d => d.bounds.x))
+      const minY = Math.min(...displayBounds.map(d => d.bounds.y))
+      const maxX = Math.max(...displayBounds.map(d => d.bounds.x + d.bounds.width))
+      const maxY = Math.max(...displayBounds.map(d => d.bounds.y + d.bounds.height))
+      const mergedBounds = {
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY
+      }
+      
+      // Find excluded windows across all displays
+      const excludedWindows = windowData.filter(window => {
+        if (!window.bounds || window.screen === undefined) return false
+        return shouldExcludeWindow(window, excludedApps)
+      })
+      
+      if (excludedWindows.length === 0) {
+        return screenshots
+      }
+      
+      // Helper to check if two windows are the same
+      const isSameWindow = (w1, w2) => {
+        if (!w1.bounds || !w2.bounds) return false
+        return w1.appName === w2.appName &&
+               w1.bounds.x === w2.bounds.x &&
+               w1.bounds.y === w2.bounds.y &&
+               w1.bounds.width === w2.bounds.width &&
+               w1.bounds.height === w2.bounds.height
+      }
+      
+      // Reorder windows for z-order calculation (same logic as per-display case)
+      const windowsWithActivity = windowData.filter(w => w.hasActivity === true)
+      const excludedNoActivity = windowData.filter(w => 
+        w.hasActivity !== true && excludedWindows.some(ex => isSameWindow(ex, w))
+      )
+      const nonExcludedNoActivity = windowData.filter(w => 
+        w.hasActivity !== true && !excludedWindows.some(ex => isSameWindow(ex, w))
+      )
+      const reorderedWindows = [...windowsWithActivity, ...excludedNoActivity, ...nonExcludedNoActivity]
+      
+      // Calculate mask regions for each excluded window
+      // Use merged bounds so coordinates are relative to the merged screenshot
+      const allMaskRegions = []
+      for (const excludedWindow of excludedWindows) {
+        // calculateVisibleRegion clamps to screenBounds and returns coordinates relative to it
+        // For merged screenshot, pass mergedBounds so coordinates are relative to merged screenshot
+        const regions = calculateVisibleRegion(excludedWindow, reorderedWindows, mergedBounds)
+        allMaskRegions.push(...regions)
+      }
+      
+      // Apply all masks to the single merged screenshot
+      if (allMaskRegions.length > 0) {
+        const maskedImage = await applyMaskToImage(screenshot, allMaskRegions, mergedBounds)
+        return [maskedImage]
+      } else {
+        return screenshots
+      }
+    }
+    
+    // Per-display screenshots case (macOS/Windows): existing logic
     const maskedScreenshots = []
     
     for (let i = 0; i < screenshots.length; i++) {
