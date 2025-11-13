@@ -444,8 +444,9 @@ function _checkWorkdayEndNotification() {
         mainWindow.webContents.send('inapp:notify', {
           id: 'workday-ended',
           title: 'Workday Ended',
-          message: 'Remember to generate your summary. You can change your work hours in settings.',
-          sticky: false
+          message: 'DoneThat is paused for the day. You can change your work hours in settings.',
+          sticky: false,
+          action: { label: 'Resume', channel: 'resumeRecording', payload: null }
         });
       }
     } catch (e) {}
