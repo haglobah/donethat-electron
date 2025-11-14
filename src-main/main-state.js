@@ -651,8 +651,13 @@ function loadPauseState() {
       
       return true;
     } else {
-      // Pause period has already expired
+      // Pause period has already expired - clear both storage and in-memory state
       safeStoreOperation(() => store.delete('pauseState'), 'delete expired pause state');
+      // Clear in-memory pause state to prevent stale state
+      if (pauseState.timeoutId) {
+        clearTimeout(pauseState.timeoutId);
+      }
+      pauseState = { endTime: null, timeoutId: null, reason: null };
     }
   }
   
