@@ -2,6 +2,7 @@ const { ipcMain, Notification, app, dialog } = require('electron');
 const log = require('electron-log');
 const path = require('path');
 const { encryptData, decryptData } = require('./encryption');
+const { default: Store } = require('electron-store');
 
 // State variables
 let store = null;
@@ -82,23 +83,26 @@ function _validateState() {
       // Outside work hours but not paused (and no manual override) - should be paused
       pauseUntilNextWorkPeriod(mainWindow, true); // silent=true
     } else if (isActive && paused && pauseReason === 'workday-start') {
-      // In work hours but paused due to work-hours - check if pause extends beyond today
-      // Only clear if pause ends today (waiting for work hours to start scenario)
-      // Don't clear if pause extends to tomorrow (manual "pause until tomorrow" scenario)
+      // In work hours but paused due to work-hours - check if pause extends beyond current work period
+      // Only clear if pause ends within the current work period (automatic pause scenario)
+      // Don't clear if pause extends beyond current work period (manual "pause until tomorrow" scenario)
+      const startParts = userWorkhours.start.split(':');
       const endParts = userWorkhours.end.split(':');
       let shouldClearPause = true;
       
-      if (pauseState.endTime && endParts.length >= 2) {
+      if (pauseState.endTime && startParts.length >= 2 && endParts.length >= 2) {
+        const startHour = parseInt(startParts[0], 10);
+        const startMinute = parseInt(startParts[1], 10);
         const endHour = parseInt(endParts[0], 10);
         const endMinute = parseInt(endParts[1], 10);
         
-        if (!isNaN(endHour) && !isNaN(endMinute)) {
-          const todayWorkHoursEnd = new Date(now);
-          todayWorkHoursEnd.setHours(endHour, endMinute, 0, 0);
+        if (!isNaN(startHour) && !isNaN(startMinute) && !isNaN(endHour) && !isNaN(endMinute)) {
+          // Use helper to get the end of the current work period
+          const currentPeriodEnd = _getCurrentPeriodEnd(now, startHour, startMinute, endHour, endMinute);
           
-          // Only clear pause if it ends today or earlier (automatic pause scenario)
-          // If pause ends beyond today's work hours end, it's a manual "pause until tomorrow"
-          shouldClearPause = pauseState.endTime <= todayWorkHoursEnd;
+          // Only clear pause if it ends within the current work period
+          // If pause ends beyond current work period, it's a manual "pause until tomorrow"
+          shouldClearPause = pauseState.endTime <= currentPeriodEnd;
         }
       }
       
@@ -129,6 +133,7 @@ function _validateState() {
 function startStateValidation() {
   if (stateValidationIntervalId) {
     clearInterval(stateValidationIntervalId);
+    stateValidationIntervalId = null;
   }
   // Run every 60 seconds to catch timer failures after sleep/wake
   stateValidationIntervalId = setInterval(_validateState, 60000);
@@ -259,6 +264,7 @@ async function initState(options = {}) {
       setIdToken,
       clearIdToken,
       cleanupOnQuit,
+      stopStateValidation,
       resume,
       isSystemIdle,
       clearSystemIdleFlags
@@ -273,7 +279,6 @@ async function initState(options = {}) {
  * Initialize electron-store with fallback locations
  */
 async function initializeStore() {
-  const { default: Store } = await import('electron-store');
   const locations = [
     { name: 'default', cwd: app.getPath('userData') },
     { name: 'documents', cwd: path.join(app.getPath('documents'), '.donethat-config') },
@@ -418,8 +423,26 @@ function isWithinWorkHours(date = new Date()) {
   const endTime = new Date(date);
   endTime.setHours(endHour, endMinute, 0, 0);
   
-  // Check if current time is between start and end
-  return date >= startTime && date < endTime;
+  // Handle work hours that span midnight (e.g., 18:00 to 01:00, or 09:00 to 09:00)
+  // If end time is before or equal to start time, the period spans midnight
+  const spansMidnight = endTime <= startTime;
+  
+  if (spansMidnight) {
+    // Period spans midnight: work hours go from start time today to end time tomorrow
+    // Check if we're after start time today OR before end time today (which represents tomorrow)
+    if (date >= startTime) {
+      // We're after start time today - definitely in work hours
+      return true;
+    } else {
+      // We're before start time today - check if we're before end time
+      // Since endTime is earlier in the day than startTime, if we're before startTime,
+      // we might be in the tail end of yesterday's work period (which ends today at endTime)
+      return date < endTime;
+    }
+  } else {
+    // Normal case: start and end on same day
+    return date >= startTime && date < endTime;
+  }
 }
 
 // Helper function to check if it's currently an active work period
@@ -538,23 +561,17 @@ function pauseUntilNextWorkPeriod(mainWindow, silent=false) {
   }
   
   // Find the next workday
-  let nextWorkdayDate = new Date(now);
-  nextWorkdayDate.setDate(nextWorkdayDate.getDate() + 1);
-  
-  let daysAhead = 0;
-  while (!isWorkday(nextWorkdayDate) && daysAhead < 7) {
-    nextWorkdayDate.setDate(nextWorkdayDate.getDate() + 1);
-    daysAhead++;
-  }
+  const nextWorkday = _findNextWorkday(now);
   
   // If no workday found in the next week, just pause for a day
-  if (daysAhead >= 7) {
+  if (!nextWorkday) {
     log.warn('No workday found in the next week, pausing for 24 hours');
     pauseRecording(24 * 60 * 60 * 1000, mainWindow, 'workday-start');
     return;
   }
   
   // Set the time to the start of work hours on that workday
+  const nextWorkdayDate = new Date(nextWorkday);
   nextWorkdayDate.setHours(startHour, startMinute, 0, 0);
   
   const duration = nextWorkdayDate.getTime() - now.getTime();
@@ -1286,6 +1303,83 @@ function setupIPCHandlers() {
 }
 
 /**
+ * Helper: Finds the next workday starting from a given date
+ * @param {Date} fromDate - Starting date
+ * @returns {Date|null} - Next workday date or null if not found within 7 days
+ */
+function _findNextWorkday(fromDate) {
+  let nextWorkday = new Date(fromDate);
+  nextWorkday.setDate(nextWorkday.getDate() + 1);
+  
+  let daysAhead = 0;
+  while (!isWorkday(nextWorkday) && daysAhead < 7) {
+    nextWorkday.setDate(nextWorkday.getDate() + 1);
+    daysAhead++;
+  }
+  
+  return daysAhead < 7 ? nextWorkday : null;
+}
+
+/**
+ * Helper: Calculates the end time of a work period that starts on a given date
+ * @param {Date} periodStartDate - The date when the work period starts
+ * @param {number} startHour - Start hour
+ * @param {number} startMinute - Start minute
+ * @param {number} endHour - End hour
+ * @param {number} endMinute - End minute
+ * @returns {Date} - The end time of the work period
+ */
+function _calculatePeriodEndTime(periodStartDate, startHour, startMinute, endHour, endMinute) {
+  const periodStart = new Date(periodStartDate);
+  periodStart.setHours(startHour, startMinute, 0, 0);
+  
+  const periodEnd = new Date(periodStartDate);
+  periodEnd.setHours(endHour, endMinute, 0, 0);
+  
+  // If work hours span midnight, end time is the next day
+  if (periodEnd < periodStart) {
+    periodEnd.setDate(periodEnd.getDate() + 1);
+  }
+  
+  return periodEnd;
+}
+
+/**
+ * Helper: Gets the end time of the current work period
+ * @param {Date} now - Current date/time
+ * @param {number} startHour - Start hour
+ * @param {number} startMinute - Start minute
+ * @param {number} endHour - End hour
+ * @param {number} endMinute - End minute
+ * @returns {Date} - End time of current work period
+ */
+function _getCurrentPeriodEnd(now, startHour, startMinute, endHour, endMinute) {
+  const todayStartTime = new Date(now);
+  todayStartTime.setHours(startHour, startMinute, 0, 0);
+  
+  const todayEndTime = new Date(now);
+  todayEndTime.setHours(endHour, endMinute, 0, 0);
+  
+  const spansMidnight = todayEndTime <= todayStartTime;
+  
+  if (spansMidnight) {
+    // Determine which period we're in
+    if (now >= todayStartTime) {
+      // Period that started today ends tomorrow
+      const end = new Date(todayEndTime);
+      end.setDate(end.getDate() + 1);
+      return end;
+    } else {
+      // Period that started yesterday ends today
+      return todayEndTime;
+    }
+  } else {
+    // Normal case: ends today
+    return todayEndTime;
+  }
+}
+
+/**
  * Schedules a check for the next workday end
  * Returns the time until the next check in milliseconds
  */
@@ -1297,51 +1391,77 @@ function _scheduleNextWorkEndCheck() {
   }
 
   const now = new Date();
-  
-  // We only care about when the current/next work period ends
   let nextWorkEndTime = null;
   
   // Parse work hours
+  const startParts = userWorkhours.start.split(':');
   const endParts = userWorkhours.end.split(':');
   
-  if (endParts.length >= 2) {
+  if (startParts.length >= 2 && endParts.length >= 2) {
+    const startHour = parseInt(startParts[0], 10);
+    const startMinute = parseInt(startParts[1], 10);
     const endHour = parseInt(endParts[0], 10);
     const endMinute = parseInt(endParts[1], 10);
     
-    if (!isNaN(endHour) && !isNaN(endMinute)) {
-      // Today's end time
-      const todayEndTime = new Date(now);
-      todayEndTime.setHours(endHour, endMinute, 0, 0);
+    if (!isNaN(startHour) && !isNaN(startMinute) && !isNaN(endHour) && !isNaN(endMinute)) {
+      // Check if we're currently in work hours (could be today's period or yesterday's period spanning midnight)
+      let inWorkHours = false;
+      let periodEnd = null;
       
-      if (isWorkday(now) && now < todayEndTime) {
-        // We're on a workday before end time - check at end time
-        nextWorkEndTime = todayEndTime;
+      // First check if we're in today's work period
+      if (isWorkday(now) && isWithinWorkHours(now)) {
+        inWorkHours = true;
+        periodEnd = _getCurrentPeriodEnd(now, startHour, startMinute, endHour, endMinute);
       } else {
-        // Find the next workday
-        let nextWorkday = new Date(now);
+        // Check if we're in the tail end of yesterday's work period (for periods spanning midnight)
+        const todayEndTime = new Date(now);
+        todayEndTime.setHours(endHour, endMinute, 0, 0);
+        const todayStartTime = new Date(now);
+        todayStartTime.setHours(startHour, startMinute, 0, 0);
+        const spansMidnight = todayEndTime < todayStartTime;
         
-        // Start from tomorrow if we're past today's end time or not a workday
-        if (!isWorkday(now) || now >= todayEndTime) {
-          nextWorkday.setDate(nextWorkday.getDate() + 1);
+        if (spansMidnight && now < todayEndTime) {
+          // Check if yesterday was a workday
+          const yesterday = new Date(now);
+          yesterday.setDate(yesterday.getDate() - 1);
+          if (isWorkday(yesterday)) {
+            // We're in the tail end of yesterday's work period
+            inWorkHours = true;
+            periodEnd = todayEndTime;
+          }
+        }
+      }
+      
+      if (inWorkHours && periodEnd) {
+        // We're in work hours - check at the current period's end time
+        nextWorkEndTime = periodEnd;
+      } else {
+        // We're outside work hours - find next workday's period end
+        const todayStartTime = new Date(now);
+        todayStartTime.setHours(startHour, startMinute, 0, 0);
+        
+        let nextWorkday = null;
+        if (isWorkday(now) && now < todayStartTime) {
+          // Today is a workday and start time is in the future - use today
+          nextWorkday = new Date(now);
+          nextWorkday.setHours(startHour, startMinute, 0, 0);
+        } else {
+          // Find the next workday starting from tomorrow
+          nextWorkday = _findNextWorkday(now);
+          if (nextWorkday) {
+            nextWorkday.setHours(startHour, startMinute, 0, 0);
+          }
         }
         
-        // Find the next workday
-        let daysAhead = 0;
-        while (!isWorkday(nextWorkday) && daysAhead < 7) {
-          nextWorkday.setDate(nextWorkday.getDate() + 1);
-          daysAhead++;
-        }
-        
-        if (daysAhead < 7) {
-          // Set to the end time of next workday
-          nextWorkEndTime = new Date(nextWorkday);
-          nextWorkEndTime.setHours(endHour, endMinute, 0, 0);
+        if (nextWorkday) {
+          nextWorkEndTime = _calculatePeriodEndTime(nextWorkday, startHour, startMinute, endHour, endMinute);
         }
       }
     }
   }
   
-  // If we couldn't determine next work end time, default to checking at 5:00 PM today or tomorrow
+  // If we couldn't determine next work end time (invalid format or no workdays found), 
+  // default to checking at 5:00 PM today or tomorrow
   if (!nextWorkEndTime) {
     nextWorkEndTime = new Date(now);
     if (now.getHours() >= 17) {
@@ -1654,6 +1774,7 @@ module.exports = {
   hasWindowsPermission: getWindowsPermission,
   setupIPCHandlers,
   cleanupOnQuit,
+  stopStateValidation,
   setIdToken,
   clearIdToken,
   resetSessionState,
