@@ -589,12 +589,20 @@ async function collectInputData(resetBuffers = true) {
   if (inputDataSettings.windows) {
     try {
       // Reset timeline after collection
-      const windowTimelineBuffer = windowsCapture.getTimelineBuffer(
+      let windowTimelineBuffer = windowsCapture.getTimelineBuffer(
         captureIntervalMinutes * 60 * 1000, 
         resetBuffers
       );
       
-      // Track if we had window data before filtering
+      // Filter out "Unknown Window" entries before checking if we had data
+      windowTimelineBuffer = windowTimelineBuffer.filter(entry => {
+        const appName = (entry.app || '').trim().toLowerCase();
+        const title = (entry.title || '').trim().toLowerCase();
+        const isUnknown = appName === 'unknown' && (title === 'unknown window' || title === 'error tracking window');
+        return !isUnknown;
+      });
+      
+      // Track if we had real window data before filtering (excluding Unknown entries)
       hadWindowDataBeforeFiltering = windowTimelineBuffer.length > 0;
       
       windowData = await windowsCapture.processTimelineData(windowTimelineBuffer);
