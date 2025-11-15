@@ -654,7 +654,6 @@ function loadManualOverrideWorkHours() {
   const savedOverride = safeStoreOperation(() => store.get('manualOverrideWorkHours'), 'load manual override work hours');
   if (typeof savedOverride === 'boolean') {
     manualOverrideWorkHours = savedOverride;
-    log.info('Loaded manualOverrideWorkHours from store:', savedOverride);
   } else {
     // Explicitly set to false if not found (to clear any stale in-memory state)
     manualOverrideWorkHours = false;
