@@ -110,11 +110,11 @@ function _validateState() {
         // In work hours but paused due to work-hours - should be active
         _clearPauseStateAndCheckRecording();
         // Clear manual override when work hours naturally start
-        manualOverrideWorkHours = false;
+        setManualOverrideWorkHours(false);
       }
     } else if (isActive && !paused && manualOverrideWorkHours) {
       // Work hours started naturally while user had manual override - clear it
-      manualOverrideWorkHours = false;
+      setManualOverrideWorkHours(false);
     }
     
     // Ensure recording state matches all conditions
@@ -363,6 +363,7 @@ function resume() {
   }
   _scheduleNextWorkEndCheck();
   loadPauseState();
+  loadManualOverrideWorkHours(); // Load persisted manual override flag
   
   // Check if we should be paused based on work hours when app starts
   // This handles the case where user is already authenticated and it's past work hours
@@ -526,7 +527,7 @@ function pauseUntilNextWorkPeriod(mainWindow, silent=false) {
   const now = new Date();
   
   // Clear manual override flag when applying work-hours pause
-  manualOverrideWorkHours = false;
+  setManualOverrideWorkHours(false);
   
   if (!silent) {
     _checkWorkdayEndNotification();
@@ -611,7 +612,7 @@ function recordingStarted(mainWindow) {
   // If user manually resumes outside work hours, set override flag
   const now = new Date();
   if (!isActiveWorkPeriod(now)) {
-    manualOverrideWorkHours = true;
+    setManualOverrideWorkHours(true);
   }
 
   _scheduleNextWorkEndCheck();
@@ -623,6 +624,40 @@ function recordingStarted(mainWindow) {
         eventName: 'recording_state_changed',
         eventParams: { status: 'resumed' } 
     });
+  }
+}
+
+// Function to set manual override work hours flag (sets variable and persists to store)
+function setManualOverrideWorkHours(value) {
+  manualOverrideWorkHours = value;
+  if (!store) {
+    if (value) {
+      log.warn('Store not initialized when saving manual override work hours');
+    }
+    return;
+  }
+  
+  if (value) {
+    safeStoreOperation(() => store.set('manualOverrideWorkHours', true), 'save manual override work hours');
+  } else {
+    safeStoreOperation(() => store.delete('manualOverrideWorkHours'), 'clear manual override work hours');
+  }
+}
+
+// Function to load manual override work hours flag from store
+function loadManualOverrideWorkHours() {
+  if (!store) {
+    log.warn('Store not initialized when loading manual override work hours');
+    return;
+  }
+  
+  const savedOverride = safeStoreOperation(() => store.get('manualOverrideWorkHours'), 'load manual override work hours');
+  if (typeof savedOverride === 'boolean') {
+    manualOverrideWorkHours = savedOverride;
+    log.info('Loaded manualOverrideWorkHours from store:', savedOverride);
+  } else {
+    // Explicitly set to false if not found (to clear any stale in-memory state)
+    manualOverrideWorkHours = false;
   }
 }
 
@@ -793,9 +828,10 @@ function setupIPCHandlers() {
     
     if (setIdToken(token)) {
       // Check if we're outside of work hours and should pause
+      // Respect manual override: do not auto-pause if user manually resumed
       const now = new Date();
-      if (!isActiveWorkPeriod(now)) {
-        pauseUntilNextWorkPeriod(mainWindow);
+      if (!isActiveWorkPeriod(now) && !manualOverrideWorkHours) {
+        pauseUntilNextWorkPeriod(mainWindow, true); // silent=true to avoid notification
       } 
 
       // Only start recording if we're in work hours
@@ -1583,7 +1619,7 @@ function resetSessionState() {
   }
   
   // Clear manual override flag
-  manualOverrideWorkHours = false;
+  setManualOverrideWorkHours(false);
   
   // Clear system state flags
   isScreenLocked = false;

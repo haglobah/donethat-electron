@@ -791,6 +791,323 @@ describe('Manual Resume and Pause Scenarios', () => {
       expect(typeof isPaused()).toBe('boolean');
     }
   });
+  
+  test('manual resume after workday end, then app restart - should continue recording (not auto-pause)', async () => {
+    jest.useFakeTimers();
+    
+    try {
+      // Setup: Mon-Fri, 9-5
+      setWorkdaysInStore([1, 2, 3, 4, 5]);
+      setWorkhoursInStore('09:00', '17:00');
+      mainStateModule.loadWorkSettings();
+      
+      // Set time to Monday 18:00 (outside work hours, after workday end at 17:00)
+      const afterWorkHours = createTestDate(1, 18, 0);
+      jest.setSystemTime(afterWorkHours);
+      
+      const { recordingStarted, isPaused, isActiveWorkPeriod } = state;
+      const mockWindow = {
+        webContents: { send: jest.fn() },
+        show: jest.fn(),
+        focus: jest.fn(),
+        isDestroyed: () => false
+      };
+      
+      // Verify we're outside work hours
+      expect(isActiveWorkPeriod(afterWorkHours)).toBe(false);
+      
+      // Step 1: User manually resumes recording after workday end
+      recordingStarted(mockWindow);
+      
+      // Should not be paused (user manually resumed)
+      expect(isPaused()).toBe(false);
+      
+      // Step 2: Simulate app restart
+      // Verify manualOverrideWorkHours IS persisted (the fix)
+      const storedOverride = mockStore.get('manualOverrideWorkHours');
+      expect(storedOverride).toBe(true);
+      
+      // Save store data before module reset (since resetModules clears mocks)
+      const storeDataBeforeReset = { ...mockStore.store };
+      
+      // Simulate restart: clear module cache and re-require to reset module-level variables
+      jest.resetModules();
+      const { mockStore: freshMockStore } = require('./mocks');
+      
+      // Restore store data after reset (simulating persistence across app restart)
+      Object.assign(freshMockStore.store, storeDataBeforeReset);
+      
+      const freshMainStateModule = require('../main-state');
+      
+      // Verify the store has the data after module reset
+      expect(freshMockStore.get('manualOverrideWorkHours')).toBe(true);
+      
+      // Re-initialize with fresh state (simulating app restart)
+      const freshMockWindow = {
+        webContents: { send: jest.fn() },
+        show: jest.fn(),
+        focus: jest.fn(),
+        isDestroyed: () => false
+      };
+      
+      const freshState = await freshMainStateModule.initState({
+        checkRecording: jest.fn(),
+        navigateToView: jest.fn(),
+        mainWindow: freshMockWindow,
+        overlayWindow: null
+      });
+      
+      // After restart, manualOverrideWorkHours is loaded from store (persisted)
+      // So resume() should NOT auto-pause because the flag is true
+      // Expected behavior: Should continue recording (not pause) because user manually resumed
+      // This should now work correctly after the fix
+      expect(freshState.isPaused()).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+  
+  test('manual resume during work hours, then app restart - should continue (no override needed)', async () => {
+    jest.useFakeTimers();
+    
+    try {
+      // Setup: Mon-Fri, 9-5
+      setWorkdaysInStore([1, 2, 3, 4, 5]);
+      setWorkhoursInStore('09:00', '17:00');
+      mainStateModule.loadWorkSettings();
+      
+      // Set time to Monday 14:00 (during work hours)
+      const duringWorkHours = createTestDate(1, 14, 0);
+      jest.setSystemTime(duringWorkHours);
+      
+      const { recordingStarted, isPaused, isActiveWorkPeriod } = state;
+      const mockWindow = {
+        webContents: { send: jest.fn() },
+        show: jest.fn(),
+        focus: jest.fn(),
+        isDestroyed: () => false
+      };
+      
+      // Verify we're in work hours
+      expect(isActiveWorkPeriod(duringWorkHours)).toBe(true);
+      
+      // User manually resumes (though already in work hours, this shouldn't set override)
+      recordingStarted(mockWindow);
+      expect(isPaused()).toBe(false);
+      
+      // Simulate app restart
+      jest.resetModules();
+      require('./mocks');
+      const freshMainStateModule = require('../main-state');
+      
+      const freshMockWindow = {
+        webContents: { send: jest.fn() },
+        show: jest.fn(),
+        focus: jest.fn(),
+        isDestroyed: () => false
+      };
+      
+      const freshState = await freshMainStateModule.initState({
+        checkRecording: jest.fn(),
+        navigateToView: jest.fn(),
+        mainWindow: freshMockWindow,
+        overlayWindow: null
+      });
+      
+      // Should continue recording (in work hours, no pause needed)
+      expect(freshState.isPaused()).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+  
+  test('manual resume after workday end, restart when now in work hours - should continue', async () => {
+    jest.useFakeTimers();
+    
+    try {
+      // Setup: Mon-Fri, 9-5
+      setWorkdaysInStore([1, 2, 3, 4, 5]);
+      setWorkhoursInStore('09:00', '17:00');
+      mainStateModule.loadWorkSettings();
+      
+      // Step 1: User manually resumes Monday 18:00 (outside work hours)
+      const mondayEvening = createTestDate(1, 18, 0);
+      jest.setSystemTime(mondayEvening);
+      
+      const { recordingStarted, isPaused, isActiveWorkPeriod } = state;
+      const mockWindow = {
+        webContents: { send: jest.fn() },
+        show: jest.fn(),
+        focus: jest.fn(),
+        isDestroyed: () => false
+      };
+      
+      expect(isActiveWorkPeriod(mondayEvening)).toBe(false);
+      recordingStarted(mockWindow);
+      expect(isPaused()).toBe(false);
+      
+      // Step 2: Simulate app restart the next day during work hours (Tuesday 10:00)
+      jest.resetModules();
+      require('./mocks');
+      const freshMainStateModule = require('../main-state');
+      
+      // Set time to Tuesday 10:00 (in work hours)
+      const tuesdayMorning = createTestDate(2, 10, 0);
+      jest.setSystemTime(tuesdayMorning);
+      
+      const freshMockWindow = {
+        webContents: { send: jest.fn() },
+        show: jest.fn(),
+        focus: jest.fn(),
+        isDestroyed: () => false
+      };
+      
+      const freshState = await freshMainStateModule.initState({
+        checkRecording: jest.fn(),
+        navigateToView: jest.fn(),
+        mainWindow: freshMockWindow,
+        overlayWindow: null
+      });
+      
+      // Should continue recording (now in work hours, no pause needed)
+      expect(freshState.isPaused()).toBe(false);
+      expect(freshState.isActiveWorkPeriod(tuesdayMorning)).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+  
+  test('manual resume on non-workday, then app restart - should continue recording', async () => {
+    jest.useFakeTimers();
+    
+    try {
+      // Setup: Mon-Fri, 9-5
+      setWorkdaysInStore([1, 2, 3, 4, 5]);
+      setWorkhoursInStore('09:00', '17:00');
+      mainStateModule.loadWorkSettings();
+      
+      // Set time to Saturday 14:00 (non-workday, outside work hours)
+      const saturdayAfternoon = createTestDate(6, 14, 0);
+      jest.setSystemTime(saturdayAfternoon);
+      
+      const { recordingStarted, isPaused, isActiveWorkPeriod } = state;
+      const mockWindow = {
+        webContents: { send: jest.fn() },
+        show: jest.fn(),
+        focus: jest.fn(),
+        isDestroyed: () => false
+      };
+      
+      // Verify we're outside work period (non-workday)
+      expect(isActiveWorkPeriod(saturdayAfternoon)).toBe(false);
+      
+      // User manually resumes on non-workday
+      recordingStarted(mockWindow);
+      expect(isPaused()).toBe(false);
+      
+      // Save store data before module reset
+      const storeDataBeforeReset = { ...mockStore.store };
+      
+      // Simulate app restart (still Saturday)
+      jest.resetModules();
+      const { mockStore: freshMockStore } = require('./mocks');
+      
+      // Restore store data after reset
+      Object.assign(freshMockStore.store, storeDataBeforeReset);
+      
+      const freshMainStateModule = require('../main-state');
+      
+      const freshMockWindow = {
+        webContents: { send: jest.fn() },
+        show: jest.fn(),
+        focus: jest.fn(),
+        isDestroyed: () => false
+      };
+      
+      const freshState = await freshMainStateModule.initState({
+        checkRecording: jest.fn(),
+        navigateToView: jest.fn(),
+        mainWindow: freshMockWindow,
+        overlayWindow: null
+      });
+      
+      // Expected: Should continue recording (user manually resumed)
+      // After fix: manualOverrideWorkHours is persisted, so it should continue
+      expect(freshState.isPaused()).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+  
+  test('manual resume after workday end, restart still outside work hours - demonstrates the bug', async () => {
+    jest.useFakeTimers();
+    
+    try {
+      // Setup: Mon-Fri, 9-5
+      setWorkdaysInStore([1, 2, 3, 4, 5]);
+      setWorkhoursInStore('09:00', '17:00');
+      mainStateModule.loadWorkSettings();
+      
+      // Step 1: User manually resumes Monday 18:00 (outside work hours)
+      const mondayEvening = createTestDate(1, 18, 0);
+      jest.setSystemTime(mondayEvening);
+      
+      const { recordingStarted, isPaused, isActiveWorkPeriod } = state;
+      const mockWindow = {
+        webContents: { send: jest.fn() },
+        show: jest.fn(),
+        focus: jest.fn(),
+        isDestroyed: () => false
+      };
+      
+      expect(isActiveWorkPeriod(mondayEvening)).toBe(false);
+      recordingStarted(mockWindow);
+      expect(isPaused()).toBe(false);
+      
+      // Verify the flag is set and persisted (after fix)
+      const storedBeforeRestart = mockStore.get('manualOverrideWorkHours');
+      expect(storedBeforeRestart).toBe(true);
+      
+      // Save store data before module reset
+      const storeDataBeforeReset = { ...mockStore.store };
+      
+      // Step 2: Simulate app restart Monday 19:00 (still outside work hours)
+      jest.resetModules();
+      const { mockStore: freshMockStore } = require('./mocks');
+      
+      // Restore store data after reset
+      Object.assign(freshMockStore.store, storeDataBeforeReset);
+      
+      const freshMainStateModule = require('../main-state');
+      
+      // Set time to Monday 19:00 (still outside work hours)
+      const mondayLater = createTestDate(1, 19, 0);
+      jest.setSystemTime(mondayLater);
+      
+      const freshMockWindow = {
+        webContents: { send: jest.fn() },
+        show: jest.fn(),
+        focus: jest.fn(),
+        isDestroyed: () => false
+      };
+      
+      const freshState = await freshMainStateModule.initState({
+        checkRecording: jest.fn(),
+        navigateToView: jest.fn(),
+        mainWindow: freshMockWindow,
+        overlayWindow: null
+      });
+      
+      // Verify still outside work hours
+      expect(freshState.isActiveWorkPeriod(mondayLater)).toBe(false);
+      
+      // Expected: Should continue recording (user manually resumed)
+      // After fix: manualOverrideWorkHours is persisted and loaded on restart, so it continues
+      expect(freshState.isPaused()).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
 
 describe('Hibernation/Suspend Edge Cases', () => {
