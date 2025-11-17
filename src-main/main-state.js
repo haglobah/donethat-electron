@@ -177,8 +177,7 @@ function showStorageError(error) {
       // Fallback to notification if dialog fails
     try {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        try { mainWindow.show(); mainWindow.focus(); } catch (e) {}
-        mainWindow.webContents.send('inapp:notify', {
+        mainWindow.webContents.send('request-notification', {
           id: 'storage-permission-error',
           title: 'Storage Permission Error',
           message: 'Could not store configuration. Please check your antivirus software.',
@@ -476,8 +475,7 @@ function _checkWorkdayEndNotification() {
     // Create notification with same options structure as start notification
     try {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        try { mainWindow.show(); mainWindow.focus(); } catch (e) {}
-        mainWindow.webContents.send('inapp:notify', {
+        mainWindow.webContents.send('request-notification', {
           id: 'workday-ended',
           title: 'Workday Ended',
           message: 'DoneThat is paused for the day. You can change your work hours in settings.',
@@ -1764,8 +1762,7 @@ async function getGeminiApiKey() {
       // Send a sticky in-app notification to prompt user
     try {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        try { mainWindow.show(); mainWindow.focus(); } catch (e) {}
-        mainWindow.webContents.send('inapp:notify', {
+        mainWindow.webContents.send('request-notification', {
           id: 'gemini-key-decrypt-failed',
           title: 'Settings',
           message: "We couldn't read your Gemini API key. Please set it again in Permissions. For now we'll use cloud processing.",
@@ -1831,8 +1828,7 @@ async function getOpenAICompatibleConfig() {
           // Send a sticky in-app notification to prompt user
           try {
             if (mainWindow && !mainWindow.isDestroyed()) {
-              try { mainWindow.show(); mainWindow.focus(); } catch (e) {}
-              mainWindow.webContents.send('inapp:notify', {
+              mainWindow.webContents.send('request-notification', {
                 id: 'openai-key-decrypt-failed',
                 title: 'Settings',
                 message: "We couldn't read your OpenAI-compatible API key. Please set it again in Permissions. For now we'll use cloud processing.",

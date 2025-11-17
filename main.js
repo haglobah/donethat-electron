@@ -304,9 +304,7 @@ try {
       const text = data.filter(Boolean).map(String).join(' ');
       const body = text.substring(0, 160) + (text.length > 160 ? '…' : '');
       try { if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) overlayWindow.hide(); } catch (e) {}
-      try { mainWindow.show(); } catch (e) {}
-      try { mainWindow.focus(); } catch (e) {}
-      mainWindow.webContents.send('inapp:notify', {
+      mainWindow.webContents.send('request-notification', {
         id: 'log-error-' + Date.now(),
         title: 'DoneThat Error',
         message: body,
@@ -356,10 +354,8 @@ function setupAutoUpdater() {
         // Show update button and notification for user to manually install
         try {
           if (mainWindow) {
-            mainWindow.show();
-            mainWindow.focus();
             mainWindow.webContents.send('update:available');
-            mainWindow.webContents.send('inapp:notify', {
+            mainWindow.webContents.send('request-notification', {
               id: 'update-available',
               title: 'DoneThat Update Available',
               message: `Version ${info.version} is ready to install. The installer will update your existing installation - your settings and data will be preserved.`,
@@ -384,10 +380,8 @@ function setupAutoUpdater() {
         
         try {
           if (mainWindow) {
-            mainWindow.show();
-            mainWindow.focus();
             mainWindow.webContents.send('update:available');
-            mainWindow.webContents.send('inapp:notify', {
+            mainWindow.webContents.send('request-notification', {
               id: 'update-available',
               title: 'DoneThat Update Available',
               message: `A new version (${info.version}) is available and has been downloaded.`,
@@ -647,20 +641,6 @@ app.whenReady().then(async () => {
   // Register for auth state change events from renderer
   ipcMain.on('auth-state-changed', (event, isAuthenticated) => {
     createApplicationMenu(); // Update menu on auth state change
-  });
-
-  // Allow renderer modules to trigger in-app notifications centrally
-  ipcMain.on('inapp:notify', (_event, payload) => {
-    try { if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) overlayWindow.hide(); } catch (e) {}
-    if (mainWindow) {
-      // Respect noFocus for non-intrusive banners (e.g., transient network issues)
-      const noFocus = !!(payload && payload.noFocus);
-      if (!noFocus) {
-        try { mainWindow.show(); } catch (e) {}
-        try { mainWindow.focus(); } catch (e) {}
-      }
-      try { mainWindow.webContents.send('inapp:notify', payload); } catch (e) {}
-    }
   });
 
   // Background notification handlers
@@ -1506,8 +1486,7 @@ function checkAndAdjustRecording() {
     if (isAuthenticated && !hasValidAccess && !hasShownInactiveBanner) {
       try {
         if (mainWindow) {
-          try { mainWindow.show(); mainWindow.focus(); } catch (e) {}
-          mainWindow.webContents.send('inapp:notify', {
+          mainWindow.webContents.send('request-notification', {
             id: 'subscription-inactive',
             title: 'Subscription Required',
             message: 'Your subscription is inactive. Recording is paused until you renew.',
@@ -2172,9 +2151,7 @@ function scheduleDailyAuthCheck() {
     if (!stateManager?.isAuthenticated()) {
       try {
         if (mainWindow) {
-          mainWindow.show();
-          mainWindow.focus();
-          mainWindow.webContents.send('inapp:notify', {
+          mainWindow.webContents.send('request-notification', {
             id: 'not-logged-in',
             title: 'DoneThat Not Logged In',
             message: 'You are not logged in. Please log in to continue tracking your work.',

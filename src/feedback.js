@@ -1,6 +1,7 @@
 const { ipcRenderer } = require('electron');
 const { httpsCallable } = require('firebase/functions');
 const { functions } = require('./firebase.js');
+const { showBanner } = require('./notify.js');
 
 let feedbackOverlay = null;
 let feedbackTextarea = null;
@@ -60,9 +61,8 @@ async function submitFeedback() {
     });
 
     // Show success notification
-    ipcRenderer.send('inapp:notify', {
+    showBanner('Thank you for your feedback!', {
       title: 'Feedback submitted',
-      message: 'Thank you for your feedback!',
       sticky: false
     });
   } catch (error) {
@@ -81,9 +81,8 @@ async function submitFeedback() {
     }
     
     // Show error notification
-    ipcRenderer.send('inapp:notify', {
+    showBanner(errorMessage, {
       title: 'Error',
-      message: errorMessage,
       sticky: false
     });
   } finally {

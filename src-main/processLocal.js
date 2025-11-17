@@ -560,7 +560,7 @@ async function processDataLocally(idToken, screenshots, previousScreenshots, inp
         const { BrowserWindow } = require('electron');
         const win = BrowserWindow.getAllWindows()?.[0];
         if (win && !win.isDestroyed()) {
-          win.webContents.send('inapp:notify', {
+          win.webContents.send('request-notification', {
             id: 'local-processing-error',
             title: 'Local processing error',
             message: (err && err.message) ? err.message : 'Unknown error',
