@@ -117,6 +117,9 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   // Set up app exclusions listeners
   setupAppExclusionsListeners();
   
+  // Set up Wayland detection
+  setupWaylandDetection();
+  
   // Set up finish button (only when settings view is loaded)
   setTimeout(() => {
     try {
@@ -1291,6 +1294,27 @@ function setupAppExclusionsListeners() {
         testBtn.textContent = 'Test';
       }
     });
+  }
+}
+
+// Set up Wayland detection and show note if on Wayland
+function setupWaylandDetection() {
+  // Only check on Linux
+  if (os.platform() !== 'linux') return;
+  
+  const waylandNote = document.getElementById('waylandNote');
+  if (!waylandNote) return;
+  
+  // Check for Wayland via environment variables (standard detection methods)
+  // WAYLAND_DISPLAY is set when running on Wayland
+  // XDG_SESSION_TYPE is also commonly set to 'wayland' on Wayland sessions
+  const isWayland = !!(process.env.WAYLAND_DISPLAY || 
+                       (process.env.XDG_SESSION_TYPE && process.env.XDG_SESSION_TYPE.toLowerCase() === 'wayland'));
+  
+  if (isWayland) {
+    waylandNote.classList.remove('hidden');
+  } else {
+    waylandNote.classList.add('hidden');
   }
 }
 
