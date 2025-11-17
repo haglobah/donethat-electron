@@ -20,6 +20,15 @@ const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notificati
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
+
+// Suppress Chromium GLib-GObject errors on Linux via command line switches
+// These must be set before app.whenReady()
+if (process.platform === 'linux') {
+  // Set log level to FATAL only (3) to suppress ERROR level messages
+  // Chromium log levels: 0=INFO, 1=WARNING, 2=ERROR, 3=FATAL
+  // GLib assertion errors are logged as ERROR, so we need level 3 to suppress them
+  app.commandLine.appendSwitch('log-level', '3')
+}
 const { AuthServer } = require('./src-main/auth-server')
 const {
   checkScreenCapturePermission: moduleCheckPermission,
@@ -265,8 +274,9 @@ if (app.isPackaged) {
       const fs = require('fs')
       const logFilePath = log.transports.file.getFile().path
       const stream = fs.createWriteStream(logFilePath, { flags: 'a' })
-      const safeWrite = (chunk) => {
+      const safeWrite = (chunk, encoding, callback) => {
         try { stream.write(Buffer.isBuffer(chunk) ? chunk : String(chunk)) } catch (_) {}
+        return true
       }
       // Replace low-level writers to avoid EPIPE from any dependency
       try { process.stdout.write = safeWrite } catch (_) {}

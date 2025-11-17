@@ -300,6 +300,7 @@ describe('_validateState (heartbeat)', () => {
     // Re-evaluate pause state after loading new work settings
     state.resume();
     
+
     const { isPaused, isActiveWorkPeriod } = state;
     const now = new Date();
     
