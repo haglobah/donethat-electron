@@ -455,7 +455,6 @@ async function maskExcludedApps(screenshots, excludedApps, windowData, displayBo
         const maskedImage = await applyMaskToImage(screenshot, allMaskRegions, screenBounds)
         maskedScreenshots.push(maskedImage)
       } else {
-        log.warn(`Screen ${i}: No mask regions calculated, skipping masking`)
         maskedScreenshots.push(screenshot)
       }
     }
