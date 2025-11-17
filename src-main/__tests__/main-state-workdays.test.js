@@ -297,6 +297,8 @@ describe('_validateState (heartbeat)', () => {
     setWorkdaysInStore([1, 2, 3, 4, 5]);
     setWorkhoursInStore('09:00', '17:00');
     mainStateModule.loadWorkSettings();
+    // Re-evaluate pause state after loading new work settings
+    state.resume();
     
     const { isPaused, isActiveWorkPeriod } = state;
     const now = new Date();
