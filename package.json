@@ -1,6 +1,6 @@
 {
   "name": "donethat",
-  "version": "1.4.8-stable",
+  "version": "1.4.8-arm64",
   "description": "DoneThat",
   "main": "main.js",
   "scripts": {
