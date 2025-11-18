@@ -332,7 +332,8 @@ function setupAutoUpdater() {
   // Use the centralized logger
   autoUpdater.logger = log
   // Add configuration for GitHub provider
-  autoUpdater.allowDowngrade = false // Prevent auto-downgrade when distributing test/beta versions
+  autoUpdater.allowDowngrade = false // No difference here becauase for me channel=arch
+  autoUpdater.allowPrerelease = false // Terrible naming, actually means "don't update to latest/stable releases"
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = app.isPackaged; // Only install on quit in packaged app
   autoUpdater.forceDevUpdateConfig = true; // Force check in dev mode
