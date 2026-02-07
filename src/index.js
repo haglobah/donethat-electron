@@ -767,31 +767,17 @@ document.addEventListener('DOMContentLoaded', () => {
       // Proactively send login token whenever portal becomes ready
       sendPortalLoginIfPossible();
       
-      // Inject the ipcRenderer bridge and link processing into the webapp's context
+      // Inject the ipcRenderer bridge so the webapp can signal logout to the desktop.
+      // Preload exposes __realIpcRenderer.send(channel) only (no sendToHost), so we must use .send('auth:logout').
       try {
         portalView.executeJavaScript(`
           window.__electronIpcRenderer = {
             sendToHost: function(channel, data) {
-              if (channel === 'auth:logout' && window.__realIpcRenderer) {
-                window.__realIpcRenderer.sendToHost('portal:logout');
+              if (channel === 'auth:logout' && window.__realIpcRenderer && typeof window.__realIpcRenderer.send === 'function') {
+                window.__realIpcRenderer.send('auth:logout');
               }
             }
           };
-          
-          // Add link processing API
-          window.Donethat = window.Donethat || {};
-          window.Donethat.openLink = function(url) {
-            console.log('[WEBVIEW] openLink called with URL:', url);
-            try {
-              if (window.__realIpcRenderer) {
-                window.__realIpcRenderer.sendToHost('portal:open-link', url);
-              }
-            } catch (e) {
-              console.error('[WEBVIEW] Error sending portal:open-link:', e);
-            }
-          };
-          
-          // Return a simple value to avoid cloning issues
           true;
         `);
       } catch (e) {
