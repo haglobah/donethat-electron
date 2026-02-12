@@ -698,7 +698,7 @@ async function collectInputData(resetBuffers = true) {
  * @param {Object} inputData Additional input data to send (audio, keystrokes, windows)
  * @returns {Promise<Object|boolean>} Response status
  */
-async function _sendToServer(idToken, screenshots, inputData = {}) {
+async function _sendToServer(idToken, screenshots, inputData = {}, previousScreenshotData = null) {
   if (!idToken) {
     if (reauthenticateCallback) {
       log.warn('_sendToServer: Calling reauthenticate callback with authError (no token).'); // Keep specific warning
@@ -712,10 +712,7 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
     const localProcessingAvailable = await isLocalProcessingAvailable();
     
     if (localProcessingAvailable) {
-      // Get the previous screenshots scaled down to the configured scale factor
-      const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
-      
-      // Process data locally
+      // Process data locally (previousScreenshotData passed from captureAndSend)
       try {
         const result = await processDataLocally(
           idToken,
@@ -749,12 +746,9 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
         // Just propagate
         throw error;
       }
-    } else {      
-      // Fall back to cloud processing
+    } else {
+      // Fall back to cloud processing (previousScreenshotData passed from captureAndSend)
       const fetch = await import('node-fetch').then(module => module.default);
-      
-      // Get the previous screenshots scaled down to the configured scale factor
-      const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
       
       // Create payload with screenshots and timestamp
       const payload = {
@@ -852,6 +846,9 @@ async function _sendToServer(idToken, screenshots, inputData = {}) {
  */
 async function captureAndSend(idToken) {
   try {
+    // Get previous screenshots BEFORE capturing new ones (they represent the ~5min-ago snapshot)
+    const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
+
     // Check if screenshots should be disabled during meetings
     let screenshots = [];
     if (!shouldDisableScreenshotsInMeetings()) {
@@ -903,7 +900,7 @@ async function captureAndSend(idToken) {
     }
     
     // Send all collected data to the server
-  const sendResult = await _sendToServer(idToken, screenshots, inputData);
+    const sendResult = await _sendToServer(idToken, screenshots, inputData, previousScreenshotData);
     return sendResult;
   } catch (error) {
     // Handle errors specifically from captureScreenshot or collectInputData
