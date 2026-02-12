@@ -31,10 +31,11 @@ class AuthServer {
           
           if (url.pathname === '/auth') {
             const token = url.searchParams.get('token');
-            if (token) {              
-              // Call the token received callback
+            const idToken = url.searchParams.get('idToken');
+            const accessToken = url.searchParams.get('accessToken');
+            if (token || idToken) {
               if (this.onTokenReceived) {
-                this.onTokenReceived(token);
+                this.onTokenReceived(token, { idToken, accessToken });
               }
               
               res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -48,7 +49,7 @@ class AuthServer {
               `);
             } else {
               res.writeHead(400, { 'Content-Type': 'text/plain' });
-              res.end('Missing token parameter');
+              res.end('Missing token or idToken parameter');
             }
           } else {
             res.writeHead(404, { 'Content-Type': 'text/plain' });

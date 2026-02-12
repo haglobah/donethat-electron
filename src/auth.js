@@ -5,7 +5,9 @@ const {
     onAuthStateChanged,
     signOut,
     sendEmailVerification,
-    signInWithCustomToken
+    signInWithCustomToken,
+    getMultiFactorResolver,
+    TotpMultiFactorGenerator
   } = require("firebase/auth");
 
 const ipcRenderer = window.electronAPI;
@@ -29,6 +31,9 @@ const backToSignIn = document.getElementById("backToSignIn");
 
 const showResetPassword = document.getElementById("showResetPassword");
 const backToSignInFromReset = document.getElementById("backToSignInFromReset");
+
+let mfaResolver = null;
+let mfaSelectedHintIndex = 0;
 
 let loadUserSettingsCallback;
 let showSpinner;
@@ -395,9 +400,74 @@ function getErrorMessage(error) {
       return 'The operation has timed out. Please try again';
     case 'auth/web-storage-unsupported':
       return 'Local web storage is required but not supported by your browser';
+    case 'auth/multi-factor-auth-required':
+      return 'Additional verification required';
+    case 'auth/invalid-verification-code':
+      return 'Invalid or expired code. Please try again.';
     default:
       return `An error occurred: ${error.message}`;
   }
+}
+
+function handleMfaRequired(error) {
+  try {
+    mfaResolver = getMultiFactorResolver(auth, error);
+    const hints = mfaResolver.hints || [];
+    const totpIndex = hints.findIndex(h => h.factorId === TotpMultiFactorGenerator.FACTOR_ID);
+    if (totpIndex === -1) {
+      mfaResolver = null;
+      hideSpinner();
+      showBanner('Verification method not supported in this app. Please sign in on the web.', { title: 'Sign In', sticky: true });
+      if (typeof navigateToView === 'function') navigateToView('signin');
+      return;
+    }
+    mfaSelectedHintIndex = totpIndex;
+    hideSpinner();
+    if (typeof navigateToView === 'function') navigateToView('mfa');
+    const codeInput = document.getElementById('mfaCodeInput');
+    const mfaError = document.getElementById('mfaError');
+    if (codeInput) { codeInput.value = ''; codeInput.focus(); }
+    if (mfaError) { mfaError.textContent = ''; mfaError.classList.add('hidden'); }
+  } catch (err) {
+    console.error('MFA setup error:', err);
+    mfaResolver = null;
+    hideSpinner();
+    showBanner(getErrorMessage(error), { title: 'Sign In Error', sticky: true });
+    if (typeof navigateToView === 'function') navigateToView('signin');
+  }
+}
+
+async function submitMfaCode(code) {
+  if (!mfaResolver || !mfaResolver.hints || !mfaResolver.hints[mfaSelectedHintIndex]) return;
+  const hint = mfaResolver.hints[mfaSelectedHintIndex];
+  if (hint.factorId !== TotpMultiFactorGenerator.FACTOR_ID) return;
+  const trimmed = (code || '').trim();
+  if (!trimmed) {
+    const mfaError = document.getElementById('mfaError');
+    if (mfaError) { mfaError.textContent = 'Please enter the code from your authenticator app.'; mfaError.classList.remove('hidden'); }
+    return;
+  }
+  showSpinner();
+  const mfaError = document.getElementById('mfaError');
+  if (mfaError) { mfaError.textContent = ''; mfaError.classList.add('hidden'); }
+  try {
+    const assertion = TotpMultiFactorGenerator.assertionForSignIn(hint.uid, trimmed);
+    await mfaResolver.resolveSignIn(assertion);
+    mfaResolver = null;
+    logAnalyticsEvent('mfa_sign_in_success', { factor: 'totp' });
+    hideSpinner();
+  } catch (err) {
+    mfaResolver = null;
+    hideSpinner();
+    if (typeof navigateToView === 'function') navigateToView('signin');
+    logAnalyticsEvent('mfa_sign_in_error', { error_code: err.code, error_message: err.message });
+    showBanner(getErrorMessage(err), { title: 'Verification Failed', sticky: false });
+  }
+}
+
+function cancelMfa() {
+  mfaResolver = null;
+  if (typeof navigateToView === 'function') navigateToView('signin');
 }
 
 // Handle sign-in form submission
@@ -416,6 +486,10 @@ signInForm.addEventListener("submit", (e) => {
         }, 1000);
       })
       .catch((error) => {
+        if (error.code === 'auth/multi-factor-auth-required') {
+          handleMfaRequired(error);
+          return;
+        }
         hideSpinner();
         logAnalyticsEvent('sign_in_error', {
           error_code: error.code,
@@ -424,6 +498,20 @@ signInForm.addEventListener("submit", (e) => {
         showBanner(getErrorMessage(error), { title: 'Sign In Error', sticky: true });
       });
   });
+
+  // MFA challenge form
+  const mfaVerifyBtn = document.getElementById('mfaVerifyBtn');
+  const mfaCancelBtn = document.getElementById('mfaCancelBtn');
+  const mfaCodeInput = document.getElementById('mfaCodeInput');
+  const mfaForm = document.getElementById('mfaForm');
+  if (mfaForm) {
+    mfaForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitMfaCode(mfaCodeInput ? mfaCodeInput.value : '');
+    });
+  }
+  if (mfaVerifyBtn) mfaVerifyBtn.addEventListener('click', () => submitMfaCode(mfaCodeInput ? mfaCodeInput.value : ''));
+  if (mfaCancelBtn) mfaCancelBtn.addEventListener('click', cancelMfa);
   
   // Handle sign-up form submission
   signUpForm.addEventListener("submit", (e) => {
@@ -519,25 +607,17 @@ signInForm.addEventListener("submit", (e) => {
     try {
       showSpinner();
       try { googleSignInBtn.disabled = true; googleSignInBtn.classList.add('disabled-btn'); } catch (_) {}
-      const serverResult = await ipcRenderer.invoke('auth:start-server');
-      if (!serverResult.success) {
-        throw new Error(`Failed to start auth server: ${serverResult.error}`);
-      }
-
-      ipcRenderer.invoke('auth:get-google-signin-url', { port: serverResult.port })
+      ipcRenderer.invoke('auth:google-signin', { requestCalendar: false })
         .then((result) => {
           if (!result || result.success === false) {
             console.error('Google Sign In main-process error:', result && result.error);
             showBanner(`Failed to start Google Sign In: ${result && result.error ? result.error : 'Unknown error'}`, { title: 'Google Sign In', sticky: true });
             hideSpinner();
             try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
-            try { ipcRenderer.invoke('auth:stop-server'); } catch (_) {}
             return;
           }
-          // The main process returns the Cloud Function data under result.data
-          const url = result.data?.authUrl || result.data?.url || result.data?.data?.url;
+          const url = result.url;
           if (url) {
-            // Open the URL in the default browser using secure API
             window.electronAPI.invoke('open-external', url).then((res) => {
               if (!res || res.success === false) {
                 console.error('open-external failed:', res && res.error);
@@ -552,7 +632,7 @@ signInForm.addEventListener("submit", (e) => {
               try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
             });
           } else {
-            console.error('No URL found in result:', JSON.stringify(result.data, null, 2));
+            console.error('No URL found in result:', JSON.stringify(result, null, 2));
             showBanner('No URL returned from Google Sign In function.', { title: 'Google Sign In', sticky: true });
             hideSpinner();
             try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
@@ -567,8 +647,6 @@ signInForm.addEventListener("submit", (e) => {
           showBanner(`Failed to start Google Sign In: ${error.message}`, { title: 'Google Sign In', sticky: true });
           hideSpinner();
           try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
-          // Stop the auth server on error
-          try { ipcRenderer.invoke('auth:stop-server'); } catch (_) {}
         });
     } catch (error) {
       console.error('Google Sign In setup error:', error);
@@ -588,10 +666,12 @@ signInForm.addEventListener("submit", (e) => {
         logAnalyticsEvent('google_sign_in_success');
         hideSpinner();
         try { googleSignInBtn.disabled = false; googleSignInBtn.classList.remove('disabled-btn'); } catch (_) {}
-        // Stop the auth server after successful authentication
-        ipcRenderer.invoke('auth:stop-server');
       })
       .catch((error) => {
+        if (error.code === 'auth/multi-factor-auth-required') {
+          handleMfaRequired(error);
+          return;
+        }
         logAnalyticsEvent('google_sign_in_token_error', {
           error_code: error.code,
           error_message: error.message

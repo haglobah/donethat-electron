@@ -360,6 +360,7 @@ function loadChatById(chatId) {
     try { ipcRenderer.send('chat:load-chat-result', { success: false, error: 'Invalid chat ID or not authenticated' }); } catch (_) {}
     return;
   }
+  
   state.currentChatId = chatId;
   subscribeToMessages(chatId);
   try { ipcRenderer.send('chat:load-chat-result', { success: true, chatId }); } catch (_) {}

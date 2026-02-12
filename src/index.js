@@ -156,7 +156,9 @@ function canReloadPortalNow() {
 function safePortalReload(reason) {
   try {
     if (!portalView) return;
-    if (!portalDomReady && reason !== 'window-open') return;
+    // Only reload once the webview has emitted dom-ready; calling reload too early
+    // can throw “WebView must be attached to the DOM and dom-ready emitted”.
+    if (!portalDomReady) return;
     if (!navigator.onLine) { showWebviewError(); return; }
     if (!canReloadPortalNow()) { return; }
     hideWebviewError();
@@ -180,6 +182,7 @@ setTimeout(() => {
 
 // Get references to views and elements
 const signInView = document.getElementById("signInView");
+const mfaChallengeView = document.getElementById("mfaChallengeView");
 const signUpView = document.getElementById("signUpView");
 const resetView = document.getElementById("resetView");
 const dashboardView = document.getElementById("dashboardView");
@@ -236,6 +239,9 @@ function navigateToView(viewName) {
     case 'signin':
       viewToShow = signInView;
       break;
+    case 'mfa':
+      viewToShow = mfaChallengeView;
+      break;
     case 'signup':
       viewToShow = signUpView;
       break;
@@ -274,7 +280,7 @@ function navigateToView(viewName) {
     
     // Single shared topbar visibility
     const appTopbar = document.getElementById('appTopbar');
-    const isAuthScreen = (viewName === 'signin' || viewName === 'signup' || viewName === 'reset');
+    const isAuthScreen = (viewName === 'signin' || viewName === 'signup' || viewName === 'reset' || viewName === 'mfa');
     if (appTopbar) {
       // Helper to check if running on Wayland
       const isWayland = () => {
@@ -543,8 +549,25 @@ document.addEventListener('DOMContentLoaded', () => {
   if (reloadIframeBtn) {
     reloadIframeBtn.addEventListener('click', () => {
       if (getCurrentView && getCurrentView() === 'dashboard' && portalView) {
-        safePortalReload('manual-reload');
-        sendPortalLoginIfPossible();
+        try {
+          // Always perform a full reload of the portal webview,
+          // ignoring any internal cooldowns/throttling.
+          if (!navigator.onLine) {
+            showWebviewError();
+            return;
+          }
+          hideWebviewError();
+          if (typeof portalView.reloadIgnoringCache === 'function') {
+            portalView.reloadIgnoringCache();
+          } else {
+            portalView.reload();
+          }
+          startPortalLoadWatchdog('manual-hard-reload');
+          // Re-send token after reload (allowed to be no-op)
+          sendPortalLoginIfPossible();
+        } catch (e) {
+          console.error('[Webview] Error in manual hard reload:', e);
+        }
       }
     });
   }
@@ -766,24 +789,7 @@ document.addEventListener('DOMContentLoaded', () => {
       hidePortalSpinner();
       // Proactively send login token whenever portal becomes ready
       sendPortalLoginIfPossible();
-      
-      // Inject the ipcRenderer bridge so the webapp can signal logout to the desktop.
-      // Preload exposes __realIpcRenderer.send(channel) only (no sendToHost), so we must use .send('auth:logout').
-      try {
-        portalView.executeJavaScript(`
-          window.__electronIpcRenderer = {
-            sendToHost: function(channel, data) {
-              if (channel === 'auth:logout' && window.__realIpcRenderer && typeof window.__realIpcRenderer.send === 'function') {
-                window.__realIpcRenderer.send('auth:logout');
-              }
-            }
-          };
-          true;
-        `);
-      } catch (e) {
-        console.error('[Portal] Failed to inject ipcRenderer and link processing:', e);
-      }
-      
+
       // Open devtools only when DEBUG flag is true
       (async () => {
         try {
@@ -819,10 +825,8 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (e) {}
     })();
 
-    // Handle messages from webview (logout and link routing)
     portalView.addEventListener('ipc-message', async (event) => {
-      if (event.channel === 'portal:logout') {
-        // Web app initiated logout -> perform desktop logout flow
+      if (event.channel === 'portal:logout' || event.channel === 'auth:logout') {
         try {
           const { performFullLogout } = require('./auth.js');
           await performFullLogout();
@@ -831,9 +835,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       } else if (event.channel === 'portal:open-link') {
         const url = event.args[0];
-        if (url) {
-          routeLink(url, { source: 'webview' });
-        }
+        if (url) routeLink(url, { source: 'webview' });
+      } else if (event.channel === 'auth:google-signin') {
+        const payload = event.args && event.args[0] || {};
+        const requestCalendar = payload.requestCalendar === true;
+        const openUrl = (url) => {
+          if (url) window.electronAPI.invoke('open-external', url).catch(() => {});
+        };
+        window.electronAPI.invoke('auth:google-signin', { requestCalendar })
+          .then((res) => { if (res && res.success && res.url) openUrl(res.url); })
+          .catch(() => {});
+      } else if (event.channel === 'auth:google-reauth') {
+        const payload = event.args && event.args[0] || {};
+        window.electronAPI.invoke('auth:google-reauth', {
+          idToken: payload.idToken,
+          requestCalendar: payload.requestCalendar === true,
+        })
+          .then((res) => {
+            if (res && res.success && res.url) {
+              window.electronAPI.invoke('open-external', res.url).catch(() => {});
+            }
+          })
+          .catch(() => {});
       }
     });
   }
@@ -964,6 +987,28 @@ ipcRenderer.on('router:open-link', (event, url) => {
     if (url) {
       routeLink(url, { source: 'main' });
     }
+  } catch (e) {}
+});
+
+// Calendar link success from desktop (donethat://auth?action=linked&success=true)
+ipcRenderer.on('auth:calendar-linked', () => {
+  try {
+    if (portalView) {
+      safePortalReload('calendar-linked');
+    }
+  } catch (_) {}
+});
+
+ipcRenderer.on('auth:custom-token-for-portal', (_event, payload) => {
+  try {
+    const wv = document.getElementById('portalView');
+    if (wv && payload && payload.customToken) wv.send('auth:setCustomToken', payload);
+  } catch (e) {}
+});
+ipcRenderer.on('auth:reauth-result-for-portal', (_event, payload) => {
+  try {
+    const wv = document.getElementById('portalView');
+    if (wv && payload) wv.send('auth:reauth-result', payload);
   } catch (e) {}
 });
 

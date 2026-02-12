@@ -101,11 +101,8 @@ const validInvokeChannels = [
   'update:check-status',
 
   // Auth server
-  'auth:start-server',
-  'auth:stop-server',
-
-  // Auth helpers in main
-  'auth:get-google-signin-url'
+  'auth:google-signin',
+  'auth:google-reauth'
 ];
 
 // Whitelisted channels for receiving messages from main process
@@ -116,6 +113,8 @@ const validReceiveChannels = [
   'refresh-token',
   'auth-error',
   'firebase-custom-token',
+  'auth:custom-token-for-portal',
+  'auth:reauth-result-for-portal',
 
   // Chat
   'chat:receive-messages',

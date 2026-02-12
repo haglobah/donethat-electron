@@ -280,6 +280,40 @@
       </div>
     </div>
 
+    <!-- MFA challenge view (TOTP code entry) -->
+    <div id="mfaChallengeView" class="view-container hidden">
+      <div class="auth-page">
+        <div class="auth-header">
+          <img src="../resources/icon.svg" alt="DoneThat Logo" class="auth-logo" />
+          <span class="auth-title">DoneThat</span>
+        </div>
+        <div class="settings-container">
+          <div class="auth-card">
+            <p class="text-sm text-gray-600 mb-4">Enter the code from your authenticator app.</p>
+            <form id="mfaForm" class="form-group" autocomplete="off">
+              <div>
+                <label for="mfaCodeInput" class="form-label">Verification code</label>
+                <input
+                  type="text"
+                  id="mfaCodeInput"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  maxlength="8"
+                  placeholder="000000"
+                  class="form-input rounded-xl py-2.5 text-center tracking-widest"
+                />
+              </div>
+              <div id="mfaError" class="hidden text-sm text-red-600 mt-2" role="alert"></div>
+              <div class="flex gap-2 mt-4">
+                <button type="button" id="mfaCancelBtn" class="btn-secondary rounded-xl py-2.5 flex-1">Cancel</button>
+                <button type="submit" id="mfaVerifyBtn" class="btn-primary rounded-xl py-2.5 flex-1">Verify</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Sign Up View (Hidden by default) -->
     <div id="signUpView" class="view-container hidden">
       <div class="auth-page">

@@ -20,6 +20,16 @@ const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notificati
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
+const { AuthServer } = require('./src-main/auth-server')
+const {
+  getGoogleSignInUrl,
+  getGoogleReauthUrl,
+} = require('./src-main/firebase-functions-main')
+const {
+  markPortalReauthPending,
+  handleDonethatUrl,
+  handleAuthServerToken,
+} = require('./src-main/auth-routing')
 
 // Suppress Chromium GLib-GObject errors on Linux via command line switches
 // These must be set before app.whenReady()
@@ -29,7 +39,6 @@ if (process.platform === 'linux') {
   // GLib assertion errors are logged as ERROR, so we need level 3 to suppress them
   app.commandLine.appendSwitch('log-level', '3')
 }
-const { AuthServer } = require('./src-main/auth-server')
 const {
   checkScreenCapturePermission: moduleCheckPermission,
   initScreenCapturePermissionHandling
@@ -92,19 +101,8 @@ if (!gotTheLock) {
 // Set up second-instance handler (only relevant in production)
 if (true) {
   app.on('second-instance', (event, commandLine, workingDirectory) => {
-    // Check if the app was launched with a URL (for Google SSO)
     const url = commandLine.find(arg => arg.startsWith('donethat://'));
-    if (url) {
-      try {
-        const urlObj = new URL(url);
-        const token = urlObj.searchParams.get('token');
-        if (token) {
-          enqueueDeepLinkToken(token);
-        }
-      } catch (error) {
-        log.error('Error parsing URL in second-instance:', error);
-      }
-    }
+    if (url) handleDonethatUrl(url);
 
     // Instead of showing a dialog, bring the existing window to foreground
     if (mainWindow) {
@@ -252,12 +250,11 @@ async function startAuthServer() {
   }
 
   authServer = new AuthServer();
-  const port = await authServer.start(enqueueDeepLinkToken);
+  const port = await authServer.start((token, googleTokens) => {
+    handleAuthServerToken(token, googleTokens, mainWindow, enqueueDeepLinkToken);
+  });
   return port;
 }
-
-// Firebase Functions helper (main process)
-const { getGoogleSignInUrl } = require('./src-main/firebase-functions-main');
 
 // Stop the auth server
 function stopAuthServer() {
@@ -608,38 +605,34 @@ app.whenReady().then(async () => {
     } catch (e) {}
   });
 
-  // IPC handlers for localhost auth server
-  ipcMain.handle('auth:start-server', async () => {
+  ipcMain.handle('auth:google-signin', async (_event, payload) => {
     try {
       const port = await startAuthServer();
-      return { success: true, port };
+      const data = await getGoogleSignInUrl({
+        port,
+        requestCalendar: !!(payload && payload.requestCalendar),
+      });
+      const url = data && (data.authUrl || data.url || (data.data && data.data.url));
+      return url ? { success: true, url } : { success: false, error: 'No URL in response' };
     } catch (error) {
-      log.error('Failed to start auth server:', error);
-      return { success: false, error: error.message };
+      log.error('Failed to get desktop Google Sign In URL from main:', error);
+      return { success: false, error: error.message || String(error) };
     }
   });
 
-  ipcMain.handle('auth:stop-server', () => {
+  ipcMain.handle('auth:google-reauth', async (_event, payload) => {
     try {
-      stopAuthServer();
-      return { success: true };
+      const port = await startAuthServer();
+      const data = await getGoogleReauthUrl({
+        port,
+        idToken: payload && payload.idToken,
+        requestCalendar: !!(payload && payload.requestCalendar),
+      });
+      const url = data && (data.authUrl || data.url || (data.data && data.data.url));
+      if (url) markPortalReauthPending();
+      return url ? { success: true, url } : { success: false, error: 'No URL in response' };
     } catch (error) {
-      log.error('Failed to stop auth server:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // IPC handler to call authGoogleSignInStart from main process
-  ipcMain.handle('auth:get-google-signin-url', async (_event, payload) => {
-    try {
-      const port = payload && payload.port;
-      if (!port || typeof port !== 'number') {
-        return { success: false, error: 'Invalid or missing port' };
-      }
-      const data = await getGoogleSignInUrl(port);
-      return { success: true, data };
-    } catch (error) {
-      log.error('Failed to get Google Sign In URL from main:', error);
+      log.error('Failed to get desktop Google Reauth URL from main:', error);
       return { success: false, error: error.message || String(error) };
     }
   });
@@ -919,33 +912,12 @@ app.whenReady().then(async () => {
   // Handle custom URL scheme for Google SSO and internal navigation
   app.on('open-url', (event, urlString) => {
     event.preventDefault();
-    const url = new URL(urlString);
-    const token = url.searchParams.get('token');
-    
-    if (token) {
-      enqueueDeepLinkToken(token);
-    } else if (mainWindow) {
-      // Forward other donethat:// URLs for internal navigation
-      mainWindow.webContents.send('router:open-link', urlString);
-    }
+    handleDonethatUrl(urlString);
   });
 
   // Handle URL when app is launched with URL (all platforms)
-  const url = process.argv.find(arg => arg.startsWith('donethat://'));
-  if (url) {
-    try {
-      const urlObj = new URL(url);
-      const token = urlObj.searchParams.get('token');
-      if (token) {
-        enqueueDeepLinkToken(token);
-      } else if (mainWindow) {
-        // Forward other donethat:// URLs for internal navigation
-        mainWindow.webContents.send('router:open-link', url);
-      }
-    } catch (error) {
-      log.error('Error parsing URL in app launch:', error);
-    }
-  }
+  const argvUrl = process.argv.find(arg => arg.startsWith('donethat://'));
+  if (argvUrl) handleDonethatUrl(argvUrl);
 })
 
 ////// OVERLAY IPC //////
