@@ -7,7 +7,6 @@ const { hasWindowsPermission } = require('./app-state.js');
 const ipcRenderer = window.electronAPI;
 
 const { refreshAuthToken } = require('./auth.js');
-// os module removed
 const packageInfo = require('../package.json');
 const { showBanner } = require('./notify.js');
 
@@ -58,10 +57,11 @@ async function checkAndUpdateAppVersion() {
   
   if (lastVersion !== currentVersion) {
     try {
+      const platformInfo = await ipcRenderer.invoke('get-platform-info');
       await saveUserSettings('app', {
         version: currentVersion,
-        osPlatform: os.platform(),
-        osRelease: os.release()
+        osPlatform: platformInfo?.os_name ?? window.electronAPI?.platform ?? 'unknown',
+        osRelease: platformInfo?.os_version ?? 'unknown'
       });
       localStorage.setItem('lastAppVersion', currentVersion);
     } catch (error) {
@@ -441,8 +441,9 @@ async function saveUserSettings(type, value) {
         const result = await getUserSettingsFunction();
         const settings = result.data;
         
-        const localOSPlatform = os.platform();
-        const localOSRelease = os.release();
+        const platformInfo = await ipcRenderer.invoke('get-platform-info');
+        const localOSPlatform = platformInfo?.os_name ?? window.electronAPI?.platform;
+        const localOSRelease = platformInfo?.os_version;
         const storedOSPlatform = settings?.app?.osPlatform;
         const storedOSRelease = settings?.app?.osRelease;
         
