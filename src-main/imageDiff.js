@@ -8,6 +8,17 @@ const CLUSTERS_SIZE = 30
 const TOLERANCE = 5
 
 /**
+ * Normalize image input to data URL string for Jimp.read().
+ * Jimp throws "Could not find MIME for Buffer" when given a raw Buffer.
+ */
+function toDataUrl(val) {
+  if (!val) return null
+  if (typeof val === 'string' && val.startsWith('data:image/')) return val
+  if (Buffer.isBuffer(val)) return `data:image/jpeg;base64,${val.toString('base64')}`
+  return null
+}
+
+/**
  * Draw red border rectangles on image for each cluster
  * Draws INSIDE cluster bounds (original logic drew outside, yielding zero-sized bars when cluster touched edges)
  */
@@ -83,15 +94,18 @@ async function applyImageDiffBoundingBoxes(screenshots, prevData) {
       const result = [...screenshots]
       for (let i = 0; i < screenshots.length; i++) {
         const currentShot = screenshots[i]
-        const dataUrl = typeof currentShot === 'string' ? currentShot : currentShot?.base64Data
-        if (!dataUrl || typeof dataUrl !== 'string') continue
+        const dataUrl = toDataUrl(typeof currentShot === 'string' ? currentShot : currentShot?.base64Data)
+        if (!dataUrl) {
+          log.warn('Image diff skip (no prev) index', i, 'currentShot:', typeof currentShot, Buffer.isBuffer(currentShot) ? 'Buffer' : '', currentShot?.base64Data != null ? 'hasBase64Data' : '')
+          continue
+        }
         try {
           const currentImg = await Jimp.read(dataUrl)
           const withBorder = await drawFullFrameBorder(currentImg.clone())
           const jpegBuffer = await withBorder.getBuffer('image/jpeg', { quality: 70 })
           result[i] = `data:image/jpeg;base64,${jpegBuffer.toString('base64')}`
         } catch (err) {
-          log.warn('Image diff failed (no prev) for index', i, err.message)
+          log.warn('Image diff failed (no prev) for index', i, err.message, '| currentShot:', typeof currentShot, Buffer.isBuffer(currentShot) ? 'Buffer' : '', 'dataUrlLen:', typeof dataUrl === 'string' ? dataUrl.length : 0, 'dataUrlPrefix:', typeof dataUrl === 'string' ? dataUrl.slice(0, 30) : '')
         }
       }
       return result
@@ -106,13 +120,24 @@ async function applyImageDiffBoundingBoxes(screenshots, prevData) {
 
       if (!currentShot || !prevBase64) continue
 
-      const currentDataUrl = typeof currentShot === 'string' ? currentShot : currentShot.base64Data
-      const prevDataUrl = typeof prevBase64 === 'string' ? prevBase64 : prevBase64
+      const currentDataUrl = toDataUrl(typeof currentShot === 'string' ? currentShot : currentShot?.base64Data)
+      const prevDataUrl = toDataUrl(typeof prevBase64 === 'string' ? prevBase64 : prevBase64)
       if (!currentDataUrl || !prevDataUrl) continue
 
       try {
-        const currentImg = await Jimp.read(currentDataUrl)
-        const prevImg = await Jimp.read(prevDataUrl)
+        let currentImg, prevImg
+        try {
+          currentImg = await Jimp.read(currentDataUrl)
+        } catch (e) {
+          log.warn('Image diff: Jimp.read(current) failed for pair', i, e.message, '| currentDataUrl type:', typeof currentDataUrl, Buffer.isBuffer(currentDataUrl) ? 'Buffer' : '', 'len:', typeof currentDataUrl === 'string' ? currentDataUrl.length : 0)
+          throw e
+        }
+        try {
+          prevImg = await Jimp.read(prevDataUrl)
+        } catch (e) {
+          log.warn('Image diff: Jimp.read(prev) failed for pair', i, e.message, '| prevDataUrl type:', typeof prevDataUrl, Buffer.isBuffer(prevDataUrl) ? 'Buffer' : '', 'prevBase64 type:', typeof prevBase64, Buffer.isBuffer(prevBase64) ? 'Buffer' : '')
+          throw e
+        }
 
         const currentW = currentImg.bitmap.width
         const currentH = currentImg.bitmap.height
@@ -143,7 +168,7 @@ async function applyImageDiffBoundingBoxes(screenshots, prevData) {
           result[i] = `data:image/jpeg;base64,${jpegBuffer.toString('base64')}`
         }
       } catch (err) {
-        log.warn('Image diff failed for pair', i, err.message)
+        log.warn('Image diff failed for pair', i, err.message, '| currentShot:', typeof currentShot, Buffer.isBuffer(currentShot) ? 'Buffer' : '', 'prevBase64:', typeof prevBase64, Buffer.isBuffer(prevBase64) ? 'Buffer' : '')
       }
     }
 
@@ -155,5 +180,6 @@ async function applyImageDiffBoundingBoxes(screenshots, prevData) {
 }
 
 module.exports = {
-  applyImageDiffBoundingBoxes
+  applyImageDiffBoundingBoxes,
+  toDataUrl
 }

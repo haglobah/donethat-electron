@@ -252,8 +252,8 @@ function simplifyMessagesForRetry(messages) {
         // Keep only the first 2 images and all text content
         const simplifiedContent = message.content.filter(block => {
           if (block.type === 'text') return true;
+          if (block.type?.startsWith?.('audio/')) return true;
           if (block.type === 'image_url') {
-            // Only keep first 2 images
             const imageBlocks = message.content.filter(b => b.type === 'image_url');
             const imageIndex = imageBlocks.indexOf(block);
             return imageIndex < 2;
@@ -317,11 +317,11 @@ function validateAndProcessImage(imageData) {
  * @param {Array<string>} validScreenshots - Current screenshot data URLs
  * @param {Array<string>} previousScreenshots - Previous snapshot data URLs for context (optional)
  * @param {string} applicationActivity - Activity text
- * @param {string} audioTranscript - Audio transcript text
+ * @param {Array<{base64Data: string, mimeType: string, startMs: number, endMs: number}>} audioChunks - Audio chunks for multimodal input
  * @param {number} idleTime - Idle time in seconds
  * @param {string} provider - 'gemini' or 'openai' to determine image format
  */
-function buildBlocks(config, validScreenshots, previousScreenshots, applicationActivity, audioTranscript, idleTime, provider = 'gemini') {
+function buildBlocks(config, validScreenshots, previousScreenshots, applicationActivity, audioChunks, idleTime, provider = 'gemini') {
   const spec = config.contentBlocksSpec || {};
   const imageKey = spec.imagePartKey || 'image_url';
   const blocks = [ { type: 'text', text: config.prefilledPrompt } ];
@@ -329,8 +329,24 @@ function buildBlocks(config, validScreenshots, previousScreenshots, applicationA
   if (applicationActivity) {
     blocks.push({ type: 'text', text: `Application Activity:\n${applicationActivity}` });
   }
-  if (audioTranscript) {
-    blocks.push({ type: 'text', text: `Audio Transcript:\n${audioTranscript}` });
+  if (audioChunks && audioChunks.length > 0) {
+    blocks.push({ type: 'text', text: 'Recorded audio segments (analyse and transcribe each). Timestamps are ms since epoch:' });
+    audioChunks.forEach((chunk) => {
+      const base64 = typeof chunk.base64Data === 'string' && chunk.base64Data.includes(',')
+        ? chunk.base64Data.split(',')[1] : chunk.base64Data;
+      const mimeType = (chunk.mimeType || '').split(';')[0] || 'audio/webm';
+      if (base64 && mimeType) {
+        if (chunk.startMs != null && chunk.endMs != null) {
+          let segmentInfo = `Segment ${chunk.startMs}–${chunk.endMs}:`;
+          if (chunk.speechIntervals && chunk.speechIntervals.length > 0) {
+            const intervals = chunk.speechIntervals.map(i => `[${i.startMs}-${i.endMs}]`).join(', ');
+            segmentInfo += `\nAudio Context: The user was speaking during these intervals (ms): ${intervals}. All other audio is system/computer sound.`;
+          }
+          blocks.push({ type: 'text', text: segmentInfo });
+        }
+        blocks.push({ type: mimeType, data: base64 });
+      }
+    });
   }
   
   if (idleTime !== undefined && idleTime !== null) {
@@ -394,12 +410,12 @@ function buildBlocks(config, validScreenshots, previousScreenshots, applicationA
  * @param {Array<string>} screenshots - Current screenshot data URLs
  * @param {Array<string>} previousScreenshots - Previous snapshot data URLs for context (optional)
  * @param {string} activity - Application activity text
- * @param {string} audioTranscript - Audio transcript text
+ * @param {Array} audioChunks - Audio chunks for multimodal input
  * @param {number} idleTime - Idle time in seconds
  * @param {string} idToken - Firebase ID token
  * @param {boolean} testMode - If true, skip Firebase submission
  */
-async function analyzeScreenshots(screenshots, previousScreenshots, activity, audioTranscript, idleTime, idToken, testMode = false) {
+async function analyzeScreenshots(screenshots, previousScreenshots, activity, audioChunks, idleTime, idToken, testMode = false) {
   try {
     // Validate current screenshots - this is critical
     if (!screenshots || screenshots.length === 0) {
@@ -424,7 +440,7 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, au
     // Ensure we have up-to-date config
     const config = latestConfig || await getConfig(idToken);
     // Build content blocks using spec with correct provider format
-    const blocks = buildBlocks(config, validScreenshots, previousScreenshots, activity, audioTranscript, idleTime, provider);
+    const blocks = buildBlocks(config, validScreenshots, previousScreenshots, activity, audioChunks, idleTime, provider);
 
     // Import HumanMessage
     const { HumanMessage } = await import('@langchain/core/messages');
@@ -528,11 +544,7 @@ async function processDataLocally(idToken, screenshots, inputData, testMode = fa
       ).join(', ');
     }
 
-    // Get audio transcript
-    let audioTranscript = 'No audio transcript available';
-    if (inputData.audioTranscript) {
-      audioTranscript = inputData.audioTranscript;
-    }
+    const audioChunks = inputData?.audioChunks ?? [];
 
     // Get idle time
     let idleTime = undefined;
@@ -553,7 +565,7 @@ async function processDataLocally(idToken, screenshots, inputData, testMode = fa
         screenshots,
         prevImages,
         applicationActivity,
-        audioTranscript,
+        audioChunks,
         idleTime,
         idToken,
         testMode
@@ -587,7 +599,7 @@ async function processDataLocally(idToken, screenshots, inputData, testMode = fa
     const paramsToSend = {
       ...baseParams,
       application_activity: applicationActivity || '',
-      audio_transcript: audioTranscript || ''
+      audio_transcript: (audioChunks && audioChunks.length > 0) ? '(audio provided as multimodal input)' : ''
     };
 
     // If no structured result (LLM failed after retries), skip submission this round

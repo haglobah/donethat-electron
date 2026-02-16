@@ -30,21 +30,25 @@ let workdays = [1, 2, 3, 4, 5]; // Default Mon-Fri (0=Sun, 6=Sat)
 let workhours = { start: "09:00", end: "17:00" }; // Default 9 AM to 5 PM
 let inputData = {
   windows: false,
-  audio: false
+  audio: false,
+  systemAudio: false,
+  screen: true
 };
 
-// Helper: force-disable and persist "Disable screenshots in meetings"
-async function forceDisableScreenshotsInMeetings() {
+
+
+async function forceDisableSystemAudio() {
   try {
-    const el = document.getElementById('disableScreenshotsInMeetings');
-    if (!el) return;
-    if (el.checked) {
+    const el = document.getElementById('systemAudioCheckbox');
+    if (el && el.checked) {
       el.checked = false;
-      await saveUserSettings('disableScreenshotsInMeetings', false);
-      ipcRenderer.send('updateDisableScreenshotsInMeetings', false);
+      // Build a partial update for inputData
+      inputData.systemAudio = false;
+      await saveUserSettings('inputData', { systemAudio: false, __partial: true });
+      ipcRenderer.send('updateInputDataSettings', { systemAudio: false });
     }
   } catch (error) {
-    console.error('Error forcing disable of meeting screenshots:', error);
+    console.error('Error forcing disable of system audio:', error);
   }
 }
 
@@ -111,10 +115,12 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   setupHotkeyConfiguration();
   // Set up test local processing button
   setupTestLocalProcessing();
-  // Set up dependency: disable screenshots in meetings requires microphone enabled
-  setupMeetingScreenshotsDependency();
+
+  setupSystemAudioDependency();
   // Set up app exclusions listeners
   setupAppExclusionsListeners();
+  // Set up context capture (experimental) listeners
+  setupContextCaptureListeners();
   setupSaveCaptureDataListeners();
 
   // Set up Wayland detection
@@ -147,8 +153,8 @@ function setupDisableCaptureListener() {
         // Update local state
         inputData.audio = false;
       }
-      // Also disable "Disable screenshots in meetings" if mic is off
-      await forceDisableScreenshotsInMeetings();
+      // Also disable System Audio if mic is off
+      await forceDisableSystemAudio();
     }
     
     if (disabledSettings.windows === false) {
@@ -197,9 +203,9 @@ function setupPermissionResultListener() {
     if (type === 'windows') {
       checkbox.disabled = !!hasPermission;
     }
-    // If audio permission was revoked, also disable meeting screenshots and persist
+    // If audio permission was revoked, also disable system audio and persist
     if (type === 'audio' && !hasPermission) {
-      await forceDisableScreenshotsInMeetings();
+      await forceDisableSystemAudio();
     }
     
     // Save to server
@@ -337,14 +343,17 @@ async function saveUserSettings(type, value) {
           const partial = { ...value };
           delete partial.__partial;
           const merged = {
-            windows: partial.windows !== undefined ? !!partial.windows : !!current.windows,
-            audio: partial.audio !== undefined ? !!partial.audio : !!current.audio
+            windows: partial.windows != null ? !!partial.windows : (current.windows != null ? !!current.windows : false),
+            audio: partial.audio != null ? !!partial.audio : (current.audio != null ? !!current.audio : false),
+            systemAudio: partial.systemAudio != null ? !!partial.systemAudio : (current.systemAudio != null ? !!current.systemAudio : false),
+            screen: partial.screen != null ? !!partial.screen : (current.screen != null ? !!current.screen : true)
           };
           settingsData.inputData = merged;
           logAnalyticsEvent('settings_updated', {
             type: 'inputData',
             windows: merged.windows,
             audio: merged.audio,
+            screen: merged.screen,
             mode: 'partial-merge'
           });
         } catch (mergeErr) {
@@ -352,26 +361,33 @@ async function saveUserSettings(type, value) {
           const fallback = { ...value };
           delete fallback.__partial;
           settingsData.inputData = {
-            windows: fallback.windows !== undefined ? !!fallback.windows : false,
-            audio: fallback.audio !== undefined ? !!fallback.audio : false
+            windows: fallback.windows != null ? !!fallback.windows : false,
+            audio: fallback.audio != null ? !!fallback.audio : false,
+            systemAudio: fallback.systemAudio != null ? !!fallback.systemAudio : false,
+            screen: fallback.screen != null ? !!fallback.screen : true
           };
           logAnalyticsEvent('settings_updated', {
             type: 'inputData',
             windows: settingsData.inputData.windows,
             audio: settingsData.inputData.audio,
+            screen: settingsData.inputData.screen,
             mode: 'partial-fallback'
           });
         }
       } else {
         const fullValue = {
-          windows: value.windows !== undefined ? !!value.windows : false,
-          audio: value.audio !== undefined ? !!value.audio : false
+          windows: value.windows != null ? !!value.windows : false,
+          audio: value.audio != null ? !!value.audio : false,
+          systemAudio: value.systemAudio != null ? !!value.systemAudio : false,
+          screen: value.screen != null ? !!value.screen : true
         };
         settingsData.inputData = fullValue;
         logAnalyticsEvent('settings_updated', {
           type: 'inputData',
           windows: fullValue.windows,
           audio: fullValue.audio,
+          systemAudio: fullValue.systemAudio,
+          screen: fullValue.screen,
           mode: 'full'
         });
       }
@@ -389,13 +405,8 @@ async function saveUserSettings(type, value) {
         type: 'timezone',
         timezone: value
       });
-    } else if (type === 'disableScreenshotsInMeetings') {
-      settingsData.disableScreenshotsInMeetings = value;
-      logAnalyticsEvent('settings_updated', {
-        type: 'disableScreenshotsInMeetings',
-        enabled: value
-      });
     }
+
 
     // Check if we need to include OS info (only when saving other settings, not app)
     if (type !== 'app') {
@@ -459,9 +470,12 @@ async function updateSettingsUI(settings) {
   const loadedInputData = settings?.inputData || {};
   const prevInputData = { ...inputData };
   // Passive windows: do not read persisted windows; use live OS permission for local state only
+  // Defaults: screen=true, systemAudio=false
   inputData = {
     windows: (typeof hasWindowsPermission === 'function') ? hasWindowsPermission() : prevInputData.windows,
-    audio: !!loadedInputData.audio
+    audio: loadedInputData.audio != null ? !!loadedInputData.audio : false,
+    systemAudio: loadedInputData.systemAudio != null ? !!loadedInputData.systemAudio : false,
+    screen: loadedInputData.screen != null ? !!loadedInputData.screen : true
   };
 
   // Compute and send only changed flags to main to avoid clobbering
@@ -469,35 +483,30 @@ async function updateSettingsUI(settings) {
   // IMPORTANT: Do not include windows in delta from settings load.
   // Windows permission state is managed by permissions.js via system events.
   if (prevInputData.audio !== inputData.audio) delta.audio = inputData.audio;
+  if (prevInputData.systemAudio !== inputData.systemAudio) delta.systemAudio = inputData.systemAudio;
+  if (prevInputData.screen !== inputData.screen) delta.screen = inputData.screen;
+  
   if (Object.keys(delta).length > 0) {
+    console.log('[Settings] sending updateInputDataSettings delta:', delta);
     ipcRenderer.send('updateInputDataSettings', delta);
   }
 
   const audioCheckbox = document.getElementById('audioCheckbox');
+  const systemAudioCheckbox = document.getElementById('systemAudioCheckbox');
+  const screenCheckbox = document.getElementById('screenCheckbox');
 
   // Do not set windowsCheckbox state here; permissions.js updates checked/disabled based on system permission
-  if (audioCheckbox) audioCheckbox.checked = inputData.audio; // Keep disabled state from HTML
-
-  // Recompute dependency for meeting screenshots toggle now that audio state is applied
-  try { recomputeMeetingScreenshotsDependency(); } catch (_) {}
-
-  // Handle disable screenshots in meetings setting
-  if (settings && typeof settings.disableScreenshotsInMeetings === 'boolean') {
-    const disableScreenshots = document.getElementById('disableScreenshotsInMeetings');
-    if (disableScreenshots) {
-      disableScreenshots.checked = settings.disableScreenshotsInMeetings;
-      // Send to main process
-      ipcRenderer.send('updateDisableScreenshotsInMeetings', settings.disableScreenshotsInMeetings);
-      // If audio is off, force-disable this setting and persist
-      try {
-        const audioCheckboxEl = document.getElementById('audioCheckbox');
-        const micOn = !!(audioCheckboxEl && audioCheckboxEl.checked);
-        if (!micOn) await forceDisableScreenshotsInMeetings();
-      } catch (error) {
-        console.error('Error ensuring meeting screenshots consistency with audio:', error);
-      }
-    }
+  if (audioCheckbox) audioCheckbox.checked = inputData.audio; 
+  if (screenCheckbox) screenCheckbox.checked = inputData.screen;
+  if (systemAudioCheckbox) {
+    systemAudioCheckbox.checked = inputData.systemAudio;
+    // Visually disable if audio is off
+    systemAudioCheckbox.disabled = !inputData.audio;
   }
+
+  try { recomputeSystemAudioDependency(); } catch (_) {}
+
+
 
   // Handle workhours setting
   if (settings && settings.workhours) {
@@ -557,52 +566,79 @@ async function updateSettingsUI(settings) {
   ipcRenderer.send('updateWorkdays', workdays);
 }
 
-// Disable "Disable screenshots in meetings" unless microphone is enabled
-function setupMeetingScreenshotsDependency() {
+
+
+// Disable "System audio" unless microphone is enabled
+function setupSystemAudioDependency() {
   const audioCheckbox = document.getElementById('audioCheckbox');
-  const disableScreenshots = document.getElementById('disableScreenshotsInMeetings');
-  if (!disableScreenshots) return;
+  const systemAudioCheckbox = document.getElementById('systemAudioCheckbox');
+  if (!systemAudioCheckbox) return;
 
   const applyState = async () => {
-    const micOn = !!(audioCheckbox && audioCheckbox.checked);
-    if (!micOn && disableScreenshots.checked) await forceDisableScreenshotsInMeetings();
-    disableScreenshots.disabled = !micOn;
+    // Check both DOM and memory state to avoid race conditions during init
+    const micOn = !!(audioCheckbox && audioCheckbox.checked) || !!inputData.audio;
+
+
+    // If mic turns off, system audio must turn off
+    if (!micOn && systemAudioCheckbox.checked) {
+       console.warn('[Settings] setupSystemAudioDependency: Force disabling System Audio because Mic is OFF');
+       await forceDisableSystemAudio();
+    }
+    systemAudioCheckbox.disabled = !micOn;
   };
 
   // Initial application
   applyState();
+  
   // React to microphone toggle changes
   if (audioCheckbox) {
     audioCheckbox.addEventListener('change', applyState);
   }
 
-  // Add event listener for the disable screenshots toggle
-  disableScreenshots.addEventListener('change', async () => {
-    const isChecked = disableScreenshots.checked;
-    try {
-      await saveUserSettings('disableScreenshotsInMeetings', isChecked);
-      // Send to main process
-      ipcRenderer.send('updateDisableScreenshotsInMeetings', isChecked);
-    } catch (error) {
-      // Revert on error
-      disableScreenshots.checked = !isChecked;
-      console.error('Error saving disable screenshots setting:', error);
-    }
-  });
+  // Add event listener for screenshare toggle
+  if (screenCheckbox) {
+    screenCheckbox.addEventListener('change', async () => {
+      const isChecked = screenCheckbox.checked;
+      try {
+        inputData.screen = isChecked;
+        await saveUserSettings('inputData', { screen: isChecked, __partial: true });
+        ipcRenderer.send('updateInputDataSettings', { screen: isChecked });
+      } catch (error) {
+        screenCheckbox.checked = !isChecked;
+        inputData.screen = !isChecked;
+      }
+    });
+  }
+
+  // Add event listener for system audio toggle
+  if (systemAudioCheckbox) {
+    systemAudioCheckbox.addEventListener('change', async () => {
+      const isChecked = systemAudioCheckbox.checked;
+      try {
+        // Use helper to save setting
+        inputData.systemAudio = isChecked;
+        await saveUserSettings('inputData', { systemAudio: isChecked, __partial: true });
+        ipcRenderer.send('updateInputDataSettings', { systemAudio: isChecked });
+      } catch (error) {
+        // Revert on error
+        systemAudioCheckbox.checked = !isChecked;
+        inputData.systemAudio = !isChecked;
+      }
+    });
+  }
 }
 
-// Standalone recompute that can be called after async settings load
-function recomputeMeetingScreenshotsDependency() {
+function recomputeSystemAudioDependency() {
   const audioCheckbox = document.getElementById('audioCheckbox');
-  const disableScreenshots = document.getElementById('disableScreenshotsInMeetings');
-  if (!disableScreenshots) return;
-  const micOn = !!(audioCheckbox && audioCheckbox.checked);
-  disableScreenshots.disabled = !micOn;
-  if (!micOn) {
-    // Ensure it is unchecked and persisted when audio is off
-    if (disableScreenshots.checked) {
-      forceDisableScreenshotsInMeetings();
-    }
+  const systemAudioCheckbox = document.getElementById('systemAudioCheckbox');
+  if (!systemAudioCheckbox) return;
+
+  // Check both DOM and memory state to avoid race conditions during init
+  const micOn = !!(audioCheckbox && audioCheckbox.checked) || !!inputData.audio;
+  
+  systemAudioCheckbox.disabled = !micOn;
+  if (!micOn && systemAudioCheckbox.checked) {
+    forceDisableSystemAudio();
   }
 }
 
@@ -1251,6 +1287,186 @@ function setupAppExclusionsListeners() {
       }
     });
   }
+}
+
+// Set up context capture (experimental) listeners
+function setupContextCaptureListeners() {
+  const enabledCheckbox = document.getElementById('contextCaptureEnabled');
+  const appsSection = document.getElementById('contextAppsSection');
+  const appsList = document.getElementById('contextAppsList');
+  const addBtn = document.getElementById('addContextAppBtn');
+
+  if (!enabledCheckbox || !appsSection || !appsList || !addBtn) return;
+
+  let contextApps = [];
+
+  async function loadContextCaptureState() {
+    try {
+      const enabledResult = await ipcRenderer.invoke('get-context-capture-enabled');
+      const appsResult = await ipcRenderer.invoke('get-context-apps');
+      if (enabledResult?.success) {
+        enabledCheckbox.checked = !!enabledResult.enabled;
+      }
+      if (appsResult?.success && Array.isArray(appsResult.apps)) {
+        contextApps = appsResult.apps.map((app) => ({
+          appName: app.appName || '',
+          titlePatterns: app.titlePatterns || []
+        }));
+      }
+      appsSection.classList.toggle('hidden', !enabledCheckbox.checked);
+      renderContextAppsList();
+    } catch (error) {
+      console.error('Error loading context capture state:', error);
+    }
+  }
+
+  function renderContextAppsList() {
+    appsList.innerHTML = '';
+    contextApps.forEach((app, index) => {
+      const entry = document.createElement('div');
+      entry.className = 'space-y-3 p-4 border border-gray-200 rounded-lg bg-white mb-3';
+
+      const appNameRow = document.createElement('div');
+      const appNameLabel = document.createElement('label');
+      appNameLabel.className = 'block text-sm font-medium text-gray-700 mb-1';
+      appNameLabel.textContent = 'App name';
+      const appNameInputContainer = document.createElement('div');
+      appNameInputContainer.className = 'relative';
+      const appNameInput = document.createElement('input');
+      appNameInput.type = 'text';
+      appNameInput.className = 'form-input text-xs py-1.5 pr-8';
+      appNameInput.placeholder = 'e.g., Notion, Google Chrome, Calendar';
+      appNameInput.value = app.appName || '';
+      appNameInput.dataset.index = index;
+      appNameInput.dataset.field = 'appName';
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 w-4 h-4 flex items-center justify-center text-sm';
+      removeBtn.dataset.index = index;
+      removeBtn.innerHTML = '×';
+      removeBtn.title = 'Remove';
+      appNameInputContainer.appendChild(appNameInput);
+      appNameInputContainer.appendChild(removeBtn);
+      appNameRow.appendChild(appNameLabel);
+      appNameRow.appendChild(appNameInputContainer);
+
+      const titlePatternRow = document.createElement('div');
+      const titlePatternLabel = document.createElement('label');
+      titlePatternLabel.className = 'block text-sm font-medium text-gray-700 mb-1';
+      titlePatternLabel.textContent = 'Window name keywords (optional)';
+      let titlePatterns = app.titlePatterns || [];
+      if (!Array.isArray(titlePatterns)) titlePatterns = [];
+      const titlePatternContainer = document.createElement('div');
+      titlePatternContainer.className = 'flex flex-wrap gap-2 p-1.5 border border-gray-300 rounded min-h-[32px] items-center';
+      titlePatternContainer.dataset.index = index;
+
+      const renderChips = () => {
+        titlePatternContainer.querySelectorAll('.context-pattern-chip').forEach((c) => c.remove());
+        titlePatterns.forEach((pattern) => {
+          if (!pattern || !pattern.trim()) return;
+          const chip = document.createElement('div');
+          chip.className = 'context-pattern-chip inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-700 rounded text-sm';
+          chip.innerHTML = `<span>${pattern}</span><button type="button" class="text-gray-500 hover:text-gray-700 ml-1 chip-remove">×</button>`;
+          chip.querySelector('.chip-remove').addEventListener('click', () => {
+            const i = titlePatterns.indexOf(pattern);
+            if (i !== -1) {
+              titlePatterns.splice(i, 1);
+              contextApps[index].titlePatterns = titlePatterns.filter((p) => p && p.trim());
+              renderChips();
+              saveContextApps();
+            }
+          });
+          titlePatternContainer.insertBefore(chip, titlePatternInput);
+        });
+      };
+      const titlePatternInput = document.createElement('input');
+      titlePatternInput.type = 'text';
+      titlePatternInput.className = 'flex-1 min-w-[120px] border-0 outline-none bg-transparent text-xs';
+      titlePatternInput.placeholder = titlePatterns.length === 0 ? 'e.g. budget, meetings' : 'Add another...';
+      titlePatternInput.dataset.index = index;
+      titlePatternInput.addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter' && titlePatternInput.value.trim()) {
+          e.preventDefault();
+          const newPattern = titlePatternInput.value.trim();
+          if (!titlePatterns.includes(newPattern)) {
+            titlePatterns.push(newPattern);
+            contextApps[index].titlePatterns = titlePatterns;
+            titlePatternInput.value = '';
+            renderChips();
+            await saveContextApps();
+          }
+        }
+      });
+      titlePatternInput.addEventListener('blur', async () => {
+        if (titlePatternInput.value.trim() && !titlePatterns.includes(titlePatternInput.value.trim())) {
+          titlePatterns.push(titlePatternInput.value.trim());
+          contextApps[index].titlePatterns = titlePatterns;
+          titlePatternInput.value = '';
+          renderChips();
+          await saveContextApps();
+        }
+      });
+      titlePatternContainer.appendChild(titlePatternInput);
+      renderChips();
+      titlePatternRow.appendChild(titlePatternLabel);
+      titlePatternRow.appendChild(titlePatternContainer);
+
+      entry.appendChild(appNameRow);
+      entry.appendChild(titlePatternRow);
+      appsList.appendChild(entry);
+    });
+
+    appsList.querySelectorAll('input[data-field="appName"]').forEach((input) => {
+      input.addEventListener('blur', async () => {
+        const index = parseInt(input.dataset.index);
+        if (contextApps[index]) {
+          contextApps[index].appName = input.value.trim() || '';
+          if (!contextApps[index].appName) {
+            contextApps.splice(index, 1);
+            renderContextAppsList();
+          } else {
+            await saveContextApps();
+          }
+        }
+      });
+    });
+    appsList.querySelectorAll('button[data-index]').forEach((btn) => {
+      if (btn.textContent === '×') {
+        btn.addEventListener('click', async () => {
+          const index = parseInt(btn.dataset.index);
+          contextApps.splice(index, 1);
+          renderContextAppsList();
+          await saveContextApps();
+        });
+      }
+    });
+  }
+
+  async function saveContextApps() {
+    try {
+      const result = await ipcRenderer.invoke('save-context-apps', contextApps);
+      if (!result?.success) {
+        showBanner(`Error saving context apps: ${result?.error || 'Unknown error'}`, { title: 'Settings', sticky: true });
+      }
+    } catch (error) {
+      console.error('Error saving context apps:', error);
+      showBanner(`Error saving context apps: ${error.message}`, { title: 'Settings', sticky: true });
+    }
+  }
+
+  enabledCheckbox.addEventListener('change', async () => {
+    ipcRenderer.send('update-context-capture-enabled', enabledCheckbox.checked);
+    appsSection.classList.toggle('hidden', !enabledCheckbox.checked);
+  });
+
+  addBtn.addEventListener('click', () => {
+    contextApps.push({ appName: '', titlePatterns: [] });
+    renderContextAppsList();
+    const newInput = appsList.querySelector(`input[data-index="${contextApps.length - 1}"][data-field="appName"]`);
+    if (newInput) newInput.focus();
+  });
+
+  loadContextCaptureState();
 }
 
 // Set up Wayland detection and show note if on Wayland

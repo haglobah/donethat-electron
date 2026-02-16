@@ -1,12 +1,27 @@
-// Audio recorder for the renderer process
+// Audio recorder for the renderer process with VAD and System Audio mixing
 let mediaRecorder = null;
 let audioChunks = [];
 let recordingStartTime = null;
 let isRecording = false;
 let chunkTimestamps = [];
 let MAX_BUFFER_DURATION_MS;
+let accumulatedChunks = [];
 // Guard to prevent implicit resume after sleep; set true only when main explicitly starts
 window.allowAudioResume = false;
+
+// Audio Context and Nodes for Mixing/VAD
+let audioContext = null;
+let micSource = null;
+let systemSources = []; // Changed from systemSource to array to support merging multiple channels
+let destNode = null;
+let vadNode = null; // AnalyserNode or ScriptProcessor
+
+
+// VAD State & Constants
+let userSpeechIntervals = []; // Array of { startMs, endMs }
+const VAD_THRESHOLD = 0.05; // RMS threshold (adjustable)
+const VAD_MIN_SPEECH_MS = 100; // Minimum duration to consider as speech
+const VAD_HANG_OVER_MS = 500; // Time to wait before ending a speech segment
 
 // Helper: is our own recorder currently active
 window.isRecorderActive = function() {
@@ -26,13 +41,8 @@ window.isRecorderActive = function() {
  */
 function getBestSupportedMimeType() {
   // Use WebM format directly since we're using temp files
-  
   return 'audio/webm;codecs=opus';
 }
-
-
-
-
 
 /**
  * Initialize audio recorder
@@ -68,10 +78,166 @@ window.initAudioRecorder = function(config = {}) {
 };
 
 /**
+ * Cleanup Audio Context and Nodes
+ */
+function cleanupAudioContext() {
+  try {
+    if (vadNode) {
+      vadNode.disconnect();
+      vadNode = null;
+    }
+    if (micSource) {
+      micSource.disconnect();
+      micSource = null;
+    }
+    if (systemSources.length > 0) {
+      systemSources.forEach(source => {
+        try { source.disconnect(); } catch (e) {}
+      });
+      systemSources = [];
+    }
+    if (destNode) {
+      destNode.disconnect();
+      destNode = null;
+    }
+    if (audioContext) {
+      audioContext.close();
+      audioContext = null;
+    }
+  } catch (e) {
+    console.error('Error cleaning up audio context:', e);
+  }
+}
+
+// VAD AudioWorklet Code (Inlined to avoid bundling/path issues)
+const VAD_WORKLET_CODE = `
+class VadProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.bufferSize = 2048;
+    this.buffer = new Float32Array(this.bufferSize);
+    this.bufferIndex = 0;
+    
+    // VAD Parameters (matching audio-recorder.js)
+    this.VAD_THRESHOLD = ${VAD_THRESHOLD};
+    this.VAD_MIN_SPEECH_MS = ${VAD_MIN_SPEECH_MS};
+    this.VAD_HANG_OVER_MS = ${VAD_HANG_OVER_MS};
+    
+    // State
+    this.isSpeaking = false;
+    this.speechStartTime = 0;
+    this.lastSpeechTime = 0;
+  }
+
+  process(inputs, outputs, parameters) {
+    const input = inputs[0];
+    if (!input || !input.length) return true;
+    
+    const channelData = input[0];
+    
+    // Accumulate samples to match roughly the old ScriptProcessor buffer size
+    // for consistent RMS calculation
+    for (let i = 0; i < channelData.length; i++) {
+        this.buffer[this.bufferIndex++] = channelData[i];
+        if (this.bufferIndex >= this.bufferSize) {
+            this.processBuffer();
+            this.bufferIndex = 0;
+        }
+    }
+    
+    return true;
+  }
+
+  processBuffer() {
+    // Calculate RMS for the *current accumulated buffer*
+    let sum = 0;
+    for (let i = 0; i < this.bufferSize; i++) {
+        const x = this.buffer[i];
+        sum += x * x;
+    }
+    const rms = Math.sqrt(sum / this.bufferSize);
+    
+    // Reset buffer index to overwrite for next cycle
+    this.bufferIndex = 0;
+    
+    // Use current time
+    const now = Date.now();
+
+    if (rms > this.VAD_THRESHOLD) {
+      if (!this.isSpeaking) {
+        this.isSpeaking = true;
+        this.speechStartTime = now;
+        this.port.postMessage({ type: 'speech-start', time: now });
+      }
+      this.lastSpeechTime = now;
+    } else {
+      if (this.isSpeaking) {
+        // Check for hang over
+        if (now - this.lastSpeechTime > this.VAD_HANG_OVER_MS) {
+          const duration = this.lastSpeechTime - this.speechStartTime;
+          if (duration > this.VAD_MIN_SPEECH_MS) {
+             this.port.postMessage({ 
+                 type: 'speech-segment', 
+                 startMs: this.speechStartTime, 
+                 endMs: this.lastSpeechTime 
+             });
+          }
+          this.isSpeaking = false;
+          this.port.postMessage({ type: 'speech-end', time: now });
+        }
+      }
+    }
+  }
+}
+
+registerProcessor('vad-processor', VadProcessor);
+`;
+
+/**
+ * Setup VAD on the microphone stream using AudioWorklet
+ */
+async function setupVAD(stream, context) {
+  // Reset state
+  userSpeechIntervals = []; // Global state
+
+  const source = context.createMediaStreamSource(stream);
+  
+  // Load the worklet module from inlined code
+  try {
+    const blob = new Blob([VAD_WORKLET_CODE], { type: 'application/javascript' });
+    const url = URL.createObjectURL(blob);
+    await context.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url); // Cleanup after loading
+  } catch (e) {
+    console.error('Failed to load VAD worklet:', e);
+  }
+
+  const vadNode = new AudioWorkletNode(context, 'vad-processor');
+  
+  vadNode.port.onmessage = (event) => {
+    if (!isRecording) return;
+    const { type, startMs, endMs } = event.data;
+    
+    if (type === 'speech-segment') {
+       userSpeechIntervals.push({ startMs, endMs });
+    }
+  };
+
+  source.connect(vadNode);
+  // Unlike ScriptProcessor, AudioWorklet doesn't need to be connected to destination to process
+  // unless we want audio output. We don't want VAD audio output.
+  // source.connect(destNode); // Done outside for recording path.
+  
+  return { source, vadNode };
+}
+
+/**
  * Start continuous recording
+ * @param {Object} options Options
+ * @param {boolean} options.systemAudio Whether to capture system audio
  * @returns {boolean} Success status
  */
-window.startAudioRecording = async function() {
+window.startAudioRecording = async function(options = {}) {
   if (isRecording) {
     return true;
   }
@@ -81,9 +247,16 @@ window.startAudioRecording = async function() {
     window.allowAudioResume = true;
     audioChunks = [];
     chunkTimestamps = [];
+    cleanupAudioContext(); // Ensure clean slate
     
+    // 1. Setup Audio Context
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    audioContext = new AudioContext();
+    destNode = audioContext.createMediaStreamDestination();
+
+    // 2. Get Microphone Stream
     // Use improved audio constraints for better quality
-    const stream = await navigator.mediaDevices.getUserMedia({ 
+    const micStream = await navigator.mediaDevices.getUserMedia({ 
       audio: {
         echoCancellation: true,
         noiseSuppression: true, 
@@ -92,19 +265,170 @@ window.startAudioRecording = async function() {
       video: false
     });
     
+    // 3. Setup Mic Source & VAD
+    const vadSetup = await setupVAD(micStream, audioContext);
+    micSource = vadSetup.source;
+    vadNode = vadSetup.vadNode; // Updated property name
+
+    // Connect Mic to Destination (for mixing)
+    micSource.connect(destNode);
+
+    // 4. Get System Audio Stream(s) (if enabled and sourceId(s) provided)
+    if (options.systemAudio) {
+      const sourceIds = Array.isArray(options.sourceIds) ? options.sourceIds : (options.sourceId ? [options.sourceId] : []);
+      
+      if (sourceIds.length > 0) {
+        
+        // Use a loop to try and capture from all provided sources
+        for (const sourceId of sourceIds) {
+          try {
+            
+            const constraints = {
+              audio: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: sourceId,
+                // Fallback for some versions
+                mandatory: {
+                  chromeMediaSource: 'desktop',
+                  chromeMediaSourceId: sourceId
+                }
+              },
+              video: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: sourceId,
+                // Fallback for some versions
+                mandatory: {
+                  chromeMediaSource: 'desktop',
+                  chromeMediaSourceId: sourceId,
+                  maxWidth: 10,
+                  maxHeight: 10,
+                  maxFrameRate: 1
+                }
+              }
+            };
+            
+            const systemStream = await navigator.mediaDevices.getUserMedia(constraints);
+            
+            const tracks = systemStream.getAudioTracks();
+  
+            if (tracks.length > 0) {
+              const sourceNode = audioContext.createMediaStreamSource(systemStream);
+              sourceNode.connect(destNode);
+              systemSources.push(sourceNode);
+              
+              // Stop any video tracks immediately as we don't need them
+              systemStream.getVideoTracks().forEach(track => track.stop());
+            } else {
+              console.warn(`[Audio] Source ${sourceId} has no audio tracks`);
+              // Stop the stream if no audio
+              systemStream.getTracks().forEach(track => track.stop());
+            }
+          } catch (sysErr) {
+            console.error(`[Audio] Capture FAILED for source ${sourceId}:`, sysErr.name, sysErr.message);
+            // Continue to next source
+          }
+        }
+        
+        if (systemSources.length === 0) {
+          console.warn('[Audio] No system audio sources were successfully captured');
+        }
+      } else {
+        console.warn('[Audio] System audio requested but no sourceIds provided');
+      }
+    }
+    
+    // 5. Setup MediaRecorder with destination stream
+    const mixedStream = destNode.stream;
+    
     const mimeType = getBestSupportedMimeType();
-    const options = {
+    const recorderOptions = {
       audioBitsPerSecond: 128000
     };
     
     if (mimeType) {
-      options.mimeType = mimeType;
+      recorderOptions.mimeType = mimeType;
     }
     
-    mediaRecorder = new MediaRecorder(stream, options);
+    mediaRecorder = new MediaRecorder(mixedStream, recorderOptions);
     
     
     // Explicitly guard resume events (Chromium may auto-resume after sleep)
+    mediaRecorder.onresume = () => {
+      if (!window.allowAudioResume) {
+        window.shutdownAudioRecording();
+      }
+    };
+    
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        const now = Date.now();
+        audioChunks.push(event.data);
+        chunkTimestamps.push(now);
+        trimAudioBuffer();
+        
+        // Also trim intervals? Maybe not necessary for now as they are small JSON
+      }
+    };
+    
+    mediaRecorder.onerror = (event) => {
+      console.error('MediaRecorder error:', event.error);
+    };
+    
+    
+    mediaRecorder.start(1000);
+    recordingStartTime = Date.now();
+    isRecording = true;
+    
+    return true;
+  } catch (error) {
+    console.error('Error starting audio recording:', error);
+    isRecording = false;
+    cleanupAudioContext();
+    return false;
+  }
+};
+
+/**
+ * Cycle the MediaRecorder to ensure fresh headers for the next chunk
+ * Preserves the audio stream and VAD state
+ */
+async function cycleMediaRecorder() {
+  if (!isRecording || !mediaRecorder) return;
+  
+  try {
+    // Save the current stream and config
+    const currentStream = mediaRecorder.stream;
+    const currentMimeType = mediaRecorder.mimeType || getBestSupportedMimeType();
+    
+    // Verify the stream is still valid
+    const audioTracks = currentStream.getAudioTracks();
+    if (!audioTracks || audioTracks.length === 0 || audioTracks[0].readyState !== 'live') {
+      console.warn('Audio stream is no longer valid, cannot cycle MediaRecorder');
+      return;
+    }
+    
+    // Stop the current recorder (this will trigger final ondataavailable)
+    if (mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    
+    // Clear the buffer for the new session
+    audioChunks = [];
+    chunkTimestamps = [];
+    
+    // Create a new MediaRecorder with the same stream
+    const recorderOptions = {
+      audioBitsPerSecond: 128000
+    };
+    
+    if (currentMimeType) {
+      recorderOptions.mimeType = currentMimeType;
+    }
+    
+    mediaRecorder = new MediaRecorder(currentStream, recorderOptions);
+    
+    // Re-attach event handlers
     mediaRecorder.onresume = () => {
       if (!window.allowAudioResume) {
         window.shutdownAudioRecording();
@@ -124,18 +448,14 @@ window.startAudioRecording = async function() {
       console.error('MediaRecorder error:', event.error);
     };
     
-    
+    // Start the new recorder
     mediaRecorder.start(1000);
     recordingStartTime = Date.now();
-    isRecording = true;
     
-    return true;
   } catch (error) {
-    console.error('Error starting audio recording:', error);
-    isRecording = false;
-    return false;
+    console.error('Error cycling MediaRecorder:', error);
   }
-};
+}
 
 // Restart recording when audio device changes
 async function restartAudioRecording() {
@@ -143,56 +463,32 @@ async function restartAudioRecording() {
   
   try {
     
-    
     // Stop the current recording cleanly
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      mediaRecorder.stream.getTracks().forEach(track => track.stop());
+      // mediaRecorder.stream.getTracks().forEach(track => track.stop()); // Don't stop destination tracks
       mediaRecorder = null;
     }
     
-    // Save current chunks
+    // Buffer inputs
     const previousChunks = [...audioChunks];
     const previousTimestamps = [...chunkTimestamps];
+    const previousIntervals = [...userSpeechIntervals];
+
+    cleanupAudioContext();
     
-    // Start a new recording with the new default device
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true, 
-        autoGainControl: true
-      },
-      video: false
-    });
+    // Start again (this handles re-acquiring mic which might have changed)
+    // We assume system audio preference is sticky or available in window?
+    // Actually startAudioRecording takes options. We need to remember them.
+    // For now assume systemAudio: false on restart or we need to store config globally.
+    // Let's assume false for safety on restart or todo: store last options.
+    const success = await window.startAudioRecording({ systemAudio: false }); 
+    if (!success) return false;
     
-    const mimeType = getBestSupportedMimeType();
-    const options = {
-      audioBitsPerSecond: 128000
-    };
-    
-    if (mimeType) {
-      options.mimeType = mimeType;
-    }
-    
-    mediaRecorder = new MediaRecorder(stream, options);
-    
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        const now = Date.now();
-        audioChunks.push(event.data);
-        chunkTimestamps.push(now);
-        trimAudioBuffer();
-      }
-    };
-    
-    mediaRecorder.onerror = (event) => {
-      console.error('MediaRecorder error:', event.error);
-    };
-    
-    // Restore previous chunks if possible
+    // Restore previous chunks
     audioChunks = previousChunks;
     chunkTimestamps = previousTimestamps;
-    
-    mediaRecorder.start(1000);
+    userSpeechIntervals = previousIntervals;
+
     return true;
   } catch (error) {
     console.error('Error restarting audio recording:', error);
@@ -203,6 +499,99 @@ async function restartAudioRecording() {
 
 // Add to window for access from main process
 window.restartAudioRecording = restartAudioRecording;
+
+/**
+ * Pause recording (preserves buffer for periodic check)
+ */
+window.pauseAudioRecording = function() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.pause();
+    if (audioContext && audioContext.state === 'running') {
+      audioContext.suspend();
+    }
+  }
+};
+
+/**
+ * Resume recording after pause
+ */
+window.resumeAudioRecording = function() {
+  if (mediaRecorder && mediaRecorder.state === 'paused') {
+    mediaRecorder.resume();
+    if (audioContext && audioContext.state === 'suspended') {
+      audioContext.resume();
+    }
+  }
+};
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onloadend = () => {
+      const bytes = new Uint8Array(r.result);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      resolve(btoa(binary));
+    };
+    r.onerror = reject;
+    r.readAsArrayBuffer(blob);
+  });
+}
+
+/**
+ * Create a chunk from the current buffer
+ */
+async function bufferToChunk() {
+  if (audioChunks.length === 0) return null;
+  const mimeType = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
+  const blob = new Blob(audioChunks, { type: mimeType });
+  if (blob.size === 0) return null;
+  const base64 = await blobToBase64(blob);
+  const startMs = chunkTimestamps[0] || recordingStartTime;
+  const endMs = (chunkTimestamps[chunkTimestamps.length - 1] || startMs) + 1000;
+  
+  // Return intervals overlapping this chunk
+  const relevantIntervals = userSpeechIntervals.filter(i => i.endMs >= startMs && i.startMs <= endMs);
+  
+  return { 
+    base64Data: base64, 
+    mimeType, 
+    startMs, 
+    endMs,
+    speechIntervals: relevantIntervals
+  };
+}
+
+/**
+ * Get all chunks for this capture interval: accumulated sessions + current buffer if recording
+ * @param {boolean} resetBuffers If true, cycle the MediaRecorder to ensure fresh headers
+ * @returns {Promise<Array<{base64Data: string, mimeType: string, startMs: number, endMs: number, speechIntervals: Array}>>}
+ */
+window.getAudioChunksWithTimestamps = async function(resetBuffers = false) {
+  try {
+    const result = [...accumulatedChunks];
+    accumulatedChunks = [];
+    if (isRecording && mediaRecorder && audioChunks.length > 0) {
+      if (mediaRecorder.state === 'recording') {
+        mediaRecorder.requestData();
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      const chunk = await bufferToChunk();
+      if (chunk) result.push(chunk);
+    }
+    
+    // If resetBuffers is true, cycle the MediaRecorder to ensure fresh headers for next chunk
+    if (resetBuffers && isRecording && mediaRecorder) {
+      await cycleMediaRecorder();
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('Error getting audio chunks with timestamps:', error);
+    accumulatedChunks = [];
+    return [];
+  }
+};
 
 /**
  * Trim audio buffer to maximum duration
@@ -224,141 +613,46 @@ function trimAudioBuffer() {
   if (cutoffIndex > 0) {
     audioChunks = audioChunks.slice(cutoffIndex);
     chunkTimestamps = chunkTimestamps.slice(cutoffIndex);
+    
+    // Prune old intervals
+    userSpeechIntervals = userSpeechIntervals.filter(i => i.endMs >= cutoffTime);
   }
 }
 
 /**
  * Get current audio buffer
+ * DEPRECATED/UNUSED by new processLocal.js logic but kept for safety
  * @returns {Promise<Object>} Audio data
  */
 window.stopAudioRecording = async function() {
-  if (!isRecording || !mediaRecorder) {
+    // This function was used for single clip processing. 
+    // New logic uses getAudioChunksWithTimestamps.
+    // Keeping minimal implementation returning null to force usage of new API if called.
     return null;
-  }
-  
-  try {
-    mediaRecorder.requestData();
-    
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    const oldestTimestamp = chunkTimestamps[0] || recordingStartTime;
-    const duration = Date.now() - oldestTimestamp;
-    
-    if (audioChunks.length === 0) {
-      return null;
-    }
-    
-    // Use the recorder's selected MIME type
-    const mimeType = mediaRecorder.mimeType || 'audio/webm';
-    const blob = new Blob(audioChunks, { type: mimeType });
-    
-    // Basic validation
-    if (blob.size === 0) {
-      return null;
-    }
-    
-    // Decode WebM/Opus to PCM using Web Audio API
-    return new Promise((resolve) => {
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const reader = new FileReader();
-      
-      reader.onloadend = async () => {
-        try {
-          // Decode the audio data
-          const arrayBuffer = reader.result;
-          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-          
-          // Convert to 16kHz mono PCM
-          const sampleRate = 16000;
-          const numSamples = Math.floor(audioBuffer.duration * sampleRate);
-          
-          // Get the source data (mix to mono if stereo)
-          let sourceData;
-          if (audioBuffer.numberOfChannels === 1) {
-            sourceData = audioBuffer.getChannelData(0);
-          } else {
-            // Mix stereo to mono
-            const left = audioBuffer.getChannelData(0);
-            const right = audioBuffer.getChannelData(1);
-            sourceData = new Float32Array(left.length);
-            for (let i = 0; i < left.length; i++) {
-              sourceData[i] = (left[i] + right[i]) / 2;
-            }
-          }
-          
-          // Resample to 16kHz using linear interpolation
-          const resampledData = new Float32Array(numSamples);
-          const sourceSampleRate = audioBuffer.sampleRate;
-          const ratio = sourceSampleRate / sampleRate;
-          
-          for (let i = 0; i < numSamples; i++) {
-            const sourceIndex = i * ratio;
-            const sourceIndexFloor = Math.floor(sourceIndex);
-            const sourceIndexCeil = Math.min(sourceIndexFloor + 1, sourceData.length - 1);
-            const fraction = sourceIndex - sourceIndexFloor;
-            
-            const sample1 = sourceData[sourceIndexFloor] || 0;
-            const sample2 = sourceData[sourceIndexCeil] || 0;
-            resampledData[i] = sample1 + (sample2 - sample1) * fraction;
-          }
-          
-          // Convert to 16-bit PCM
-          const pcmBuffer = new ArrayBuffer(numSamples * 2);
-          const pcmView = new DataView(pcmBuffer);
-          
-          for (let i = 0; i < numSamples; i++) {
-            const sample = Math.max(-1, Math.min(1, resampledData[i]));
-            const int16 = Math.round(sample * 32767);
-            pcmView.setInt16(i * 2, int16, true); // little-endian
-          }
-          
-          // Convert to base64 using a more reliable method
-          const uint8Array = new Uint8Array(pcmBuffer);
-          let binary = '';
-          for (let i = 0; i < uint8Array.length; i++) {
-            binary += String.fromCharCode(uint8Array[i]);
-          }
-          const base64 = btoa(binary);
-          
-          resolve({
-            base64Data: `data:audio/pcm;base64,${base64}`,
-            mimeType: 'audio/pcm',
-            timeMs: duration
-          });
-          
-        } catch (error) {
-          console.error('Error decoding audio:', error);
-          // Fallback to raw WebM if decoding fails
-          resolve({
-            base64Data: reader.result,
-            mimeType: mimeType,
-            timeMs: duration
-          });
-        } finally {
-          audioContext.close();
-        }
-      };
-      
-      reader.onerror = () => {
-        console.error('Error reading audio blob');
-        resolve(null);
-      };
-      
-      reader.readAsArrayBuffer(blob);
-    });
-  } catch (error) {
-    console.error('Error getting audio buffer:', error);
-    return null;
-  }
 };
 
 /**
- * Stop recording completely
+ * Stop recording completely; saves current buffer as chunk for next capture cycle
  */
-window.shutdownAudioRecording = function() {
+window.shutdownAudioRecording = async function() {
   if (mediaRecorder && isRecording) {
-    mediaRecorder.stream.getTracks().forEach(track => track.stop());
-    try { mediaRecorder.stop(); } catch (_) {}
+    if (audioChunks.length > 0) {
+      if (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused') {
+        try { mediaRecorder.requestData(); } catch (_) {}
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      const chunk = await bufferToChunk();
+      if (chunk) accumulatedChunks.push(chunk);
+    }
+    
+    // Close context
+    cleanupAudioContext();
+    
+    if (mediaRecorder) {
+        try { mediaRecorder.stream.getTracks().forEach(track => track.stop()); } catch(_) {}
+        try { mediaRecorder.stop(); } catch (_) {}
+    }
+    
     mediaRecorder = null;
     isRecording = false;
     audioChunks = [];
@@ -371,5 +665,8 @@ module.exports = {
   startAudioRecording: window.startAudioRecording,
   stopAudioRecording: window.stopAudioRecording,
   shutdownAudioRecording: window.shutdownAudioRecording,
-  restartAudioRecording
+  pauseAudioRecording: window.pauseAudioRecording,
+  resumeAudioRecording: window.resumeAudioRecording,
+  restartAudioRecording,
+  getAudioChunksWithTimestamps: window.getAudioChunksWithTimestamps
 }; 

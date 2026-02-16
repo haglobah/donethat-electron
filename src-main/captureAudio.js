@@ -1,13 +1,10 @@
 const log = require('electron-log')
-const { ipcMain } = require('electron')
-const voiceToText = require('./voiceToText')
+const { ipcMain, desktopCapturer, systemPreferences } = require('electron')
 const audioSessionDetector = require('./audioSessionDetector')
 
 // Variables to track audio capture
 let isRecording = false
 let mainWindow = null
-// Rolling buffer of transcripts from periodic ticks
-let transcriptBuffer = [] // [{ text: string, ts: number }]
 
 // Permission state - check once, remember forever
 let hasMicrophonePermission = null
@@ -16,10 +13,11 @@ let hasMicrophonePermission = null
 let periodicCheckInterval = null
 let isPausedForCheck = false
 const PERIODIC_CHECK_INTERVAL_MS = 15000
-const TRANSCRIPTION_INTERVAL_MS = 10000
 
-// Periodic transcription ticker
-let transcriptionInterval = null
+// Configuration state
+let currentConfig = {
+  systemAudio: false
+};
 
 /**
  * Initialize audio capture module
@@ -38,11 +36,6 @@ function initialize(window, config = {}) {
   }
   
   mainWindow = window;
-  
-  // Set up IPC handlers
-  ipcMain.handle('audio-capture-result', async (event, audioData) => {
-    return await processAudioFromRenderer(audioData);
-  });
 
   // Power management: stop audio on system suspend; no implicit resume
   try {
@@ -101,7 +94,6 @@ function initializeSessionDetection(config) {
           if (isOurRecorderActive) {
             await mainWindow.webContents.executeJavaScript('window.shutdownAudioRecording && window.shutdownAudioRecording()');
             isRecording = false;
-            if (transcriptionInterval) { clearInterval(transcriptionInterval); transcriptionInterval = null }
             stopPeriodicChecks();
             // Verify shutdown actually took effect; retry once after short delay
             try {
@@ -131,12 +123,7 @@ function initializeSessionDetection(config) {
     audioSessionDetector.onSessionEnd(() => {
       stopRecordingInternal().catch(error => {
         log.error('Failed to stop recording after session detection:', error);
-        // Force stop recording even if there's an error
         isRecording = false;
-        if (transcriptionInterval) { 
-          clearInterval(transcriptionInterval); 
-          transcriptionInterval = null; 
-        }
         stopPeriodicChecks();
       });
     });
@@ -301,40 +288,30 @@ async function checkIfOtherAppUsingMic() {
 }
 
 /**
- * Pause recording temporarily
+ * Pause recording temporarily (preserves buffer for periodic check)
  */
 async function pauseRecording() {
   if (!isRecording || !mainWindow) return;
   
   try {
-    await mainWindow.webContents.executeJavaScript(`
-      if (window.shutdownAudioRecording) {
-        window.shutdownAudioRecording();
-      } else if (window.audioRecorder && window.audioRecorder.pause) {
-        window.audioRecorder.pause();
-      }
-    `);
-    
+    await mainWindow.webContents.executeJavaScript(
+      'window.pauseAudioRecording && window.pauseAudioRecording()'
+    );
   } catch (error) {
-    log.error('Error stopping recording for check:', error);
+    log.error('Error pausing recording for check:', error);
   }
 }
 
 /**
- * Resume recording
+ * Resume recording after pause
  */
 async function resumeRecording() {
   if (!isRecording || !mainWindow) return;
   
   try {
-    await mainWindow.webContents.executeJavaScript(`
-      if (window.startAudioRecording) {
-        window.startAudioRecording();
-      } else if (window.audioRecorder && window.audioRecorder.resume) {
-        window.audioRecorder.resume();
-      }
-    `);
-    
+    await mainWindow.webContents.executeJavaScript(
+      'window.resumeAudioRecording && window.resumeAudioRecording()'
+    );
   } catch (error) {
     log.error('Error resuming recording:', error);
   }
@@ -399,71 +376,6 @@ async function handleDeviceSwitch(deviceInfo) {
     }
   }
 }
-
-/**
- * Process audio data from renderer
- * @param {Object} audioData Audio data
- * @returns {Promise<{transcript: string}>} Audio processing result
- */
-async function processAudioFromRenderer(audioData) {
-  try {
-    // Basic validation
-    if (!audioData || !audioData.base64Data) {
-      return null;
-    }
-    
-    const base64Part = audioData.base64Data.split(',')[1];
-    const audioBuffer = Buffer.from(base64Part, 'base64');
-    
-    // Transcribe audio locally
-    const transcript = await voiceToText.transcribeAudioBuffer(audioBuffer);
-    // Append to rolling buffer
-    try {
-      if (transcript && typeof transcript === 'string' && transcript.length > 0) {
-        const ts = Date.now()
-        transcriptBuffer.push({ text: transcript, ts })
-        // Prune entries older than 60 minutes to cap memory
-        const ONE_HOUR_MS = 60 * 60 * 1000
-        const cutoff = ts - ONE_HOUR_MS
-        transcriptBuffer = transcriptBuffer.filter(t => t && t.ts && t.ts >= cutoff)
-      }
-    } catch (_) {}
-    
-    return {
-      transcript
-    };
-  } catch (error) {
-    log.error('Error processing audio from renderer:', error);
-    return null;
-  }
-}
-
-/**
- * Get recent transcript aggregated from periodic ticks within a time window
- * @param {number} windowMs time window in ms
- * @param {boolean} resetAfter whether to clear used entries
- * @returns {string|null}
- */
-function getRecentTranscript(windowMs = null, resetAfter = true) {
-  try {
-    const now = Date.now()
-    const recent = (windowMs && windowMs > 0)
-      ? transcriptBuffer.filter(t => t && t.ts >= (now - windowMs))
-      : [...transcriptBuffer]
-    if (recent.length === 0) {
-      return null
-    }
-    const combined = recent.map(t => t.text).join(' ').trim()
-    if (resetAfter) {
-      // Drop the used entries; keep newer entries if any
-      transcriptBuffer = []
-    }
-    return combined.length > 0 ? combined : null
-  } catch (_) {
-    return null
-  }
-}
-
 
 /**
  * Check microphone permission once
@@ -531,9 +443,52 @@ async function startRecordingInternal() {
   }
   
   try {
+    let sourceIds = [];
+    if (currentConfig.systemAudio) {
+      log.info('[AudioCapture] System audio enabled, retrieving desktop sources...');
+      try {
+        const sources = await desktopCapturer.getSources({ types: ['screen'] });
+        log.info(`[AudioCapture] Found ${sources.length} screen sources`);
+        
+        if (process.platform === 'darwin') {
+          // On macOS, system audio loopbacks can be tied to specific monitors.
+          // We collect all of them to mix them in the renderer.
+          sourceIds = sources.map(s => s.id);
+          log.info(`[AudioCapture] macOS detected: collecting all ${sourceIds.length} sources for mixing`);
+        } else {
+          // On Windows/Linux, typically one system loopback exists via the primary display capture.
+          // Multiple captures might trigger multiple permission prompts or redundant streams.
+          if (sources.length > 0) {
+            // Try to find the primary display
+            const primary = sources.find(s => 
+              s.name.toLowerCase().includes('entire') || 
+              s.name.toLowerCase().includes('screen 1') ||
+              s.id.includes(':0:0')
+            ) || sources[0];
+            
+            sourceIds = [primary.id];
+            log.info(`[AudioCapture] ${process.platform} detected: using primary source ${primary.id}`);
+          }
+        }
+        
+        // Log details about each source
+        sources.forEach((source, index) => {
+          log.info(`[AudioCapture]   Source ${index}: id=${source.id}, name="${source.name}"`);
+        });
+      } catch (err) {
+        log.error('[AudioCapture] Error getting desktop sources for system audio:', err);
+      }
+    } else {
+      log.info('[AudioCapture] System audio not enabled in config');
+    }
+
     // Ask renderer to start continuous recording
+    const sourceIdsJson = JSON.stringify(sourceIds);
     const started = await mainWindow.webContents.executeJavaScript(
-      `window.startAudioRecording && window.startAudioRecording();`
+      `window.startAudioRecording && window.startAudioRecording({ 
+        systemAudio: ${currentConfig.systemAudio},
+        sourceIds: ${sourceIdsJson}
+      });`
     );
     
     if (!started) {
@@ -543,35 +498,7 @@ async function startRecordingInternal() {
     
     // Update recording state
     isRecording = true;
-    // Start periodic transcription pulls to ensure processing
-    if (transcriptionInterval) clearInterval(transcriptionInterval)
-    transcriptionInterval = setInterval(async () => {
-      try {
-        if (!isRecording || !mainWindow) return;
-        const audioData = await mainWindow.webContents.executeJavaScript('window.stopAudioRecording && window.stopAudioRecording();')
-        if (audioData) {
-          const result = await processAudioFromRenderer(audioData)
-          if (!result) {
-            // No result from periodic transcription, continuing...
-          }
-        }
-      } catch (e) {
-        log.error('Periodic transcription error:', e.message);
-        // If we get IPC serialization errors, stop recording to prevent hanging
-        if (e.message.includes('could not be cloned') || e.message.includes('serialization')) {
-          log.warn('IPC serialization error detected, stopping recording to prevent hanging');
-          // Clear interval first before calling stop to prevent re-entry
-          if (transcriptionInterval) {
-            clearInterval(transcriptionInterval);
-            transcriptionInterval = null;
-          }
-          if (isRecording && mainWindow && !mainWindow.isDestroyed()) {
-            await stopRecordingInternal();
-          }
-        }
-      }
-    }, TRANSCRIPTION_INTERVAL_MS)
-    
+
     // Start periodic checks when recording starts
     startPeriodicChecks();
     
@@ -604,8 +531,7 @@ async function stopRecordingInternal() {
     );
     
     isRecording = false;
-    if (transcriptionInterval) { clearInterval(transcriptionInterval); transcriptionInterval = null }
-    
+
     // Stop periodic checks when recording stops
     stopPeriodicChecks();
     
@@ -631,6 +557,13 @@ async function startRecording() {
  * @returns {Promise<boolean>} Success status
  */
 async function startAudioTracking(config) {
+  // Update configuration
+  if (config) {
+    if (config.systemAudio !== undefined) {
+      currentConfig.systemAudio = !!config.systemAudio;
+    }
+  }
+
   // Initialize session detection when audio tracking is started
   initializeSessionDetectionIfNeeded(config);
   
@@ -645,32 +578,23 @@ async function startAudioTracking(config) {
 }
 
 /**
- * Get current transcript without stopping recording
- * @returns {Promise<{transcript: string} | null>} Transcript info
+ * Get audio chunks with timestamps (for cloud or local API transcription)
+ * @param {boolean} resetBuffers If true, cycle the MediaRecorder for fresh headers
+ * @returns {Promise<{audioChunks: Array}|null>} Chunks with base64Data, mimeType, startMs, endMs
  */
-async function stopRecording() {
+async function stopRecording(resetBuffers = false) {
   try {
-    if (isRecording) {
-      if (!mainWindow) {
-        log.error('Cannot get audio buffer: main window not initialized');
-      } else {
-        // Pull the latest chunk and append to buffer
-        const audioData = await mainWindow.webContents.executeJavaScript(
-          'window.stopAudioRecording && window.stopAudioRecording();'
-        );
-        if (audioData) {
-          try { await processAudioFromRenderer(audioData) } catch (_) {}
-        }
+    if (isRecording && mainWindow && !mainWindow.isDestroyed()) {
+      const audioChunks = await mainWindow.webContents.executeJavaScript(
+        `window.getAudioChunksWithTimestamps && window.getAudioChunksWithTimestamps(${resetBuffers})`
+      );
+      if (audioChunks && Array.isArray(audioChunks) && audioChunks.length > 0) {
+        return { audioChunks };
       }
-    }
-    // Aggregate once (works for both recording and non-recording cases)
-    const aggregated = getRecentTranscript(null, true)
-    if (aggregated) {
-      return { transcript: aggregated }
     }
     return null;
   } catch (error) {
-    log.error('Error retrieving audio buffer:', error);
+    log.error('Error retrieving audio chunks:', error);
     return null;
   }
 }
@@ -706,8 +630,7 @@ async function shutdownRecording() {
  */
 function getStatus() {
   return {
-    recording: isRecording,
-    voiceToTextAvailable: voiceToText.getStatus().available
+    recording: isRecording
   };
 }
 

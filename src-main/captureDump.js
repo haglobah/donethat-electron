@@ -1,7 +1,7 @@
-const log = require('electron-log')
 const path = require('path')
 const fs = require('fs')
 const { app } = require('electron')
+const { toDataUrl } = require('./imageDiff')
 
 let storeCache = null
 
@@ -34,7 +34,10 @@ async function getBasePath() {
 async function saveCaptureDump(screenshots, inputData, timestamp, pathType, previousScreenshotData = null) {
   try {
     const store = await getStore()
-    if (!store.get('saveCaptureDataToFolder')) return null
+    const saveEnabled = store.get('saveCaptureDataToFolder')
+    if (!saveEnabled) {
+      return null
+    }
 
     const basePath = await getBasePath()
     const d = new Date(timestamp)
@@ -51,19 +54,38 @@ async function saveCaptureDump(screenshots, inputData, timestamp, pathType, prev
 
     fs.mkdirSync(sendDir, { recursive: true })
 
+    const audioChunks = inputData?.audioChunks || [];
+    const audioChunksMeta = [];
+    for (let i = 0; i < audioChunks.length; i++) {
+      const c = audioChunks[i];
+      const base64 = typeof c.base64Data === 'string' && c.base64Data.includes(',')
+        ? c.base64Data.split(',')[1] : c.base64Data;
+      const ext = (c.mimeType || 'audio/webm').split(';')[0].split('/').pop() || 'webm';
+      audioChunksMeta.push({ 
+        mimeType: c.mimeType, 
+        startMs: c.startMs, 
+        endMs: c.endMs, 
+        sizeBytes: base64 ? Buffer.byteLength(base64, 'base64') : 0,
+        speechIntervals: c.speechIntervals || []
+      });
+      if (base64) {
+        const buf = Buffer.from(base64, 'base64');
+        fs.writeFileSync(path.join(sendDir, `audio-${i}.${ext}`), buf);
+      }
+    }
     const payload = {
       timestamp,
       path: pathType,
       activity: inputData?.activity || [],
-      audioTranscript: inputData?.audioTranscript || '',
+      audioChunks: audioChunksMeta,
       idleTime: inputData?.idleTime
     }
     fs.writeFileSync(path.join(sendDir, 'payload.json'), JSON.stringify(payload, null, 2))
 
     if (screenshots && screenshots.length > 0) {
       for (let i = 0; i < screenshots.length; i++) {
-        const dataUrl = screenshots[i]
-        const base64 = (typeof dataUrl === 'string' ? dataUrl : dataUrl?.base64Data || dataUrl)?.replace(/^data:image\/\w+;base64,/, '')
+        const dataUrl = toDataUrl(screenshots[i]) ?? toDataUrl(screenshots[i]?.base64Data)
+        const base64 = dataUrl?.replace(/^data:image\/\w+;base64,/, '')
         if (base64) {
           const buf = Buffer.from(base64, 'base64')
           fs.writeFileSync(path.join(sendDir, `screenshot-${i}.jpg`), buf)
@@ -87,7 +109,6 @@ async function saveCaptureDump(screenshots, inputData, timestamp, pathType, prev
 
     return sendDir
   } catch (error) {
-    log.error('Error saving capture dump:', error)
     return null
   }
 }
@@ -105,7 +126,6 @@ function appendCaptureDump(dumpDir, structured, parameters) {
       fs.writeFileSync(path.join(dumpDir, 'parameters.json'), JSON.stringify(parameters, null, 2))
     }
   } catch (error) {
-    log.error('Error appending capture dump:', error)
   }
 }
 

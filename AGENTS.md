@@ -7,7 +7,7 @@ This document explains the DoneThat Desktop app to autonomous coding agents. It 
 - Electron (main + renderer)
 - Firebase Auth/Functions (region `europe-west1`)
 - `electron-store` for local config/state; `electron-log` for logging
-- Optional local ML via `@xenova/transformers` for Whisper transcription
+- Audio transcription via cloud (captureScreenshot) or optional local API (OpenAI Whisper format)
 - Packaging via `electron-builder`
 
 ### Firebase Module Resolution
@@ -30,7 +30,7 @@ This document explains the DoneThat Desktop app to autonomous coding agents. It 
 - `src-main/capture.js`: capture scheduler, collects enabled inputs, local-first processing, fallback upload.
 - `src-main/captureScreenshots.js`: screenshots capture/processing.
 - `src-main/captureWindows.js`: active window timeline + permissions.
-- `src-main/captureAudio.js` + `src-main/voiceToText.js`: rolling audio + Whisper transcription.
+- `src-main/captureAudio.js`: rolling audio capture (chunks sent as multimodal input to LLM).
 - `src-main/processLocal.js`: local summarization path (if available).
 - `src-main/main-state.js`: work scheduling, pause/resume, permissions, encrypted settings, auth token SOT.
 - Renderer: `src/index.html/js`, `src/chat.html/js`, `src/firebase.js`.

@@ -52,6 +52,7 @@ const {
   setCaptureInterval,
   initCapture
 } = require('./src-main/capture')
+const { startContextCapture, stopContextCapture } = require('./src-main/contextCapture')
 const { initState } = require('./src-main/main-state')
 
 // Conditionally load liquid glass with fallback
@@ -2116,6 +2117,11 @@ function startRecording() {
   }
 
   startCaptureInterval(); // Call without token
+  try {
+    startContextCapture(() => stateManager?.getIdToken?.() ?? null);
+  } catch (e) {
+    console.warn('Context capture start failed:', e?.message);
+  }
 
   stateManager?.recordingStarted(mainWindow);
   
@@ -2136,6 +2142,9 @@ function startRecording() {
 function stopRecording() {
   // Stop the capture interval and all captures
   stopCaptureInterval();
+  try {
+    stopContextCapture();
+  } catch (e) {}
 
   // Don't need to call recordingStopped in state as
   // This is either handled by pause (already in state)

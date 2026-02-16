@@ -7,7 +7,7 @@
     <!-- CSP Meta Tags -->
     <meta http-equiv="Content-Security-Policy" content="
       default-src 'self';
-      script-src 'self' 'unsafe-eval' https://*.googletagmanager.com;
+      script-src 'self' 'unsafe-eval' blob: https://*.googletagmanager.com;
       style-src 'self' 'unsafe-inline';
       img-src 'self' https://*.googletagmanager.com https://*.google-analytics.com data:;
       connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.cloudfunctions.net https://app.donethat.ai https://*.firebaseapp.com https://*.googleapis.com https://firebaseinstallations.googleapis.com https://*.google-analytics.com https://*.analytics.google.com;
@@ -17,7 +17,7 @@
     ">
     <meta http-equiv="X-Content-Security-Policy" content="
       default-src 'self';
-      script-src 'self' 'unsafe-eval' https://*.googletagmanager.com;
+      script-src 'self' 'unsafe-eval' blob: https://*.googletagmanager.com;
       style-src 'self' 'unsafe-inline';
       img-src 'self' https://*.googletagmanager.com https://*.google-analytics.com data:;
       connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.cloudfunctions.net https://app.donethat.ai https://*.firebaseapp.com https://*.googleapis.com https://firebaseinstallations.googleapis.com https://*.google-analytics.com https://*.analytics.google.com;
@@ -33,7 +33,7 @@
     <!-- Global Top Bar (visible on all views except auth screens) -->
     <div id="appTopbar" class="dashboard-topbar hidden">
       <div class="topbar-left">
-        <button id="openSettingsViewBtn" class="btn-secondary topbar-btn" title="Permissions">Permissions</button>
+        <button id="openSettingsViewBtn" class="btn-secondary topbar-btn" title="Setup">Setup</button>
         <button id="openFeedbackBtn" class="btn-secondary topbar-btn" title="Feedback">Feedback</button>
         <button id="reloadIframeBtn" class="btn-secondary topbar-btn" title="Reload Dashboard" style="padding: 0.5rem 0.75rem;">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -502,7 +502,7 @@
               <div class="flex items-center justify-between">
                 <div>
                   <div class="text-base font-semibold text-gray-800">Active applications</div>
-                  <div class="text-xs text-gray-500">This allows us to know which apps are active. This helps to understand what happens in between screenshots.</div>
+                  <div class="text-xs text-gray-500">This allows us to know which apps are active. This helps to understand what happens in between screenshots. On macOS, you may see a permission request to control your browser to capture the active URL.</div>
                 </div>
                 <label class="toggle"><input type="checkbox" id="windowsCheckbox"><span class="slider"></span></label>
               </div>
@@ -543,6 +543,15 @@
                 </div>
                 <label class="toggle"><input type="checkbox" id="audioCheckbox"><span class="slider"></span></label>
               </div>
+
+              <!-- System audio (dependent on microphone) -->
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-base font-semibold text-gray-800">Record system audio</div>
+                  <div class="text-xs text-gray-500">Also record computer sound (meetings, videos) when the microphone is active. Mixed with your voice.</div>
+                </div>
+                <label class="toggle"><input type="checkbox" id="systemAudioCheckbox"><span class="slider"></span></label>
+              </div>
               
               <!-- Linux-specific pactl missing notification (hidden by default) -->
               <div id="linuxPactlSection" class="hidden mt-4">
@@ -553,19 +562,12 @@
                 </div>
                 <p class="instruction-text text-xs mt-2">This tool is required for audio session detection on Linux. After installation, restart DoneThat.</p>
               </div>
-              <div class="flex items-center justify-between">
-                <div>
-                  <div class="text-base font-semibold text-gray-800">Disable screenshots in meetings</div>
-                  <div class="text-xs text-gray-500">For data privacy reasons, you can disable screenshots when in meetings, so we don't process data of external people. Requires audio permission.</div>
-                </div>
-                <label class="toggle"><input type="checkbox" id="disableScreenshotsInMeetings"><span class="slider"></span></label>
-              </div>
             </div>
           </div>
 
           <div class="auth-card">
             <div class="section-divider"><span class="section-divider-label">App masking</span></div>
-            <p class="text-sm text-gray-600 mb-4">Mask specific apps with gray fill in screenshots (e.g., for masking sensitive data). Use keywords to exclude apps only when specific windows are open. Choose to fully ignore activity of these apps if you don't want this activity to be recorded.</p>
+            <p class="text-sm text-gray-600 mb-4">Mask apps with gray fill to protect sensitive data. Use keywords to ignore specific windows or fully exclude an app's activity. Use this for meeting apps (Zoom, Teams, etc.) to keep them private.</p>
             <div id="appExclusionsList" class="space-y-3 mb-3">
               <!-- Exclusion entries will be added here dynamically -->
             </div>
@@ -592,23 +594,22 @@
             </div>
           </div>
 
-            <div class="auth-card">
-            <div class="section-divider"><span class="section-divider-label">App configuration</span></div>
-            <p class="text-sm text-gray-600 mb-4">Choose your global chat hotkey.</p>
-            <div class="flex items-start justify-between">
+          <div class="auth-card">
+            <div class="section-divider"><span class="section-divider-label">Context capture (experimental)</span></div>
+            <p class="text-sm text-gray-600 mb-4">Capture specific app windows when you work in them and send cropped screenshots to our context API for extra context. Data is sent to our servers. Requires screen capture and active applications permissions.</p>
+            <div class="flex items-center justify-between mb-4">
               <div>
-                <div class="text-base font-semibold text-gray-800">Open Chat hotkey</div>
-                <div class="text-xs text-gray-500">Always uses Cmd/Ctrl + Shift. Choose the final letter (A–Z).</div>
+                <div class="text-base font-semibold text-gray-800">Enable context capture</div>
+                <div class="text-xs text-gray-500">Captures after ~10s in an app, then every 60s while you stay in it.</div>
               </div>
-              <div class="flex items-center gap-1 mt-6" title="Open Chat hotkey">
-                <span id="hotkeyCmdCap" class="inline-flex items-center justify-center h-7 px-3 text-xs bg-gray-50 border border-gray-200 rounded-md shadow-inner text-gray-500 select-none pointer-events-none" aria-disabled="true" title="Fixed modifier">Ctrl</span>
-                <span class="text-gray-300 select-none">+</span>
-                <span id="hotkeyShiftCap" class="inline-flex items-center justify-center h-7 px-3 text-xs bg-gray-50 border border-gray-200 rounded-md shadow-inner text-gray-500 select-none pointer-events-none" aria-disabled="true" title="Fixed modifier">Shift</span>
-                <span class="text-gray-300 select-none">+</span>
-                <span class="inline-flex items-center justify-center h-7 px-0 bg-white border border-gray-300 rounded-md shadow-inner cursor-text" title="Click to change final letter">
-                  <input type="text" id="hotkeyLetterInput" maxlength="1" class="w-6 h-full text-center text-xs bg-transparent outline-none font-semibold text-gray-900 focus:ring-2 focus:ring-indigo-400 rounded-sm" placeholder="D" aria-label="Hotkey letter" />
-                </span>
+              <label class="toggle"><input type="checkbox" id="contextCaptureEnabled"><span class="slider"></span></label>
             </div>
+            <div id="contextAppsSection" class="hidden">
+              <div class="text-sm font-medium text-gray-700 mb-2">Context apps</div>
+              <div id="contextAppsList" class="space-y-3 mb-3">
+                <!-- Context app entries will be added here dynamically -->
+              </div>
+              <button id="addContextAppBtn" class="btn-secondary text-xs py-1.5 px-3">Add app</button>
             </div>
           </div>
 
@@ -631,7 +632,7 @@
             <div class="mt-6">
               <div class="text-base font-semibold text-gray-800">OpenAI-compatible API</div>
               <p class="text-xs text-gray-500 mb-3">Configure an OpenAI-compatible API endpoint. Local or cloud. Used when Gemini key is not available.</p>
-              <p class="text-xs text-gray-500 mb-3">Note: Use a multimodal model that supports image inputs. Need help? <a href="https://donethat.ai/support" class="underline support-link">Visit our support page</a>.</p>
+              <p class="text-xs text-gray-500 mb-3">Note: Use a multimodal model that supports image and audio inputs (e.g. GPT-4o, Gemini). Need help? <a href="https://donethat.ai/support" class="underline support-link">Visit our support page</a>.</p>
               <div class="space-y-3">
                 <div>
                   <label for="openaiEndpointInput" class="block text-sm font-medium text-gray-700 mb-1">Endpoint URL</label>
@@ -674,24 +675,50 @@
                 </div>
               </div>
             </div>
-            <div class="mt-6 text-xs text-gray-500 text-center">
-              Version: <span id="appVersion"></span>
-            </div>
+
           </div>
 
           <div class="auth-card">
-            <div class="section-divider"><span class="section-divider-label">Logs</span></div>
-            <p class="text-sm text-gray-600 mb-4">Save all capture data (screenshots, activity, etc.) to a folder for logging.</p>
-            <div class="flex items-center justify-between mb-2">
-              <div>
-                <div class="text-base font-semibold text-gray-800">Save capture data to folder</div>
-                <div class="text-xs text-gray-500">Writes one folder per send, organized by day.</div>
+            <div class="section-divider"><span class="section-divider-label">App config</span></div>
+            <p class="text-sm text-gray-600 mb-4">Manage your application settings and logs.</p>
+            
+            <div class="space-y-6">
+              <!-- Hotkey Section -->
+              <div class="flex items-start justify-between">
+                <div>
+                  <div class="text-base font-semibold text-gray-800">Open Chat hotkey</div>
+                  <div class="text-xs text-gray-500">Always uses Cmd/Ctrl + Shift. Choose the final letter (A–Z).</div>
+                </div>
+                <div class="flex items-center gap-1 mt-6" title="Open Chat hotkey">
+                  <span id="hotkeyCmdCap" class="inline-flex items-center justify-center h-7 px-3 text-xs bg-gray-50 border border-gray-200 rounded-md shadow-inner text-gray-500 select-none pointer-events-none" aria-disabled="true" title="Fixed modifier">Ctrl</span>
+                  <span class="text-gray-300 select-none">+</span>
+                  <span id="hotkeyShiftCap" class="inline-flex items-center justify-center h-7 px-3 text-xs bg-gray-50 border border-gray-200 rounded-md shadow-inner text-gray-500 select-none pointer-events-none" aria-disabled="true" title="Fixed modifier">Shift</span>
+                  <span class="text-gray-300 select-none">+</span>
+                  <span class="inline-flex items-center justify-center h-7 px-0 bg-white border border-gray-300 rounded-md shadow-inner cursor-text" title="Click to change final letter">
+                    <input type="text" id="hotkeyLetterInput" maxlength="1" class="w-6 h-full text-center text-xs bg-transparent outline-none font-semibold text-gray-900 focus:ring-2 focus:ring-indigo-400 rounded-sm" placeholder="D" aria-label="Hotkey letter" />
+                  </span>
+                </div>
               </div>
-              <label class="toggle"><input type="checkbox" id="saveCaptureDataCheckbox"><span class="slider"></span></label>
-            </div>
-            <div id="saveCaptureDataPathSection" class="hidden">
-              <div class="mt-3">
-                <input type="text" id="saveCaptureDataPathInput" readonly class="form-input w-full text-sm py-2 px-3 text-gray-500 leading-none cursor-pointer hover:bg-gray-50" />
+
+              <!-- Logs Section -->
+              <div>
+                <div class="flex items-center justify-between mb-2">
+                  <div>
+                    <div class="text-base font-semibold text-gray-800">Save capture data to folder</div>
+                    <div class="text-xs text-gray-500">Writes one folder per send, organized by day.</div>
+                  </div>
+                  <label class="toggle"><input type="checkbox" id="saveCaptureDataCheckbox"><span class="slider"></span></label>
+                </div>
+                <div id="saveCaptureDataPathSection" class="hidden">
+                  <div class="mt-3">
+                    <input type="text" id="saveCaptureDataPathInput" readonly class="form-input w-full text-sm py-2 px-3 text-gray-500 leading-none cursor-pointer hover:bg-gray-50" />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Version Section -->
+              <div class="pt-4 text-xs text-gray-500 text-center border-t border-gray-100">
+                Version: <span id="appVersion"></span>
               </div>
             </div>
           </div>

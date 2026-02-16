@@ -1220,7 +1220,7 @@ function setupIPCHandlers() {
       // Use minimal dummy input data for testing - avoids complex collection that might hang
       const inputData = {
         activity: [],
-        audioTranscript: 'Test audio transcript',
+        audioChunks: [],
         idleTime: 0
       };
 
@@ -1323,7 +1323,7 @@ function setupIPCHandlers() {
 
   ipcMain.handle('test-app-exclusions', async (event) => {
     try {
-      const { applyAppExclusions } = require('./screenshotMasking');
+      const { applyAppExclusions } = require('./appExclusionMasking');
       const windowsCapture = require('./captureWindows');
       const { captureScreenshot } = require('./captureScreenshots');
 
@@ -1376,6 +1376,46 @@ function setupIPCHandlers() {
     } catch (error) {
       log.error('Error testing app exclusions:', error);
       return { success: false, message: error.message };
+    }
+  });
+
+  // Context capture (experimental) handlers
+  ipcMain.handle('get-context-capture-enabled', async () => {
+    try {
+      const enabled = safeStoreOperation(() => store?.get('contextCaptureEnabled') || false, 'get contextCaptureEnabled');
+      return { success: true, enabled: !!enabled };
+    } catch (error) {
+      return { success: false, enabled: false };
+    }
+  });
+
+  ipcMain.on('update-context-capture-enabled', (event, enabled) => {
+    safeStoreOperation(() => {
+      if (store) store.set('contextCaptureEnabled', !!enabled);
+    }, 'save contextCaptureEnabled');
+  });
+
+  ipcMain.handle('get-context-apps', async () => {
+    try {
+      const apps = safeStoreOperation(() => store?.get('contextApps') || [], 'get contextApps');
+      return { success: true, apps: Array.isArray(apps) ? apps : [] };
+    } catch (error) {
+      return { success: false, apps: [] };
+    }
+  });
+
+  ipcMain.handle('save-context-apps', async (event, apps) => {
+    try {
+      if (!Array.isArray(apps)) {
+        throw new Error('Context apps must be an array');
+      }
+      safeStoreOperation(() => {
+        if (store) store.set('contextApps', apps);
+        else throw new Error('Store not initialized');
+      }, 'save contextApps');
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   });
 

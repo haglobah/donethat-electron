@@ -2,7 +2,7 @@ const log = require('electron-log');
 const { captureScreenshot, getPreviousScreenshots, saveCurrentScreenshot, scaleScreenshotToPreviousSize } = require('./captureScreenshots');
 const { ipcMain, powerMonitor } = require('electron');
 const { isLocalProcessingAvailable, processDataLocally } = require('./processLocal');
-const { applyAppExclusions } = require('./screenshotMasking');
+const { applyAppExclusions } = require('./appExclusionMasking');
 const { applyImageDiffBoundingBoxes } = require('./imageDiff');
 const { saveCaptureDump, appendCaptureDump } = require('./captureDump');
 
@@ -25,7 +25,9 @@ let getIdTokenFunction = null; // Store the getIdToken function reference
 // Track input data settings
 let inputDataSettings = {
   audio: false,
-  windows: false
+  windows: false,
+  systemAudio: false,
+  screen: true
 };
 
 // Window tracking startup retry state (to avoid disabling on transient failures)
@@ -34,7 +36,7 @@ const WINDOW_START_MAX_RETRIES = 5;
 let windowStartRetryTimer = null;
 
 // Track disable screenshots in meetings setting
-let disableScreenshotsInMeetings = false;
+
 
 /**
  * Sets capture interval in minutes
@@ -82,7 +84,8 @@ async function _startAudioTracking() {
     
     // Start audio tracking with session detection (this will check permission once)
     const success = await audioCapture.startAudioTracking({
-      bufferDurationMs: captureIntervalMinutes * 60 * 1000
+      bufferDurationMs: captureIntervalMinutes * 60 * 1000,
+      systemAudio: !!inputDataSettings.systemAudio
     });
     
     if (!success) {
@@ -180,7 +183,9 @@ function updateInputDataSettings(settings) {
     inputDataSettings = {
       ...inputDataSettings,
       ...(settings.audio !== undefined ? { audio: !!settings.audio } : {}),
-      ...(settings.windows !== undefined ? { windows: !!settings.windows } : {})
+      ...(settings.windows !== undefined ? { windows: !!settings.windows } : {}),
+      ...(settings.systemAudio !== undefined ? { systemAudio: !!settings.systemAudio } : {}),
+      ...(settings.screen !== undefined ? { screen: !!settings.screen } : {})
     };
     
     // Stop tracking for disabled options
@@ -194,9 +199,18 @@ function updateInputDataSettings(settings) {
       windowsCapture.stopTracking();
     }
     
-    // Start tracking for newly enabled options
+    // Start tracking for newly enabled options or changed systemAudio preference
     if(isCapturing()) {
-      if (!previousSettings.audio && inputDataSettings.audio) {
+      // If audio was already on, but systemAudio changed, we need to restart/update tracking
+      if (inputDataSettings.audio && (previousSettings.systemAudio !== inputDataSettings.systemAudio)) {
+         // Re-trigger startAudioTracking which updates config and handles restart if internally needed 
+         // (though currently startAudioTracking just updates config and checks permission, 
+         // doesn't force restart of active recording unless we do it here).
+         // The cleaner way is to restart.
+         audioCapture.shutdownRecording().then(() => {
+             _startAudioTracking();
+         }).catch(err => log.error('Error restarting audio for system audio change:', err));
+      } else if (!previousSettings.audio && inputDataSettings.audio) {
         _startAudioTracking();
       }
       
@@ -216,29 +230,9 @@ function updateInputDataSettings(settings) {
   return inputDataSettings;
 }
 
-/**
- * Updates the disable screenshots in meetings setting
- * @param {boolean} enabled Whether to disable screenshots during meetings
- */
-function updateDisableScreenshotsInMeetings(enabled) {
-  disableScreenshotsInMeetings = !!enabled;
-}
 
-/**
- * Check if screenshots should be disabled during meetings
- * @returns {boolean} True if screenshots should be disabled
- */
-function shouldDisableScreenshotsInMeetings() {
-  // First check if user has the setting enabled
-  if (!disableScreenshotsInMeetings) {
-    return false;
-  }
-  
-  // Only check audio state if the setting is enabled
-  const audioCapture = require('./captureAudio');
-  const audioStatus = audioCapture.getStatus();
-  return audioStatus.recording;
-}
+
+
 
 /**
  * Initializes capture functionality and registers all IPC handlers
@@ -297,9 +291,7 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
   });
 
   // Handler for updating disable screenshots in meetings setting
-  ipcMain.on('updateDisableScreenshotsInMeetings', (event, enabled) => {
-    updateDisableScreenshotsInMeetings(enabled);
-  });
+
 
   // Handler for getting audio capture status
   ipcMain.handle('getAudioCaptureStatus', async (event) => {
@@ -351,6 +343,40 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
     app.on('browser-window-focus', focusListener);
   });
 
+  // System Audio Permission Request Handler
+  ipcMain.on('requestSystemAudioPermission', async (event) => {
+    const { shell } = require('electron');
+    
+    // System audio is part of screen recording permission on macOS
+    // Open system settings based on platform
+    if (process.platform === 'darwin') {
+      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+    } else if (process.platform === 'win32') {
+      // Windows - system audio capture works differently
+      shell.openExternal('ms-settings:privacy');
+    } else if (process.platform === 'linux') {
+      // Linux - no specific permission needed for system audio
+      if (mainWindow) {
+        mainWindow.webContents.send('systemAudioPermission', true);
+      }
+      return;
+    }
+    
+    // Check permission on focus (for macOS/Windows)
+    const app = require('electron').app;
+    const focusListener = async () => {
+      app.removeListener('browser-window-focus', focusListener);
+      
+      // On macOS, system audio permission is tied to screen recording
+      // We'll send a message to trigger a re-check in the renderer
+      if (mainWindow) {
+        mainWindow.webContents.send('systemAudioPermission-recheck');
+      }
+    };
+    
+    app.on('browser-window-focus', focusListener);
+  });
+
   // Windows permission IPC is handled in captureWindows.js to centralize logic
 }
 
@@ -375,16 +401,16 @@ async function collectInputData(resetBuffers = true) {
     // Don't add to captureErrors as this is not a critical failure
   }
   
-  // Get audio transcript
+  // Get audio chunks (for cloud or local API transcription)
   if (inputDataSettings.audio) {
     try {
-      const audioInfo = await audioCapture.stopRecording();
-      if (audioInfo && audioInfo.transcript) {
-        inputData.audioTranscript = audioInfo.transcript;
+      const audioInfo = await audioCapture.stopRecording(resetBuffers);
+      if (audioInfo && audioInfo.audioChunks && audioInfo.audioChunks.length > 0) {
+        inputData.audioChunks = audioInfo.audioChunks;
       }
     } catch (error) {
       captureErrors.audio = true;
-      log.error('Error capturing audio transcript:', error);
+      log.error('Error capturing audio chunks:', error);
     }
   }
   
@@ -518,10 +544,9 @@ async function _sendToServer(idToken, screenshots, inputData = {}, previousScree
       };
       
       if (inputData) {
-        if (inputData.audioTranscript) {
-          payload.audioTranscript = inputData.audioTranscript;
+        if (inputData.audioChunks && inputData.audioChunks.length > 0) {
+          payload.audioChunks = inputData.audioChunks;
         }
-        
         if (inputData.idleTime !== undefined) {
           payload.idleTime = inputData.idleTime;
         }
@@ -595,7 +620,7 @@ async function _sendToServer(idToken, screenshots, inputData = {}, previousScree
 }
 
 /**
- * Captures all enabled data types and sends them to the server
+ * Captures screenshots and sends them for processing
  * @param {string} idToken The Firebase ID token
  * @returns {Promise<Object|boolean>} Response status
  */
@@ -604,29 +629,28 @@ async function captureAndSend(idToken) {
     // Get previous screenshots BEFORE capturing new ones (they represent the ~5min-ago snapshot)
     const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
 
-    // Check if screenshots should be disabled during meetings
+    // Capture screenshots only if enabled
     let screenshots = [];
-    if (!shouldDisableScreenshotsInMeetings()) {
-      // Capture screenshots
+    if (inputDataSettings.screen !== false) {
       screenshots = await captureScreenshot();
-      
-      // Apply app exclusions if configured
-      try {
-        screenshots = await applyAppExclusions(screenshots);
-      } catch (error) {
-        // Non-critical: if masking fails, continue with unmasked screenshots
-        log.warn('Error applying app exclusions to screenshots:', error);
-      }
+    }
+    
+    // Apply app exclusions if configured
+    try {
+      screenshots = await applyAppExclusions(screenshots);
+    } catch (error) {
+      // Non-critical: if masking fails, continue with unmasked screenshots
+      log.warn('Error applying app exclusions to screenshots:', error);
+    }
 
-      // Save for next cycle's diff comparison (must be after exclusions, before bounding boxes)
-      saveCurrentScreenshot(screenshots);
+    // Save for next cycle's diff comparison (must be after exclusions, before bounding boxes)
+    saveCurrentScreenshot(screenshots);
 
-      // Apply image diff bounding boxes (compare with previous, draw red boxes on changes)
-      try {
-        screenshots = await applyImageDiffBoundingBoxes(screenshots, previousScreenshotData);
-      } catch (error) {
-        log.warn('Error applying image diff bounding boxes:', error);
-      }
+    // Apply image diff bounding boxes (compare with previous, draw red boxes on changes)
+    try {
+      screenshots = await applyImageDiffBoundingBoxes(screenshots, previousScreenshotData);
+    } catch (error) {
+      log.warn('Error applying image diff bounding boxes:', error);
     }
 
     if (!screenshots || screenshots.length === 0) {
@@ -635,6 +659,7 @@ async function captureAndSend(idToken) {
 
     // Get input data while resetting buffers
     const inputData = await collectInputData(true);
+
 
     // Check if any capture errors occurred
     const captureErrors = inputData.captureErrors;
@@ -650,16 +675,17 @@ async function captureAndSend(idToken) {
     
     // Skip upload if no allowed activity (regardless of screenshots or audio)
     if (noAllowedActivity) {
-      log.info('Skipping upload: no allowed activity after filtering');
+      log.info('[capture] Skipping upload: no allowed activity after filtering');
       return false;
     }
-    
+
     // Check if we have any data to upload
     const hasScreenshots = screenshots && screenshots.length > 0;
-    const hasAudioTranscript = inputData && inputData.audioTranscript;
+    const hasAudioChunks = inputData && inputData.audioChunks && inputData.audioChunks.length > 0;
     const hasActivity = inputData && inputData.activity && inputData.activity.length > 0;
-    
-    if (!hasScreenshots && !hasAudioTranscript && !hasActivity) {
+
+    if (!hasScreenshots && !hasAudioChunks && !hasActivity) {
+      log.debug('[capture] No data to upload (screenshots=', screenshots?.length ?? 0, 'audio=', hasAudioChunks, 'activity=', hasActivity, ')');
       return false;
     }
     
@@ -684,7 +710,7 @@ async function captureAndSend(idToken) {
     try {
       dumpDir = await saveCaptureDump(screenshots, inputData, timestamp, pathType, scaledPreviousScreenshotData)
     } catch (e) {
-      log.warn('Capture dump save failed:', e?.message)
+      log.warn('[capture] Capture dump save failed:', e?.message)
     }
 
     const sendResult = await _sendToServer(idToken, screenshots, inputData, scaledPreviousScreenshotData)
@@ -913,6 +939,6 @@ module.exports = {
   isCapturing,
   setCaptureInterval,
   initCapture,
-  shouldDisableScreenshotsInMeetings,
+
   collectInputData
 }; 

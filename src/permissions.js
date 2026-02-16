@@ -36,8 +36,14 @@ function initializePermissions(viewNavigator, currentViewGetter, topbarVisibilit
 
 // Check all permissions on startup to update state
 function checkPermissionsOnStartup() {
+  console.log('[PERMISSIONS] Checking permissions on startup...');
+
+  // Check Screen Capture permission (don't open settings, just check current status)
+  console.log('[PERMISSIONS] Requesting screen capture permission check...');
+  ipcRenderer.send('requestScreenCapturePermission');
 
   // Check Windows permission (don't open settings, just check current status)
+  console.log('[PERMISSIONS] Requesting windows permission check...');
   ipcRenderer.send('requestWindowsPermission', false);
 
   // Check other permissions as needed
@@ -120,6 +126,7 @@ function showLinuxScreenshotSection() {
 ipcRenderer.on('screenCapturePermission', (event, data) => {
   // Extract permission status
   const hasPermission = typeof data === 'object' ? data.hasPermission : data;
+  console.log('[PERMISSIONS] Screen capture permission received:', hasPermission, 'data:', data);
 
   updateScreenCapturePermission(hasPermission);
 
@@ -141,6 +148,7 @@ ipcRenderer.on('screenCapturePermission', (event, data) => {
   updateFinishButtonVisibility();
 
   // Update topbar visibility
+  console.log('[PERMISSIONS] Calling updateTopbarVisibility after screen capture permission update');
   if (updateTopbarVisibility) updateTopbarVisibility();
 
   // If screen recording permission is missing, ensure app window is shown
@@ -172,6 +180,7 @@ ipcRenderer.on('audioPermission', (event, hasPermission) => {
 });
 
 ipcRenderer.on('windowsPermission', (event, hasPermission) => {
+  console.log('[PERMISSIONS] Windows permission received:', hasPermission);
   updateWindowsPermission(hasPermission);
 
   // Log windows permission status
@@ -192,6 +201,7 @@ ipcRenderer.on('windowsPermission', (event, hasPermission) => {
   }));
 
   // Update topbar visibility
+  console.log('[PERMISSIONS] Calling updateTopbarVisibility after windows permission update');
   if (updateTopbarVisibility) updateTopbarVisibility();
   // Bring app to front on permission loss, but throttle to avoid churn during revocation
   if (!hasPermission) {
@@ -395,6 +405,14 @@ function requestWindowsPermission() {
   ipcRenderer.send("requestWindowsPermission");
 }
 
+function requestSystemAudioPermission() {
+  logAnalyticsEvent('system_audio_capture_requested', {
+    status: 'requested',
+    platform: window.electronAPI.platform
+  });
+  ipcRenderer.send("requestSystemAudioPermission");
+}
+
 // Helper function to check if running on Wayland
 function isWayland() {
   return window.electronAPI.isWayland;
@@ -447,6 +465,7 @@ module.exports = {
   initializePermissions,
   requestAudioPermission,
   requestWindowsPermission,
+  requestSystemAudioPermission,
   updateFinishButtonVisibility
 };
 
