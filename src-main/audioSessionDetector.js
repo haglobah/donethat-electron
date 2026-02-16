@@ -59,7 +59,6 @@ class AudioSessionManager {
     if (this.sessionCheckInterval) {
       clearInterval(this.sessionCheckInterval);
     }
-    log.info(`[AudioSession] Initializing microphone check with interval ${intervalMs}ms`);
     this.sessionCheckInterval = setInterval(() => this.checkMicrophoneUsage(), intervalMs);
     
     return true;
@@ -69,8 +68,6 @@ class AudioSessionManager {
   onSessionEnd(callback) { this.onSessionEndCallback = callback; }
   onDeviceSwitch(callback) { this.onDeviceSwitchCallback = callback; }
   onPactlMissing(callback) { this.onPactlMissingCallback = callback; }
-
-
 
   async checkMicrophoneUsage() {
     if (this.currentCheckPromise) {
@@ -112,13 +109,10 @@ class AudioSessionManager {
         };
 
         if (this.activeMicrophone && !previouslyActiveMic) {
-          log.info(`[AudioSession] New microphone session started: ${JSON.stringify(this.activeMicrophone)}`);
           if (this.onSessionStartCallback) this.onSessionStartCallback(this.activeMicrophone);
         } else if (this.activeMicrophone && previouslyActiveMic && !isSameSession(this.activeMicrophone, previouslyActiveMic)) {
-          log.info(`[AudioSession] Microphone session switched: ${JSON.stringify(previouslyActiveMic)} -> ${JSON.stringify(this.activeMicrophone)}`);
           if (this.onDeviceSwitchCallback) this.onDeviceSwitchCallback(this.activeMicrophone);
         } else if (!this.activeMicrophone && previouslyActiveMic) {
-          log.info(`[AudioSession] Microphone session ended: ${JSON.stringify(previouslyActiveMic)}`);
           if (this.onSessionEndCallback) this.onSessionEndCallback();
         }
 
@@ -424,8 +418,6 @@ class AudioSessionManager {
       return { isActive: false, deviceId: null };
     }
   }
-
-
 
   /**
    * Get current status of the session detector

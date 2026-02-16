@@ -538,7 +538,7 @@ async function restartAudioRecording() {
 
     return true;
   } catch (error) {
-    console.error('Error starting audio recording:', error);
+    console.error('Error restarting audio recording:', error);
     isRecording = false;
     return false;
   }
