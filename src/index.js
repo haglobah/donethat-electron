@@ -116,7 +116,7 @@ function updateSettingsToggleLabelGlobal() {
       settingsToggleBtn.textContent = 'Dashboard';
       settingsToggleBtn.className = 'btn-primary topbar-btn'; // Bright orange when on permissions
     } else {
-      settingsToggleBtn.textContent = 'Permissions';
+      settingsToggleBtn.textContent = 'Setup';
       settingsToggleBtn.className = 'btn-secondary topbar-btn'; // Normal style otherwise
     }
   } catch (_) {}

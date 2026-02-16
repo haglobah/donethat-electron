@@ -4,7 +4,12 @@ const fs = require('fs');
 const path = require('path');
 
 function run(cmd) {
-  execSync(cmd, { stdio: 'inherit', env: process.env });
+  try {
+    execSync(cmd, { stdio: 'inherit', env: process.env });
+  } catch (err) {
+    console.error(`Error running command: ${cmd}`, err);
+    process.exit(1);
+  }
 }
 
 function main() {
@@ -13,18 +18,24 @@ function main() {
     return;
   }
 
-  console.log('[postinstall-macos-micstatus] Building Swift micstatus helper...');
-  run('mkdir -p bin tools/macos');
+  console.log('[postinstall-macos-micstatus] Building Swift mic-monitor helper...');
 
-  const swiftPath = path.join(process.cwd(), 'tools/macos/micstatus.swift');
-  const swiftSource = `import Foundation\nimport CoreAudio\nimport AudioToolbox\n\nfunc getDefaultInputDevice() -> AudioDeviceID? {\n    var address = AudioObjectPropertyAddress(\n        mSelector: kAudioHardwarePropertyDefaultInputDevice,\n        mScope: kAudioObjectPropertyScopeGlobal,\n        mElement: kAudioObjectPropertyElementMaster\n    )\n    var deviceID = AudioDeviceID(0)\n    var dataSize = UInt32(MemoryLayout<AudioDeviceID>.size)\n    let sysObj = AudioObjectID(kAudioObjectSystemObject)\n    let status = AudioObjectGetPropertyData(sysObj, &address, 0, nil, &dataSize, &deviceID)\n    if status != noErr || deviceID == 0 {\n        return nil\n    }\n    return deviceID\n}\n\nfunc deviceHasInput(_ deviceID: AudioDeviceID) -> Bool {\n    var address = AudioObjectPropertyAddress(\n        mSelector: kAudioDevicePropertyStreamConfiguration,\n        mScope: kAudioDevicePropertyScopeInput,\n        mElement: kAudioObjectPropertyElementMaster\n    )\n    var dataSize: UInt32 = 0\n    if AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) != noErr || dataSize == 0 {\n        return false\n    }\n    let bufferListPointer = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: Int(dataSize))\n    defer { bufferListPointer.deallocate() }\n    if AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, bufferListPointer) != noErr {\n        return false\n    }\n    let mNumberBuffers = bufferListPointer.pointee.mNumberBuffers\n    return mNumberBuffers > 0\n}\n\nfunc deviceIsRunningSomewhere(_ deviceID: AudioDeviceID) -> Bool {\n    var address = AudioObjectPropertyAddress(\n        mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,\n        mScope: kAudioObjectPropertyScopeGlobal,\n        mElement: kAudioObjectPropertyElementMaster\n    )\n    var value: UInt32 = 0\n    var dataSize = UInt32(MemoryLayout<UInt32>.size)\n    if AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &value) != noErr {\n        return false\n    }\n    return value != 0\n}\n\nif let dev = getDefaultInputDevice(), deviceHasInput(dev) {\n    let running = deviceIsRunningSomewhere(dev)\n    print(running ? \"1\" : \"0\")\n} else {\n    print(\"0\")\n}\n`;
+  const sourcePath = path.join(process.cwd(), 'src-os/macos/active-mic.swift');
+  const outputDir = path.join(process.cwd(), 'bin');
+  const outputPath = path.join(outputDir, 'mic-monitor');
+  const moduleCacheDir = path.join(process.cwd(), '.build/module-cache');
 
-  fs.writeFileSync(swiftPath, swiftSource);
-  run('xcrun swiftc tools/macos/micstatus.swift -framework CoreAudio -framework AudioToolbox -o bin/micstatus');
-  run('chmod +x bin/micstatus');
-  console.log('[postinstall-macos-micstatus] Swift micstatus helper built.');
+  if (!fs.existsSync(sourcePath)) {
+    console.error(`[postinstall-macos-micstatus] Error: source file not found: ${sourcePath}`);
+    process.exit(1);
+  }
+
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.mkdirSync(moduleCacheDir, { recursive: true });
+
+  run(`xcrun swiftc -O -module-cache-path "${moduleCacheDir}" -framework CoreAudio -framework Foundation -framework AppKit "${sourcePath}" -o "${outputPath}"`);
+  run(`chmod +x "${outputPath}"`);
+  console.log(`[postinstall-macos-micstatus] Swift mic-monitor helper built: ${outputPath}`);
 }
 
 main();
-
-

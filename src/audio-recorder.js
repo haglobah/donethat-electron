@@ -16,6 +16,11 @@ let systemSources = []; // Changed from systemSource to array to support merging
 let destNode = null;
 let vadNode = null; // AnalyserNode or ScriptProcessor
 
+// Keep explicit handles to raw input streams so we can always stop tracks deterministically
+let micInputStream = null;
+let systemInputStreams = [];
+let lastStartOptions = { systemAudio: false, sourceIds: [] };
+
 
 // VAD State & Constants
 let userSpeechIntervals = []; // Array of { startMs, endMs }
@@ -29,7 +34,11 @@ window.isRecorderActive = function() {
     const active = !!(mediaRecorder && mediaRecorder.state && mediaRecorder.state !== 'inactive');
     const tracks = (mediaRecorder && mediaRecorder.stream) ? mediaRecorder.stream.getAudioTracks() : [];
     const trackLive = tracks && tracks.length > 0 && tracks[0].readyState === 'live' && tracks[0].enabled === true;
-    return active && trackLive;
+
+    const micTracks = micInputStream ? micInputStream.getAudioTracks() : [];
+    const micLive = micTracks.some(t => t.readyState === 'live' && t.enabled);
+
+    return (active && trackLive) || micLive;
   } catch (_) {
     return false;
   }
@@ -106,6 +115,24 @@ function cleanupAudioContext() {
     }
   } catch (e) {
     console.error('Error cleaning up audio context:', e);
+  }
+}
+
+function stopAllInputStreams() {
+  try {
+    if (micInputStream) {
+      try { micInputStream.getTracks().forEach(track => track.stop()); } catch (_) {}
+      micInputStream = null;
+    }
+
+    if (systemInputStreams.length > 0) {
+      systemInputStreams.forEach((stream) => {
+        try { stream.getTracks().forEach(track => track.stop()); } catch (_) {}
+      });
+      systemInputStreams = [];
+    }
+  } catch (e) {
+    console.error('Error stopping input streams:', e);
   }
 }
 
@@ -241,12 +268,24 @@ window.startAudioRecording = async function(options = {}) {
   if (isRecording) {
     return true;
   }
+
+  const normalizedOptions = {
+    systemAudio: !!options.systemAudio,
+    sourceIds: Array.isArray(options.sourceIds)
+      ? options.sourceIds
+      : (options.sourceId ? [options.sourceId] : [])
+  };
+  lastStartOptions = {
+    systemAudio: normalizedOptions.systemAudio,
+    sourceIds: [...normalizedOptions.sourceIds]
+  };
   
   try {
     
     window.allowAudioResume = true;
     audioChunks = [];
     chunkTimestamps = [];
+    stopAllInputStreams();
     cleanupAudioContext(); // Ensure clean slate
     
     // 1. Setup Audio Context
@@ -265,6 +304,8 @@ window.startAudioRecording = async function(options = {}) {
       video: false
     });
     
+    micInputStream = micStream;
+
     // 3. Setup Mic Source & VAD
     const vadSetup = await setupVAD(micStream, audioContext);
     micSource = vadSetup.source;
@@ -274,8 +315,8 @@ window.startAudioRecording = async function(options = {}) {
     micSource.connect(destNode);
 
     // 4. Get System Audio Stream(s) (if enabled and sourceId(s) provided)
-    if (options.systemAudio) {
-      const sourceIds = Array.isArray(options.sourceIds) ? options.sourceIds : (options.sourceId ? [options.sourceId] : []);
+    if (normalizedOptions.systemAudio) {
+      const sourceIds = normalizedOptions.sourceIds;
       
       if (sourceIds.length > 0) {
         
@@ -315,6 +356,7 @@ window.startAudioRecording = async function(options = {}) {
               const sourceNode = audioContext.createMediaStreamSource(systemStream);
               sourceNode.connect(destNode);
               systemSources.push(sourceNode);
+              systemInputStreams.push(systemStream);
               
               // Stop any video tracks immediately as we don't need them
               systemStream.getVideoTracks().forEach(track => track.stop());
@@ -383,6 +425,7 @@ window.startAudioRecording = async function(options = {}) {
   } catch (error) {
     console.error('Error starting audio recording:', error);
     isRecording = false;
+    stopAllInputStreams();
     cleanupAudioContext();
     return false;
   }
@@ -476,12 +519,16 @@ async function restartAudioRecording() {
 
     cleanupAudioContext();
     
-    // Start again (this handles re-acquiring mic which might have changed)
-    // We assume system audio preference is sticky or available in window?
-    // Actually startAudioRecording takes options. We need to remember them.
-    // For now assume systemAudio: false on restart or we need to store config globally.
-    // Let's assume false for safety on restart or todo: store last options.
-    const success = await window.startAudioRecording({ systemAudio: false }); 
+    const restartOptions = {
+      systemAudio: !!lastStartOptions.systemAudio,
+      sourceIds: Array.isArray(lastStartOptions.sourceIds) ? [...lastStartOptions.sourceIds] : []
+    };
+
+    // Force a real restart path; startAudioRecording short-circuits when isRecording is true.
+    isRecording = false;
+    stopAllInputStreams();
+
+    const success = await window.startAudioRecording(restartOptions);
     if (!success) return false;
     
     // Restore previous chunks
@@ -491,7 +538,7 @@ async function restartAudioRecording() {
 
     return true;
   } catch (error) {
-    console.error('Error restarting audio recording:', error);
+    console.error('Error starting audio recording:', error);
     isRecording = false;
     return false;
   }
@@ -635,6 +682,20 @@ window.stopAudioRecording = async function() {
  * Stop recording completely; saves current buffer as chunk for next capture cycle
  */
 window.shutdownAudioRecording = async function() {
+  const preState = mediaRecorder ? mediaRecorder.state : 'none';
+  const preTracks = (mediaRecorder && mediaRecorder.stream) ? mediaRecorder.stream.getAudioTracks().map(t => ({
+    id: t.id,
+    readyState: t.readyState,
+    enabled: t.enabled,
+    muted: t.muted
+  })) : [];
+
+  const preMicTracks = micInputStream ? micInputStream.getAudioTracks().map(t => ({
+    id: t.id,
+    readyState: t.readyState,
+    enabled: t.enabled,
+    muted: t.muted
+  })) : [];
   if (mediaRecorder && isRecording) {
     if (audioChunks.length > 0) {
       if (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused') {
@@ -645,7 +706,8 @@ window.shutdownAudioRecording = async function() {
       if (chunk) accumulatedChunks.push(chunk);
     }
     
-    // Close context
+    // Stop raw input streams and close context
+    stopAllInputStreams();
     cleanupAudioContext();
     
     if (mediaRecorder) {
@@ -659,6 +721,14 @@ window.shutdownAudioRecording = async function() {
     chunkTimestamps = [];
     window.allowAudioResume = false;
   }
+
+  const postActive = (() => {
+    try {
+      return !!(window.isRecorderActive && window.isRecorderActive());
+    } catch (_) {
+      return false;
+    }
+  })();
 };
 
 module.exports = {

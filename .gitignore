@@ -154,3 +154,9 @@ release/
 pkcs11properties.config
 Certificate_pkcs12.p12
 pkcs11properties.cfg
+
+# Native Helpers (compiled)
+bin/mic-monitor
+bin/donethatmicmonitor.exe
+# Swift module cache
+.build/

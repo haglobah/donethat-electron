@@ -1247,7 +1247,7 @@ function createApplicationMenu() {
         click: () => navigateToView('signup-next')
       },
       {
-        label: 'Permissions',
+        label: 'Setup',
         click: () => navigateToView('settings'),
         enabled: isLoggedIn
       },
@@ -1495,7 +1495,7 @@ function checkAndAdjustRecording() {
     const isPaused = stateManager?.isPaused();
     const isSystemIdle = stateManager?.isSystemIdle() ?? false;
     const shouldBeRecording = isAuthenticated && hasPermission && hasValidAccess && !isPaused && !isSystemIdle;
-
+    
     // to capture some cases where auth is loaded later
     // but not recording it's not triggering above function because
     // isCurrentlyRecording is false

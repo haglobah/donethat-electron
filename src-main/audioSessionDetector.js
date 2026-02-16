@@ -1,10 +1,45 @@
 const log = require('electron-log');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { promisify } = require('util');
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+function buildOwnMacBundlePrefixes() {
+  const prefixes = new Set([
+    'com.github.Electron'
+  ]);
+
+  try {
+    const packageJsonPath = path.resolve(__dirname, '..', 'package.json');
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    const appId = packageJson && packageJson.build && packageJson.build.appId;
+    if (typeof appId === 'string' && appId.trim()) {
+      prefixes.add(appId.trim());
+    }
+  } catch (_) {}
+
+  const envAppId = process.env.DONETHAT_APP_ID || process.env.npm_package_build_appId;
+  if (typeof envAppId === 'string' && envAppId.trim()) {
+    prefixes.add(envAppId.trim());
+  }
+
+  return [...prefixes];
+}
+
+const OWN_MAC_BUNDLE_PREFIXES = buildOwnMacBundlePrefixes();
+
+// For com.apple.* bundles we use explicit allowlist; non-Apple bundles are allowed by default.
+const ALLOWED_APPLE_MIC_BUNDLE_IDS = new Set([
+  'com.apple.FaceTime',
+  'com.apple.Safari',
+  'com.apple.SafariTechnologyPreview',
+  'com.apple.quicktimeplayerX',
+  'com.apple.PhotoBooth',
+  'com.apple.VoiceMemos'
+]);
 
 class AudioSessionManager {
   constructor() {
@@ -15,6 +50,7 @@ class AudioSessionManager {
     this.onDeviceSwitchCallback = null;
     this.platform = process.platform;
     this.isChecking = false;
+    this.currentCheckPromise = null;
   }
 
   initialize(options = 1000) {
@@ -23,6 +59,7 @@ class AudioSessionManager {
     if (this.sessionCheckInterval) {
       clearInterval(this.sessionCheckInterval);
     }
+    log.info(`[AudioSession] Initializing microphone check with interval ${intervalMs}ms`);
     this.sessionCheckInterval = setInterval(() => this.checkMicrophoneUsage(), intervalMs);
     
     return true;
@@ -36,95 +73,210 @@ class AudioSessionManager {
 
 
   async checkMicrophoneUsage() {
-    if (this.isChecking) return;
-    this.isChecking = true;
+    if (this.currentCheckPromise) {
+      return this.currentCheckPromise;
+    }
+
+    this.currentCheckPromise = (async () => {
+      this.isChecking = true;
+
+      try {
+        const previouslyActiveMic = this.activeMicrophone;
+        let currentlyActiveMic = null;
+
+        switch (this.platform) {
+          case 'win32':
+            currentlyActiveMic = await this.detectWindowsMicrophoneUsage();
+            break;
+          case 'darwin':
+            currentlyActiveMic = await this.detectMacOSMicrophoneUsage();
+            break;
+          case 'linux':
+            currentlyActiveMic = await this.detectLinuxMicrophoneUsage();
+            break;
+          default:
+            log.warn('Unsupported platform for microphone detection:', this.platform);
+            break;
+        }
+
+        this.activeMicrophone = currentlyActiveMic;
+
+        const isSameSession = (a, b) => {
+          if (a === b) return true;
+          if (!a || !b) return false;
+          if (typeof a !== typeof b) return false;
+          if (typeof a === 'object') {
+            return a.pid === b.pid && a.name === b.name;
+          }
+          return a === b;
+        };
+
+        if (this.activeMicrophone && !previouslyActiveMic) {
+          log.info(`[AudioSession] New microphone session started: ${JSON.stringify(this.activeMicrophone)}`);
+          if (this.onSessionStartCallback) this.onSessionStartCallback(this.activeMicrophone);
+        } else if (this.activeMicrophone && previouslyActiveMic && !isSameSession(this.activeMicrophone, previouslyActiveMic)) {
+          log.info(`[AudioSession] Microphone session switched: ${JSON.stringify(previouslyActiveMic)} -> ${JSON.stringify(this.activeMicrophone)}`);
+          if (this.onDeviceSwitchCallback) this.onDeviceSwitchCallback(this.activeMicrophone);
+        } else if (!this.activeMicrophone && previouslyActiveMic) {
+          log.info(`[AudioSession] Microphone session ended: ${JSON.stringify(previouslyActiveMic)}`);
+          if (this.onSessionEndCallback) this.onSessionEndCallback();
+        }
+
+        return this.activeMicrophone;
+      } catch (error) {
+        log.error('Error in checkMicrophoneUsage:', error.message);
+        log.error('Error stack:', error.stack);
+        return this.activeMicrophone;
+      } finally {
+        this.isChecking = false;
+      }
+    })();
 
     try {
-      const previouslyActiveMic = this.activeMicrophone;
-      let currentlyActiveMic = null;
-
-      switch (this.platform) {
-        case 'win32':
-          currentlyActiveMic = await this.detectWindowsMicrophoneUsage();
-          break;
-        case 'darwin':
-          currentlyActiveMic = await this.detectMacOSMicrophoneUsage();
-          break;
-        case 'linux':
-          currentlyActiveMic = await this.detectLinuxMicrophoneUsage();
-          break;
-        default:
-          log.warn('Unsupported platform for microphone detection:', this.platform);
-          break;
-      }
-
-      this.activeMicrophone = currentlyActiveMic;
-
-      if (this.activeMicrophone && !previouslyActiveMic) {
-        if (this.onSessionStartCallback) this.onSessionStartCallback(this.activeMicrophone);
-      } else if (this.activeMicrophone && previouslyActiveMic && this.activeMicrophone !== previouslyActiveMic) {
-        if (this.onDeviceSwitchCallback) this.onDeviceSwitchCallback(this.activeMicrophone);
-      } else if (!this.activeMicrophone && previouslyActiveMic) {
-        if (this.onSessionEndCallback) this.onSessionEndCallback();
-      }
-    } catch (error) {
-      log.error('Error in checkMicrophoneUsage:', error.message);
-      log.error('Error stack:', error.stack);
+      return await this.currentCheckPromise;
     } finally {
-      this.isChecking = false;
+      this.currentCheckPromise = null;
     }
   }
-
   /**
-   * macOS: Use CoreAudio FFI only. No fallbacks (they cause false positives).
+   * macOS: deterministic CoreAudio process-object helper only.
    */
   async detectMacOSMicrophoneUsage() {
-    // Swift helper (bin/micstatus) checks input devices running state
     try {
-      const micstatusPath = this.resolveMicstatusPath();
-      if (!micstatusPath) {
+      const helperPath = this.resolveMacMicHelperPath();
+      if (!helperPath) {
+        log.warn('[AudioSession] macOS mic helper binary not found');
         return null;
       }
-      const { stdout } = await execAsync(`"${micstatusPath}"`);
-      const val = stdout.trim();
-      if (val === '1') {
-        return 'Active macOS Device (Swift)';
+
+      const { stdout } = await execFileAsync(helperPath);
+      const sessions = JSON.parse(stdout);
+      if (!Array.isArray(sessions)) {
+        throw new Error('Invalid helper output: expected JSON array');
       }
-      return null;
+
+      const externalSessions = sessions.filter((session) => {
+        const pid = Number(session && session.pid);
+        if (!Number.isInteger(pid) || pid <= 0) return false;
+        if (this.isOwnProcessPid(pid)) return false;
+        if (this.isOwnBundleId(session && session.bundleId)) return false;
+        if (this.isExcludedMacSystemSession(session)) return false;
+        return true;
+      });
+
+      if (externalSessions.length === 0) {
+        return null;
+      }
+
+      const active = externalSessions[0];
+      return {
+        isActive: true,
+        pid: Number(active.pid) || null,
+        name: active.name || active.bundleId || 'Unknown macOS App',
+        path: active.bundleId || null
+      };
     } catch (error) {
+      log.error('[AudioSession] Error in detectMacOSMicrophoneUsage:', error.message || error);
       return null;
     }
   }
 
-  resolveMicstatusPath() {
-    const candidates = [
-      path.resolve(process.cwd(), 'bin', 'micstatus'),
-      path.resolve(__dirname, '..', 'bin', 'micstatus'),
-      process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', 'micstatus') : null,
-      process.resourcesPath ? path.resolve(process.resourcesPath, 'app.asar.unpacked', 'bin', 'micstatus') : null,
+  isOwnProcessPid(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    if (pid === process.pid) return true;
+
+    try {
+      const { webContents } = require('electron');
+      const allWebContents = webContents.getAllWebContents();
+      for (const wc of allWebContents) {
+        try {
+          if (wc.getOSProcessId && wc.getOSProcessId() === pid) {
+            return true;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    return false;
+  }
+
+  isOwnBundleId(bundleId) {
+    if (typeof bundleId !== 'string' || !bundleId) return false;
+
+    for (const prefix of OWN_MAC_BUNDLE_PREFIXES) {
+      if (bundleId === prefix || bundleId.startsWith(prefix + '.')) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  isExcludedMacSystemSession(session) {
+    const bundleId = (session && typeof session.bundleId === 'string') ? session.bundleId : '';
+    if (!bundleId.startsWith('com.apple.')) {
+      return false;
+    }
+    return !ALLOWED_APPLE_MIC_BUNDLE_IDS.has(bundleId);
+  }
+  resolveMacMicHelperPath() {
+    const binaryName = 'mic-monitor';
+
+    const pathsToCheck = [
+      path.resolve(process.cwd(), 'bin', binaryName),
+      path.resolve(__dirname, '..', 'bin', binaryName),
+      process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', binaryName) : null,
+      process.resourcesPath ? path.resolve(process.resourcesPath, 'app.asar.unpacked', 'bin', binaryName) : null,
     ].filter(Boolean);
-    for (const p of candidates) {
+
+    for (const candidatePath of pathsToCheck) {
       try {
-        if (fs.existsSync(p)) return p;
+        if (fs.existsSync(candidatePath)) return candidatePath;
       } catch (_) {}
     }
-    
+
     return null;
   }
 
   /**
-   * Windows: Uses PowerShell to check for actual microphone usage.
+   * Windows: Uses helper binary (donethatmicmonitor.exe) or PowerShell to check for actual microphone usage.
    * Only returns true when an app is actually using the microphone.
    */
   async detectWindowsMicrophoneUsage() {
     try {
-      // Method 1: Check registry for active microphone usage (most reliable)
+      // Method 0: Native Helper (Preferred)
+      // Checks WASAPI for active sessions and returns PID/Name
+      const helperPath = this.resolveWindowsHelperPath();
+      if (helperPath) {
+        try {
+          const { stdout } = await execAsync(`"${helperPath}"`);
+          const sessions = JSON.parse(stdout);
+          
+          // Filter out our own PID
+          const externalSessions = sessions.filter(s => s.pid !== process.pid);
+          
+          if (externalSessions.length > 0) {
+            const s = externalSessions[0];
+            return {
+              isActive: true,
+              pid: s.pid,
+              name: s.name || 'Unknown Windows App',
+              path: null // path not returned by helper yet
+            };
+          }
+          return null;
+        } catch (helperError) {
+          log.warn('Windows helper failed, falling back to Registry check:', helperError.message);
+        }
+      }
+
+      // Method 1: Check registry for active microphone usage (most reliable fallback)
       const registryCommand = `powershell -ExecutionPolicy Bypass -Command "Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone\\*\\*' | Where-Object { $_.LastUsedTimeStop -eq 0 } | Select-Object -First 1"`;
       
       try {
         const { stdout } = await execAsync(registryCommand);
         if (stdout.trim().length > 0) {
-          return "Active Windows Device (Registry)";
+          return { isActive: true, name: "Active Windows Device (Registry)", pid: null };
         }
       } catch (registryError) {
         // Registry method failed, continue to fallback
@@ -136,7 +288,7 @@ class AudioSessionManager {
       try {
         const { stdout } = await execAsync(audioSessionRegistryCommand);
         if (stdout.trim().length > 0) {
-          return "Active Windows Device (NonPackaged)";
+          return { isActive: true, name: "Active Windows Device (NonPackaged)", pid: null };
         }
       } catch (nonPackagedError) {
         // Non-packaged registry method failed
@@ -149,14 +301,101 @@ class AudioSessionManager {
     }
   }
 
+  resolveWindowsHelperPath() {
+    const binaryName = 'donethatmicmonitor.exe';
+    
+    const pathsToCheck = [
+      path.resolve(process.cwd(), 'bin', binaryName),
+      path.resolve(__dirname, '..', 'bin', binaryName),
+      process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', binaryName) : null,
+      process.resourcesPath ? path.resolve(process.resourcesPath, 'app.asar.unpacked', 'bin', binaryName) : null,
+    ].filter(Boolean);
+
+    for (const p of pathsToCheck) {
+      try {
+        if (fs.existsSync(p)) return p;
+      } catch (_) {}
+    }
+    
+    return null;
+  }
+
   /**
    * Linux: Checks for active recording streams (source-outputs).
    * "Source" means input (microphone), "Output" means the stream from it.
+   * Returns metadata about the process using the microphone.
    */
   async detectLinuxMicrophoneUsage() {
     try {
-      const { stdout } = await execAsync('pactl list short source-outputs');
-      return stdout.trim().length > 0 ? "Active Linux Device" : null;
+      // Try JSON format first (PulseAudio 15+)
+      try {
+        const { stdout } = await execAsync('pactl --format=json list source-outputs');
+        // log.debug('[AudioSession] pactl json output:', stdout);
+        const streams = JSON.parse(stdout);
+        
+        // Filter for valid recording streams
+        // PulseAudio/PipeWire might list monitor streams or other artifacts
+        const recordingStreams = streams.filter(s => {
+          // Verify it's not a monitor of an output (usually handled by source types, but good to check)
+          // For source-outputs, they are recording streams.
+          
+          // Filter out our own process
+          // properties['application.process.id'] might be a string or number
+          const pid = s.properties && s.properties['application.process.id'];
+          if (pid && (pid == process.pid)) {
+            return false;
+          }
+          return true;
+        });
+
+        if (recordingStreams.length > 0) {
+          const s = recordingStreams[0];
+          const props = s.properties || {};
+          return {
+            isActive: true,
+            pid: props['application.process.id'],
+            name: props['application.name'] || 'Unknown Linux App',
+            path: props['application.process.binary']
+          };
+        }
+        return null;
+
+      } catch (jsonError) {
+        // Fallback to text parsing if JSON fails (older PulseAudio) or if flag is unsupported
+        // Typical output:
+        // Source Output #1
+        //         Driver: ...
+        //         Properties:
+        //                 application.name = "Firefox"
+        //                 application.process.id = "1234"
+        const { stdout } = await execAsync('pactl list source-outputs');
+        
+        if (!stdout || !stdout.trim()) return null;
+
+        const blocks = stdout.split(/(\n|^)Source Output #/).slice(1);
+        
+        for (const block of blocks) {
+          // Extract PID
+          const pidMatch = block.match(/application\.process\.id\s*=\s*"(\d+)"/);
+          const pid = pidMatch ? parseInt(pidMatch[1], 10) : null;
+          
+          // Filter out our own process
+          if (pid === process.pid) continue;
+
+          // Extract Name
+          const nameMatch = block.match(/application\.name\s*=\s*"(.*?)"/);
+          const name = nameMatch ? nameMatch[1] : 'Unknown Linux App';
+
+          return {
+            isActive: true,
+            pid: pid,
+            name: name
+          };
+        }
+        
+        return null;
+      }
+
     } catch (error) {
       // Check if the error is due to pactl not being installed
       if (error.code === 127) {

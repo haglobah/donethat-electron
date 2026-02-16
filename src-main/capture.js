@@ -224,8 +224,6 @@ function updateInputDataSettings(settings) {
         _startWindowTracking();
       }
     }
-  
-    settingsInitialized = true;
   }
   return inputDataSettings;
 }
@@ -829,7 +827,7 @@ async function _runCaptureCycle() {
 
   try {
     // Start audio capture if needed
-    if (inputDataSettings.audio && !audioCapture.getStatus().recording) {
+    if (inputDataSettings.audio && !audioCapture.getStatus().tracking) {
       await _startAudioTracking();
     }
     
