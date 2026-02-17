@@ -7,8 +7,7 @@ const {
   hasWindowsPermission,
   hasScreenCapturePermission,
   isCaptureReadinessReady,
-  updateSettingsReady,
-  updateSystemAudioPermission
+  updateSettingsReady
 } = require('./app-state.js');
 const ipcRenderer = window.electronAPI;
 
@@ -57,13 +56,19 @@ function refreshCaptureDependentVisibility() {
   const audioCard = document.getElementById('microphonePermissionsCard');
   const appMaskingCard = document.getElementById('appMaskingCard');
   const contextCaptureCard = document.getElementById('contextCaptureCard');
-  const dimClass = ['opacity-50', 'pointer-events-none'];
+  const dimClass = ['opacity-50'];
 
-  const setDimmed = (el, isDimmed) => {
+  const setDimmed = (el, isDimmed, tooltip = '') => {
     if (!el) return;
     dimClass.forEach((className) => {
       el.classList.toggle(className, isDimmed);
     });
+    el.classList.toggle('capture-dimmed-card', isDimmed);
+    if (isDimmed && tooltip) {
+      el.title = tooltip;
+    } else {
+      el.removeAttribute('title');
+    }
   };
 
   if (!isCaptureReadinessReady()) {
@@ -76,27 +81,12 @@ function refreshCaptureDependentVisibility() {
   const screenEnabled = isScreenEffectivelyEnabled();
   const windowsEnabled = isWindowsEffectivelyEnabled();
 
+  const bothRequiredMsg = 'Both Screenshare and Active applications must be enabled for this feature to work.';
   setDimmed(audioCard, !screenEnabled && !windowsEnabled);
-  setDimmed(appMaskingCard, !screenEnabled || !windowsEnabled);
-  setDimmed(contextCaptureCard, !screenEnabled || !windowsEnabled);
+  setDimmed(appMaskingCard, !screenEnabled || !windowsEnabled, bothRequiredMsg);
+  setDimmed(contextCaptureCard, !screenEnabled || !windowsEnabled, bothRequiredMsg);
 }
 
-
-
-async function forceDisableSystemAudio() {
-  try {
-    const el = document.getElementById('systemAudioCheckbox');
-    if (el && el.checked) {
-      el.checked = false;
-      // Build a partial update for inputData
-      inputData.systemAudio = false;
-      await saveUserSettings('inputData', { systemAudio: false, __partial: true });
-      ipcRenderer.send('updateInputDataSettings', { systemAudio: false });
-    }
-  } catch (error) {
-    console.error('Error forcing disable of system audio:', error);
-  }
-}
 
 
 // Function to check and update app version
@@ -147,11 +137,9 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   
   // Set up version click handler
   setupVersionClickHandler();
-  // Set up permission result listener
-  setupPermissionResultListener();
-  // Note: Screen capture toggle behavior is now handled in permissions.js
-  // Set up listener for disable-capture-features message
-  setupDisableCaptureListener();
+  // Keep capture-dependent UI in sync with permission + toggle state changes.
+  setupCaptureStateListener();
+  // Note: Screen capture toggle behavior and permission issue handling are in permissions.js
 
   // Set up Gemini API key listeners
   setupGeminiApiKeyListeners();
@@ -177,73 +165,10 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
 // Note: Screen capture checkbox behavior is now handled in permissions.js
 
 
-// Set up listener for errors from main process
-function setupDisableCaptureListener() {
-  ipcRenderer.on('disable-capture-features', async (event, disabledSettings) => {
-    
-    // Update checkbox UI based on the settings
-    if (disabledSettings.audio === false) {
-      const audioCheckbox = document.getElementById('audioCheckbox');
-      if (audioCheckbox && audioCheckbox.checked) {
-        audioCheckbox.checked = false;
-        // Update local state
-        inputData.audio = false;
-      }
-      // Also disable System Audio if mic is off
-      await forceDisableSystemAudio();
-    }
-    
-    if (disabledSettings.windows === false) {
-      const windowsCheckbox = document.getElementById('windowsCheckbox');
-      if (windowsCheckbox && windowsCheckbox.checked) {
-        windowsCheckbox.checked = false;
-        // Update local state
-        inputData.windows = false;
-      }
-    }
-    
-    if (disabledSettings.screen === false) {
-      const screenCheckbox = document.getElementById('screenCheckbox');
-      if (screenCheckbox && screenCheckbox.checked) {
-        screenCheckbox.checked = false;
-        inputData.screen = false;
-      }
-    }
-    
-    // Save the updated settings - only if changes were made
-    if (disabledSettings.audio === false || disabledSettings.windows === false || disabledSettings.screen === false) {
-      try {
-        await saveUserSettings('inputData', inputData);
-      } catch (error) {
-        console.error('Error updating settings after feature disabled:', error);
-      }
-    }
+function setupCaptureStateListener() {
+  document.addEventListener('capture-state-updated', () => {
+    recomputeSystemAudioDependency();
     refreshCaptureDependentVisibility();
-    emitCaptureStateUpdated();
-  });
-}
-
-// Set up listener for permission check results
-function setupPermissionResultListener() {
-  document.addEventListener('permissionResult', async (event) => {
-    const { type, hasPermission } = event.detail;
-    
-    const checkboxMap = {
-      'audio': 'audioCheckbox',
-      'windows': 'windowsCheckbox'
-    };
-    
-    const checkbox = document.getElementById(checkboxMap[type]);
-    if (!checkbox) return;
-    
-    // Permission and toggle are decoupled. Keep user preference as-is.
-    // If audio permission was revoked, also disable system audio and persist.
-    if (type === 'audio' && !hasPermission) {
-      await forceDisableSystemAudio();
-    }
-
-    refreshCaptureDependentVisibility();
-    emitCaptureStateUpdated();
   });
 }
 
@@ -253,10 +178,6 @@ async function handleCaptureToggleIntent(type, enabled) {
   }
 
   inputData[type] = enabled;
-
-  if (type === 'audio' && !enabled) {
-    await forceDisableSystemAudio();
-  }
 
   try {
     await saveUserSettings('inputData', { [type]: enabled, __partial: true });
@@ -613,17 +534,12 @@ function setupSystemAudioDependency() {
   const systemAudioCheckbox = document.getElementById('systemAudioCheckbox');
   if (!systemAudioCheckbox) return;
 
-  const applyState = async () => {
-    // Check both DOM and memory state to avoid race conditions during init
+  const applyState = () => {
     const micOn = !!(audioCheckbox && audioCheckbox.checked) || !!inputData.audio;
-
-
-    // If mic turns off, system audio must turn off
-    if (!micOn && systemAudioCheckbox.checked) {
-       console.warn('[Settings] setupSystemAudioDependency: Force disabling System Audio because Mic is OFF');
-       await forceDisableSystemAudio();
-    }
     systemAudioCheckbox.disabled = !micOn;
+    systemAudioCheckbox.title = micOn
+      ? 'System audio is controlled by your setting and system audio permission state'
+      : 'Enable microphone in settings to use system audio';
   };
 
   // Initial application
@@ -633,53 +549,18 @@ function setupSystemAudioDependency() {
   if (audioCheckbox) {
     audioCheckbox.addEventListener('change', applyState);
   }
-
-  // Add event listener for system audio toggle
-  if (systemAudioCheckbox) {
-    systemAudioCheckbox.addEventListener('change', async () => {
-      const isChecked = systemAudioCheckbox.checked;
-      try {
-        // Use helper to save setting
-        inputData.systemAudio = isChecked;
-        await saveUserSettings('inputData', { systemAudio: isChecked, __partial: true });
-        ipcRenderer.send('updateInputDataSettings', { systemAudio: isChecked });
-        if (isChecked) {
-          ipcRenderer.send('requestSystemAudioPermission', true);
-        }
-      } catch (error) {
-        // Revert on error
-        systemAudioCheckbox.checked = !isChecked;
-        inputData.systemAudio = !isChecked;
-      }
-    });
-  }
-
-  // Keep system audio toggle aligned with system permission checks.
-  ipcRenderer.on('systemAudioPermission', async (_event, data) => {
-    const hasPermission = typeof data === 'object' ? !!data.hasPermission : !!data;
-    updateSystemAudioPermission(hasPermission);
-    if (hasPermission) return;
-    await forceDisableSystemAudio();
-  });
-
-  // Backward compatibility if older main process sends a recheck event.
-  ipcRenderer.on('systemAudioPermission-recheck', () => {
-    ipcRenderer.send('requestSystemAudioPermission', false);
-  });
 }
 
 function recomputeSystemAudioDependency() {
-  const audioCheckbox = document.getElementById('audioCheckbox');
   const systemAudioCheckbox = document.getElementById('systemAudioCheckbox');
   if (!systemAudioCheckbox) return;
 
-  // Check both DOM and memory state to avoid race conditions during init
+  const audioCheckbox = document.getElementById('audioCheckbox');
   const micOn = !!(audioCheckbox && audioCheckbox.checked) || !!inputData.audio;
-  
   systemAudioCheckbox.disabled = !micOn;
-  if (!micOn && systemAudioCheckbox.checked) {
-    forceDisableSystemAudio();
-  }
+  systemAudioCheckbox.title = micOn
+    ? 'System audio is controlled by your setting and system audio permission state'
+    : 'Enable microphone in settings to use system audio';
 }
 
 

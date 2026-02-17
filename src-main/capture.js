@@ -1,5 +1,5 @@
 const log = require('electron-log');
-const { captureScreenshot, getPreviousScreenshots, saveCurrentScreenshot, scaleScreenshotToPreviousSize } = require('./captureScreenshots');
+const { captureScreenshot, getPreviousScreenshots, saveCurrentScreenshot, scaleScreenshotToPreviousSize, checkScreenCapturePermission } = require('./captureScreenshots');
 const { ipcMain, powerMonitor } = require('electron');
 const { isLocalProcessingAvailable, processDataLocally } = require('./processLocal');
 const { applyAppExclusions } = require('./appExclusionMasking');
@@ -36,13 +36,17 @@ const WINDOW_START_MAX_RETRIES = 5;
 let windowStartRetryTimer = null;
 
 const failureStreaks = {
-  audio: 0,
-  windows: 0
+  screen: 0,
+  windows: 0,
+  microphone: 0,
+  systemAudio: 0
 };
 
-const AUTO_DISABLE_THRESHOLDS = {
-  audio: 4,
-  windows: 6
+const RUNTIME_ISSUE_THRESHOLDS = {
+  screen: 4,
+  windows: 6,
+  microphone: 4,
+  systemAudio: 4
 };
 
 function resetFailureStreak(feature) {
@@ -99,9 +103,12 @@ async function _startAudioTracking() {
       log.warn('Cannot start audio recording: No main window reference');
       handleCaptureError(
         new Error('No main window reference'), 
-        'audio', 
-        { audio: true },
-        false // Don't stop capturing, just disable this feature
+        'microphone', 
+        {
+          microphone: true,
+          ...(inputDataSettings.systemAudio ? { systemAudio: true } : {})
+        },
+        false // Don't stop capturing; keep reporting runtime issues and retrying
       );
       return false;
     }
@@ -115,14 +122,20 @@ async function _startAudioTracking() {
     if (!success) {
       handleCaptureError(
         new Error('Microphone permission not granted'),
-        'audio-permission',
-        { audio: true },
+        'microphone-permission',
+        {
+          microphone: true,
+          ...(inputDataSettings.systemAudio ? { systemAudio: true } : {})
+        },
         false
       );
       return false;
     }
     
-    resetFailureStreak('audio');
+    resetFailureStreak('microphone');
+    if (inputDataSettings.systemAudio) {
+      resetFailureStreak('systemAudio');
+    }
     return true;
     
   } catch (error) {
@@ -131,9 +144,12 @@ async function _startAudioTracking() {
     // Use handleCaptureError with specific audio error
     handleCaptureError(
       error, 
-      'audio-error', 
-      { audio: true },
-      false // Don't stop capturing, just disable this feature
+      'microphone-error', 
+      {
+        microphone: true,
+        ...(inputDataSettings.systemAudio ? { systemAudio: true } : {})
+      },
+      false // Don't stop capturing; keep reporting runtime issues and retrying
     );
     
     return false;
@@ -188,7 +204,7 @@ async function _startWindowTracking() {
       error, 
       'windows-error', 
       { windows: true },
-      false // Don't stop capturing, just disable this feature
+      false // Don't stop capturing; keep reporting runtime issues and retrying
     );
     
     return false;
@@ -216,7 +232,8 @@ function updateInputDataSettings(settings) {
     
     // Stop tracking for disabled options
     if (previousSettings.audio && !inputDataSettings.audio) {
-      resetFailureStreak('audio');
+      resetFailureStreak('microphone');
+      resetFailureStreak('systemAudio');
       audioCapture.shutdownRecording().catch(error => {
         log.error('Error shutting down audio recording:', error);
       });
@@ -297,23 +314,6 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
   // Handler for updating input data settings
   ipcMain.on('updateInputDataSettings', (event, settings) => {
     updateInputDataSettings(settings);
-  });
-
-  // Pause capture interval temporarily due to permission events
-  ipcMain.on('pause-capture-due-to-permission', (event, payload) => {
-    try {
-      const ms = Math.max(0, Math.min(60000, (payload && payload.ms) || 10000));
-      stopCaptureInterval();
-      setTimeout(() => {
-        // Only resume if user still has capturing enabled (safety: windows may be off now)
-        try {
-          if (!screenshotInterval) {
-            // Resume interval; feature flags will prevent window tracking if disabled
-            startCaptureInterval();
-          }
-        } catch (_) {}
-      }, ms);
-    } catch (e) {}
   });
 
   // Handler for updating disable screenshots in meetings setting
@@ -440,8 +440,10 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
 async function collectInputData(resetBuffers = true) {
   let inputData = {};
   let captureErrors = {
-    audio: false,
-    windows: false
+    screen: false,
+    windows: false,
+    microphone: false,
+    systemAudio: false
   };
   
   // Get system idle time
@@ -460,9 +462,15 @@ async function collectInputData(resetBuffers = true) {
       if (audioInfo && audioInfo.audioChunks && audioInfo.audioChunks.length > 0) {
         inputData.audioChunks = audioInfo.audioChunks;
       }
-      resetFailureStreak('audio');
+      resetFailureStreak('microphone');
+      if (inputDataSettings.systemAudio) {
+        resetFailureStreak('systemAudio');
+      }
     } catch (error) {
-      captureErrors.audio = true;
+      captureErrors.microphone = true;
+      if (inputDataSettings.systemAudio) {
+        captureErrors.systemAudio = true;
+      }
       log.error('Error capturing audio chunks:', error);
     }
   }
@@ -683,10 +691,24 @@ async function captureAndSend(idToken) {
     // Get previous screenshots BEFORE capturing new ones (they represent the ~5min-ago snapshot)
     const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
 
+    const captureErrors = {
+      screen: false,
+      windows: false,
+      microphone: false,
+      systemAudio: false
+    };
+
     // Capture screenshots only if enabled
     let screenshots = [];
     if (inputDataSettings.screen !== false) {
-      screenshots = await captureScreenshot();
+      try {
+        screenshots = await captureScreenshot();
+        resetFailureStreak('screen');
+      } catch (error) {
+        captureErrors.screen = true;
+        log.error('Error capturing screenshots:', error);
+        screenshots = [];
+      }
     }
     
     // Apply app exclusions if configured
@@ -711,43 +733,42 @@ async function captureAndSend(idToken) {
         // No screenshots captured, continuing with other data
     }
 
+    if (inputDataSettings.screen !== false && (!screenshots || screenshots.length === 0)) {
+      try {
+        const hasScreenPermission = await checkScreenCapturePermission();
+        if (hasScreenPermission === false) {
+          captureErrors.screen = true;
+        }
+      } catch (_) {}
+    }
+
     // Get input data while resetting buffers
     const inputData = await collectInputData(true);
+    const moduleErrors = inputData.captureErrors || {};
+    captureErrors.windows = !!moduleErrors.windows;
+    captureErrors.microphone = !!moduleErrors.microphone;
+    captureErrors.systemAudio = !!moduleErrors.systemAudio;
 
 
     // Check if any capture errors occurred
-    const captureErrors = inputData.captureErrors;
-    if (captureErrors && (captureErrors.audio || captureErrors.windows)) {
+    if (captureErrors.screen || captureErrors.windows || captureErrors.microphone || captureErrors.systemAudio) {
       // Pass the specific errors to the handler
-      handleCaptureError(new Error('Capture module error detected'), 'module-specific', captureErrors);
-      delete inputData.captureErrors; // Remove this property before sending
+      handleCaptureError(new Error('Capture module error detected'), 'module-specific', captureErrors, false);
     }
+    delete inputData.captureErrors; // Remove this property before sending
     
-    // Check if activity was filtered out completely (had data before but empty after)
-    const noAllowedActivity = inputData.noAllowedActivity === true;
-    delete inputData.noAllowedActivity; // Remove this property before sending
-    
-    // Skip upload if no allowed activity (regardless of screenshots or audio)
-    if (noAllowedActivity) {
-      log.info('[capture] Skipping upload: no allowed activity after filtering');
-      return false;
-    }
+    // Remove internal-only flag before sending.
+    // We still upload each cycle even when no activity is allowed.
+    delete inputData.noAllowedActivity;
 
     // Check if we have any data to upload
     const hasScreenshots = screenshots && screenshots.length > 0;
     const hasAudioChunks = inputData && inputData.audioChunks && inputData.audioChunks.length > 0;
     const hasActivity = inputData && inputData.activity && inputData.activity.length > 0;
 
-    // Screen and active-apps are required sources for baseline recording quality.
-    // If neither produced data this cycle, skip upload even if audio exists.
-    if (!hasScreenshots && !hasActivity) {
-      log.info('[capture] Skipping upload: required sources unavailable (screenshare/active apps)');
-      return false;
-    }
-
-    if (!hasScreenshots && !hasAudioChunks && !hasActivity) {
-      log.debug('[capture] No data to upload (screenshots=', screenshots?.length ?? 0, 'audio=', hasAudioChunks, 'activity=', hasActivity, ')');
-      return false;
+    const hasAnyPayloadData = !!(hasScreenshots || hasAudioChunks || hasActivity);
+    if (!hasAnyPayloadData) {
+      log.debug('[capture] Uploading empty capture payload (no screenshots/audio/activity this cycle)');
     }
     
     const timestamp = Date.now()
@@ -768,13 +789,21 @@ async function captureAndSend(idToken) {
           })
         }
       : previousScreenshotData
+    const previousForUpload = hasScreenshots ? scaledPreviousScreenshotData : null
     try {
-      dumpDir = await saveCaptureDump(screenshots, inputData, timestamp, pathType, scaledPreviousScreenshotData)
+      dumpDir = await saveCaptureDump(
+        screenshots,
+        inputData,
+        timestamp,
+        pathType,
+        previousForUpload,
+        !hasAnyPayloadData
+      )
     } catch (e) {
       log.warn('[capture] Capture dump save failed:', e?.message)
     }
 
-    const sendResult = await _sendToServer(idToken, screenshots, inputData, scaledPreviousScreenshotData)
+    const sendResult = await _sendToServer(idToken, screenshots, inputData, previousForUpload)
 
     if (dumpDir && sendResult?.structured) {
       try {
@@ -787,7 +816,7 @@ async function captureAndSend(idToken) {
     return sendResult
   } catch (error) {
     // Handle errors specifically from captureScreenshot or collectInputData
-    handleCaptureError(error, 'unknown');
+    handleCaptureError(error, 'unknown', null, false);
     return false;
   }
 }
@@ -801,25 +830,31 @@ function handleCaptureError(error, context, captureErrors = null, stopCapture = 
     stopCaptureInterval();
   }
 
-  let updatedSettings = { ...inputDataSettings };
+  const runtimeIssues = {};
   let dialogOptions = null;
   
   // Map of feature types to their friendly names
   const featureNames = {
-    audio: 'Audio recording',
-    windows: 'Window tracking'
+    screen: 'Screenshare capture',
+    windows: 'Window tracking',
+    microphone: 'Microphone capture',
+    systemAudio: 'System audio capture'
   };
   
   if (captureErrors) {
     let shouldNotifyRenderer = false;
-    // Check which features need to be disabled
+    // Track persistent runtime issues without mutating user settings
     Object.keys(captureErrors).forEach(feature => {
       if (captureErrors[feature] && featureNames[feature]) {
         const streak = incrementFailureStreak(feature);
-        const threshold = AUTO_DISABLE_THRESHOLDS[feature] || 4;
+        const threshold = RUNTIME_ISSUE_THRESHOLDS[feature] || 4;
 
         if (streak >= threshold) {
-          updatedSettings[feature] = false;
+          runtimeIssues[feature] = {
+            status: 'degraded',
+            threshold,
+            streak
+          };
           resetFailureStreak(feature);
           shouldNotifyRenderer = true;
 
@@ -831,9 +866,17 @@ function handleCaptureError(error, context, captureErrors = null, stopCapture = 
               type: 'warning',
               title: isPermissionError ? 'Permission Denied' : 'Capture Error',
               message: `${featureNames[feature]} ${isPermissionError ? 'permission denied' : 'failed'}`,
-              detail: `${featureNames[feature]} has been disabled after repeated failures. ${
+              detail: `${featureNames[feature]} is currently unavailable after repeated failures. ${
                 isPermissionError
-                  ? `Check ${feature === 'audio' ? 'microphone' : 'accessibility'} permissions in system settings.`
+                  ? `Check ${
+                    feature === 'screen'
+                      ? 'screen recording'
+                      : (feature === 'windows'
+                        ? 'accessibility'
+                        : (feature === 'microphone'
+                          ? 'microphone'
+                          : 'system audio'))
+                  } permissions in system settings.`
                   : `Error: ${error.message}`
               }`
             };
@@ -858,14 +901,11 @@ function handleCaptureError(error, context, captureErrors = null, stopCapture = 
     };
   }
   
-  // Update settings
-  inputDataSettings = updatedSettings;
-
-  // Notify renderer (non-blocking; avoid repeated alert dialogs by not showing dialog here)
+  // Notify renderer to flag potential permission issues inferred from repeated failures.
   if (mainWindowRef) {
-    try { mainWindowRef.webContents.send('disable-capture-features', updatedSettings); } catch (e) {}
+    try { mainWindowRef.webContents.send('flag-permission-issues', { runtimeIssues }); } catch (e) {}
   } else {
-    log.warn('mainWindowRef is not available, cannot send disable-capture-features event.');
+    log.warn('mainWindowRef is not available, cannot send flag-permission-issues event.');
   }
   
   // Suppress system dialogs for permission-denied cases to avoid alert noise during revocation
@@ -912,7 +952,7 @@ async function _runCaptureCycle() {
   } catch (error) {
     // Handle errors from captureAndSend or other cycle errors
     log.error('Error during capture cycle:', error);
-    handleCaptureError(error, 'capture-cycle'); 
+    handleCaptureError(error, 'capture-cycle', null, false); 
   }
 }
 

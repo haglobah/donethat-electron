@@ -443,25 +443,24 @@ function updateDashboardCaptureWarning() {
     return;
   }
 
-  const missingSources = [];
-  if (!screenEffective) missingSources.push('Screenshare');
-  if (!windowsEffective) missingSources.push('Active applications');
-  const missingLabel = missingSources.join(' and ');
-
-  if (!screenEffective && !windowsEffective) {
-    const bothDisabledByToggle = !screenEnabledByToggle && !windowsEnabledByToggle;
-    const anyPermissionMissing = (screenEnabledByToggle && !screenPermissionGranted) || (windowsEnabledByToggle && !windowsPermissionGranted);
-
-    if (bothDisabledByToggle) {
-      warningText.textContent = `We couldn't start recording because ${missingLabel} are turned off in Setup. Please enable them to start recording.`;
-    } else if (anyPermissionMissing) {
-      warningText.textContent = `We couldn't start recording because ${missingLabel} are unavailable. Please review your permissions to start recording.`;
-    } else {
-      warningText.textContent = `We couldn't start recording because ${missingLabel} are unavailable. Please check Setup to start recording.`;
+  const issues = [];
+  if (!screenEffective) {
+    if (!screenEnabledByToggle) {
+      issues.push('Screenshare is turned off in Setup');
+    } else if (!screenPermissionGranted) {
+      issues.push('Screenshare permission is missing');
     }
-  } else {
-    warningText.textContent = `We couldn't record ${missingLabel}. That impacts the accuracy of your data. Please check your permissions.`;
   }
+  if (!windowsEffective) {
+    if (!windowsEnabledByToggle) {
+      issues.push('Active applications are turned off in Setup');
+    } else if (!windowsPermissionGranted) {
+      issues.push('Active applications permission is missing');
+    }
+  }
+
+  const issueSummary = issues.join(' and ');
+  warningText.textContent = `Capture is limited because ${issueSummary}.`;
 
   warningEl.classList.remove('hidden');
 }

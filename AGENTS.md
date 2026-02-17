@@ -53,7 +53,7 @@ This document explains the DoneThat Desktop app to autonomous coding agents. It 
    - Optionally skip screenshots if `shouldDisableScreenshotsInMeetings()` (mic activity).
    - Collect audio transcript, window timeline into compact activity.
    - Try local processing (`processLocal`) with current + previous screenshots; else POST to Cloud Function `captureScreenshot` with `Authorization: Bearer <idToken>`.
-3. Errors/permission issues disable only the failing modules and notify renderer; auth/token expiry is signaled back for refresh.
+3. Errors/permission issues flag runtime issues per failing module and notify renderer; auth/token expiry is signaled back for refresh.
 
 ### Overlay Chat Flow
 - Global hotkey toggles overlay (`Cmd/Ctrl+Shift+D` by default; configurable via `hotkey:set` and persisted in `electron-store`).
@@ -81,8 +81,14 @@ This document explains the DoneThat Desktop app to autonomous coding agents. It 
 
 - Workdays/hours and pause state persisted in `electron-store`.
 - Screen capture permission checks are surfaced to renderer; Windows (active apps) permission handled similarly.
-- Audio/windows are opt-in toggles; failures auto-disable the specific module.
+- Audio/windows are opt-in toggles; failures surface runtime issues without changing user toggle settings.
 - “Disable screenshots during meetings” switches based on mic activity from audio module.
+
+### Terminology Conventions
+
+- Use `microphone` when referring to microphone permission/state/UI actions.
+- Use `systemAudio` when referring to system audio permission/state/UI actions.
+- Use `audio` only as a high-level settings bucket that includes both microphone and system audio controls.
 
 ## Privacy & Security
 

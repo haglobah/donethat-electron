@@ -3,9 +3,8 @@ const {
   updateScreenCapturePermission,
   updateWindowsPermission,
   updateMicrophonePermission,
+  updateSystemAudioPermission,
   updatePermissionsReady,
-  hasScreenCapturePermission,
-  hasWindowsPermission,
   hasMicrophonePermission
 } = require('./app-state.js');
 const { logAnalyticsEvent } = require('./analytics.js');
@@ -17,6 +16,13 @@ let updateTopbarVisibility;
 const permissionStartupLoaded = {
   screen: false,
   windows: false
+};
+
+const permissionIssueVisibleState = {
+  screen: false,
+  windows: false,
+  microphone: false,
+  systemAudio: false
 };
 
 function emitCaptureStateUpdated() {
@@ -63,12 +69,60 @@ function initializePermissions(viewNavigator, _currentViewGetter, topbarVisibili
   updateTopbarVisibility = topbarVisibilityUpdater;
 
   setupPlatformSpecificListeners();
+  setupRuntimePermissionIssueListener();
   setupScreenCaptureCheckboxBehavior();
   setupWindowsCheckboxBehavior();
   setupAudioCheckboxBehavior();
+  setupSystemAudioCheckboxBehavior();
+  setupPermissionRecheckButtons();
   setupFinishButtonHandler();
+  setupPermissionIndicatorRefresh();
 
   checkPermissionsOnStartup();
+}
+
+function setupRuntimePermissionIssueListener() {
+  ipcRenderer.on('flag-permission-issues', (_event, payload) => {
+    const runtimeIssues = payload && typeof payload === 'object' ? payload.runtimeIssues : null;
+    if (!runtimeIssues || typeof runtimeIssues !== 'object') return;
+
+    if (runtimeIssues.screen) {
+      applyScreenPermissionUpdate(false, false, 'runtime-issue');
+    }
+
+    if (runtimeIssues.windows) {
+      applyWindowsPermissionUpdate(false, false, 'runtime-issue');
+    }
+
+    if (runtimeIssues.microphone) {
+      applyMicrophonePermissionUpdate(false, false, 'runtime-issue');
+    }
+
+    if (runtimeIssues.systemAudio) {
+      applySystemAudioPermissionUpdate(false, false, 'runtime-issue');
+    }
+  });
+}
+
+function setupPermissionIndicatorRefresh() {
+  document.addEventListener('capture-state-updated', () => {
+    const screenCheckbox = document.getElementById('screenCheckbox');
+    if (screenCheckbox) {
+      updateScreenCaptureCheckbox(screenCheckbox.dataset.permissionGranted === 'true');
+    }
+    const windowsCheckbox = document.getElementById('windowsCheckbox');
+    if (windowsCheckbox) {
+      updateWindowsCheckbox(windowsCheckbox.dataset.permissionGranted === 'true');
+    }
+    const audioCheckbox = document.getElementById('audioCheckbox');
+    if (audioCheckbox) {
+      updateMicrophoneCheckbox(audioCheckbox.dataset.permissionGranted === 'true');
+    }
+    const systemAudioCheckbox = document.getElementById('systemAudioCheckbox');
+    if (systemAudioCheckbox) {
+      updateSystemAudioCheckbox(systemAudioCheckbox.dataset.permissionGranted === 'true');
+    }
+  });
 }
 
 function checkPermissionsOnStartup() {
@@ -77,6 +131,10 @@ function checkPermissionsOnStartup() {
   retryWindowsPermissionStartupCheck().then((hasPermission) => {
     applyWindowsPermissionUpdate(!!hasPermission, true, 'startup-passive-check');
   });
+  retryMicrophonePermissionStartupCheck().then((hasPermission) => {
+    applyMicrophonePermissionUpdate(!!hasPermission, true, 'startup-passive-check');
+  });
+  requestSystemAudioPermission(false);
 }
 
 async function retryWindowsPermissionStartupCheck() {
@@ -92,6 +150,14 @@ async function retryWindowsPermissionStartupCheck() {
   return false;
 }
 
+async function retryMicrophonePermissionStartupCheck() {
+  try {
+    const hasPermission = await ipcRenderer.invoke('checkMicrophonePermission');
+    return !!hasPermission;
+  } catch (_) {}
+  return false;
+}
+
 function setupPlatformSpecificListeners() {
   ipcRenderer.on('linux-windows-permission-notice', () => {
     showLinuxPermissionHelp('windows');
@@ -103,11 +169,7 @@ function setupPlatformSpecificListeners() {
 
   ipcRenderer.on('linux-pactl-missing-notice', () => {
     showLinuxPermissionHelp('pactl');
-    const audioCheckbox = document.getElementById('audioCheckbox');
-    if (audioCheckbox) {
-      audioCheckbox.checked = false;
-    }
-    handleCaptureToggleIntent('audio', false).catch(() => {});
+    emitCaptureStateUpdated();
   });
 }
 
@@ -179,10 +241,6 @@ function applyWindowsPermissionUpdate(hasPermission, fromStartup = false, source
   updateWindowsCheckbox(hasPermission);
   updateFinishButtonVisibility();
 
-  document.dispatchEvent(new CustomEvent('permissionResult', {
-    detail: { type: 'windows', hasPermission }
-  }));
-
   if (updateTopbarVisibility) updateTopbarVisibility();
 
   if (fromStartup) {
@@ -201,10 +259,24 @@ function applyMicrophonePermissionUpdate(hasPermission, _fromStartup = false, so
     source
   });
 
-  document.dispatchEvent(new CustomEvent('permissionResult', {
-    detail: { type: 'audio', hasPermission: !!hasPermission }
-  }));
+  updateMicrophoneCheckbox(hasPermission);
+  const systemAudioCheckbox = document.getElementById('systemAudioCheckbox');
+  if (systemAudioCheckbox) {
+    updateSystemAudioCheckbox(systemAudioCheckbox.dataset.permissionGranted === 'true');
+  }
+  emitCaptureStateUpdated();
+}
 
+function applySystemAudioPermissionUpdate(hasPermission, _fromStartup = false, source = 'unknown') {
+  updateSystemAudioPermission(hasPermission);
+
+  logAnalyticsEvent('system_audio_permission', {
+    status: hasPermission ? 'granted' : 'denied',
+    platform: window.electronAPI.platform,
+    source
+  });
+
+  updateSystemAudioCheckbox(hasPermission);
   emitCaptureStateUpdated();
 }
 
@@ -229,18 +301,43 @@ ipcRenderer.on('windowsPermission', (_event, data) => {
   });
 });
 
+ipcRenderer.on('systemAudioPermission', (_event, data) => {
+  handleIncomingPermissionEvent('systemAudio', data, applySystemAudioPermissionUpdate, {
+    defaultSource: 'system-audio-channel',
+    fromStartup: false
+  });
+});
+
+ipcRenderer.on('systemAudioPermission-recheck', () => {
+  requestSystemAudioPermission(false);
+});
+
 function updateScreenCaptureCheckbox(hasPermission) {
   const checkbox = document.getElementById('screenCheckbox');
   if (!checkbox) return;
 
   checkbox.dataset.permissionGranted = hasPermission ? 'true' : 'false';
+  const enabledByToggle = !!checkbox.checked;
+  const blockedByPermission = enabledByToggle && !hasPermission;
+  if (blockedByPermission !== permissionIssueVisibleState.screen) {
+    permissionIssueVisibleState.screen = blockedByPermission;
+    if (blockedByPermission) {
+      logAnalyticsEvent('permission_issue_visible', {
+        type: 'screen',
+        platform: window.electronAPI.platform
+      });
+    }
+  }
 
   const toggleLabel = checkbox.closest('.toggle');
   if (toggleLabel) {
-    toggleLabel.title = hasPermission
-      ? 'Screen permission granted'
-      : 'Screen permission required for effective capture';
+    toggleLabel.title = blockedByPermission
+      ? 'Enabled in settings, but currently blocked by missing screen permission'
+      : (hasPermission ? 'Screen permission granted' : 'Screen permission required for effective capture');
   }
+
+  const recheckBtn = document.getElementById('recheckScreenPermissionBtn');
+  if (recheckBtn) recheckBtn.classList.toggle('hidden', !blockedByPermission);
 }
 
 function updateWindowsCheckbox(hasPermission) {
@@ -248,13 +345,86 @@ function updateWindowsCheckbox(hasPermission) {
   if (!checkbox) return;
 
   checkbox.dataset.permissionGranted = hasPermission ? 'true' : 'false';
+  const enabledByToggle = !!checkbox.checked;
+  const blockedByPermission = enabledByToggle && !hasPermission;
+  if (blockedByPermission !== permissionIssueVisibleState.windows) {
+    permissionIssueVisibleState.windows = blockedByPermission;
+    if (blockedByPermission) {
+      logAnalyticsEvent('permission_issue_visible', {
+        type: 'windows',
+        platform: window.electronAPI.platform
+      });
+    }
+  }
 
   const toggleLabel = checkbox.closest('.toggle');
   if (toggleLabel) {
-    toggleLabel.title = hasPermission
-      ? 'Active applications permission granted'
-      : 'Active applications permission required for effective capture';
+    toggleLabel.title = blockedByPermission
+      ? 'Enabled in settings, but currently blocked by missing active applications permission'
+      : (hasPermission ? 'Active applications permission granted' : 'Active applications permission required for effective capture');
   }
+
+  const recheckBtn = document.getElementById('recheckWindowsPermissionBtn');
+  if (recheckBtn) recheckBtn.classList.toggle('hidden', !blockedByPermission);
+}
+
+function updateMicrophoneCheckbox(hasPermission) {
+  const checkbox = document.getElementById('audioCheckbox');
+  if (!checkbox) return;
+
+  checkbox.dataset.permissionGranted = hasPermission ? 'true' : 'false';
+  const enabledByToggle = !!checkbox.checked;
+  const blockedByPermission = enabledByToggle && !hasPermission;
+  if (blockedByPermission !== permissionIssueVisibleState.microphone) {
+    permissionIssueVisibleState.microphone = blockedByPermission;
+    if (blockedByPermission) {
+      logAnalyticsEvent('permission_issue_visible', {
+        type: 'microphone',
+        platform: window.electronAPI.platform
+      });
+    }
+  }
+
+  const toggleLabel = checkbox.closest('.toggle');
+  if (toggleLabel) {
+    toggleLabel.title = blockedByPermission
+      ? 'Enabled in settings, but currently blocked by missing microphone permission'
+      : (hasPermission ? 'Microphone permission granted' : 'Microphone permission required for effective capture');
+  }
+
+  const recheckBtn = document.getElementById('recheckMicrophonePermissionBtn');
+  if (recheckBtn) recheckBtn.classList.toggle('hidden', !blockedByPermission);
+}
+
+function updateSystemAudioCheckbox(hasPermission) {
+  const checkbox = document.getElementById('systemAudioCheckbox');
+  if (!checkbox) return;
+
+  checkbox.dataset.permissionGranted = hasPermission ? 'true' : 'false';
+  const enabledByToggle = !!checkbox.checked;
+  const audioEnabled = !!document.getElementById('audioCheckbox')?.checked;
+  const blockedByPermission = enabledByToggle && audioEnabled && !!hasMicrophonePermission() && !hasPermission;
+  if (blockedByPermission !== permissionIssueVisibleState.systemAudio) {
+    permissionIssueVisibleState.systemAudio = blockedByPermission;
+    if (blockedByPermission) {
+      logAnalyticsEvent('permission_issue_visible', {
+        type: 'systemAudio',
+        platform: window.electronAPI.platform
+      });
+    }
+  }
+
+  const toggleLabel = checkbox.closest('.toggle');
+  if (toggleLabel) {
+    toggleLabel.title = blockedByPermission
+      ? 'Enabled in settings, but currently blocked by missing system audio permission'
+      : (hasPermission
+        ? 'System audio permission granted'
+        : 'System audio permission required for effective capture');
+  }
+
+  const recheckBtn = document.getElementById('recheckSystemAudioPermissionBtn');
+  if (recheckBtn) recheckBtn.classList.toggle('hidden', !blockedByPermission);
 }
 
 function setupScreenCaptureCheckboxBehavior() {
@@ -266,15 +436,12 @@ function setupScreenCaptureCheckboxBehavior() {
     const result = await handleCaptureToggleIntent('screen', enabled);
     if (result?.reverted) {
       checkbox.checked = !enabled;
+      updateScreenCaptureCheckbox(checkbox.dataset.permissionGranted === 'true');
       updateFinishButtonVisibility();
       emitCaptureStateUpdated();
       return;
     }
-
-    if (enabled && !hasScreenCapturePermission()) {
-      requestScreenCapturePermission();
-    }
-
+    updateScreenCaptureCheckbox(checkbox.dataset.permissionGranted === 'true');
     updateFinishButtonVisibility();
     emitCaptureStateUpdated();
   });
@@ -290,15 +457,12 @@ function setupWindowsCheckboxBehavior() {
     const result = await handleCaptureToggleIntent('windows', enabled);
     if (result?.reverted) {
       checkbox.checked = !enabled;
+      updateWindowsCheckbox(checkbox.dataset.permissionGranted === 'true');
       updateFinishButtonVisibility();
       emitCaptureStateUpdated();
       return;
     }
-
-    if (enabled && !hasWindowsPermission()) {
-      requestWindowsPermission(true);
-    }
-
+    updateWindowsCheckbox(checkbox.dataset.permissionGranted === 'true');
     updateFinishButtonVisibility();
     emitCaptureStateUpdated();
   });
@@ -316,13 +480,77 @@ function setupAudioCheckboxBehavior() {
       emitCaptureStateUpdated();
       return;
     }
-
-    if (enabled && !hasMicrophonePermission()) {
-      requestMicrophonePermission();
+    updateMicrophoneCheckbox(checkbox.dataset.permissionGranted === 'true');
+    const systemAudioCheckbox = document.getElementById('systemAudioCheckbox');
+    if (systemAudioCheckbox) {
+      updateSystemAudioCheckbox(systemAudioCheckbox.dataset.permissionGranted === 'true');
     }
-
     emitCaptureStateUpdated();
   });
+}
+
+function setupSystemAudioCheckboxBehavior() {
+  const checkbox = document.getElementById('systemAudioCheckbox');
+  if (!checkbox) return;
+
+  checkbox.addEventListener('change', async () => {
+    const enabled = !!checkbox.checked;
+    const result = await handleCaptureToggleIntent('systemAudio', enabled);
+    if (result?.reverted) {
+      checkbox.checked = !enabled;
+      updateSystemAudioCheckbox(checkbox.dataset.permissionGranted === 'true');
+      emitCaptureStateUpdated();
+      return;
+    }
+    updateSystemAudioCheckbox(checkbox.dataset.permissionGranted === 'true');
+    emitCaptureStateUpdated();
+  });
+}
+
+function setupPermissionRecheckButtons() {
+  const recheckScreenBtn = document.getElementById('recheckScreenPermissionBtn');
+  if (recheckScreenBtn) {
+    recheckScreenBtn.addEventListener('click', () => {
+      logAnalyticsEvent('permission_recheck_clicked', {
+        type: 'screen',
+        platform: window.electronAPI.platform
+      });
+      requestScreenCapturePermission();
+    });
+  }
+
+  const recheckWindowsBtn = document.getElementById('recheckWindowsPermissionBtn');
+  if (recheckWindowsBtn) {
+    recheckWindowsBtn.addEventListener('click', () => {
+      logAnalyticsEvent('permission_recheck_clicked', {
+        type: 'windows',
+        platform: window.electronAPI.platform
+      });
+      requestWindowsPermission(true);
+    });
+  }
+
+  const recheckMicrophoneBtn = document.getElementById('recheckMicrophonePermissionBtn');
+  if (recheckMicrophoneBtn) {
+    recheckMicrophoneBtn.addEventListener('click', () => {
+      logAnalyticsEvent('permission_recheck_clicked', {
+        type: 'microphone',
+        platform: window.electronAPI.platform
+      });
+      requestMicrophonePermission();
+    });
+  }
+
+  const recheckSystemAudioBtn = document.getElementById('recheckSystemAudioPermissionBtn');
+  if (recheckSystemAudioBtn) {
+    recheckSystemAudioBtn.addEventListener('click', () => {
+      logAnalyticsEvent('permission_recheck_clicked', {
+        type: 'systemAudio',
+        platform: window.electronAPI.platform
+      });
+      requestSystemAudioPermission(true);
+    });
+  }
 }
 
 function requestMicrophonePermission() {
@@ -357,10 +585,6 @@ function requestSystemAudioPermission(shouldOpenSettings = true) {
   ipcRenderer.send('requestSystemAudioPermission', shouldOpenSettings);
 }
 
-function isWayland() {
-  return window.electronAPI.isWayland;
-}
-
 function updateFinishButtonVisibility() {
   const finishButtonContainer = document.getElementById('finishButtonContainer');
   if (!finishButtonContainer) return;
@@ -386,6 +610,5 @@ module.exports = {
   initializePermissions,
   requestMicrophonePermission,
   requestWindowsPermission,
-  requestSystemAudioPermission,
   updateFinishButtonVisibility
 };

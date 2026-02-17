@@ -400,7 +400,7 @@ textarea::placeholder {
 /* Action button - brand orange without shadow (base and hover) */
 .btn-primary.topbar-btn {
   background-color: var(--color-primary);
-  box-shadow: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
 .btn-primary.topbar-btn:hover {
   background-color: var(--color-primary-dark);
@@ -418,7 +418,7 @@ textarea::placeholder {
 .finish-button {
   @apply px-4 py-2 text-sm font-medium rounded-lg;
   background-color: var(--color-primary);
-  box-shadow: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
   transition: background-color 0.2s;
 }
 .finish-button:hover {
@@ -448,6 +448,27 @@ textarea::placeholder {
 .btn-secondary[disabled]:hover {
   background-color: var(--color-neutral-200);
   color: var(--color-neutral-500);
+}
+
+.permission-check-btn {
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+/* Keep cards hoverable for title tooltips while disabling nested controls */
+.capture-dimmed-card button,
+.capture-dimmed-card input,
+.capture-dimmed-card select,
+.capture-dimmed-card textarea,
+.capture-dimmed-card a {
+  pointer-events: none;
 }
 
 .dashboard-warning-text {

@@ -463,6 +463,9 @@
                 <div>
                   <div class="text-base font-semibold text-gray-800">Screenshare</div>
                   <div class="text-xs text-gray-500">By seeing what you see, we can understand what you're doing. We never store your raw screenshots, only process once to understand your work. </div>
+                  <div class="mt-2">
+                    <button id="recheckScreenPermissionBtn" class="btn-primary permission-check-btn hidden">Check Permissions</button>
+                  </div>
                 </div>
                 <label class="toggle"><input type="checkbox" id="screenCheckbox" checked><span class="slider"></span></label>
               </div>
@@ -510,6 +513,9 @@
                 <div>
                   <div class="text-base font-semibold text-gray-800">Active applications</div>
                   <div class="text-xs text-gray-500">This allows us to know which apps are active. This helps to understand what happens in between screenshots. On macOS, you may see a permission request to control your browser to capture the active URL.</div>
+                  <div class="mt-2">
+                    <button id="recheckWindowsPermissionBtn" class="btn-primary permission-check-btn hidden">Check Permissions</button>
+                  </div>
                 </div>
                 <label class="toggle"><input type="checkbox" id="windowsCheckbox"><span class="slider"></span></label>
               </div>
@@ -547,6 +553,9 @@
                 <div>
                   <div class="text-base font-semibold text-gray-800">Microphone</div>
                   <div class="text-xs text-gray-500">We check if your microphone is active to see if you are in a meeting. During meetings, we process your voice to understand what you are working on.</div>
+                  <div class="mt-2">
+                    <button id="recheckMicrophonePermissionBtn" class="btn-primary permission-check-btn hidden">Check Microphone Permission</button>
+                  </div>
                 </div>
                 <label class="toggle"><input type="checkbox" id="audioCheckbox"><span class="slider"></span></label>
               </div>
@@ -556,6 +565,9 @@
                 <div>
                   <div class="text-base font-semibold text-gray-800">Record system audio</div>
                   <div class="text-xs text-gray-500">Also record computer sound (meetings, videos) when the microphone is active. Mixed with your voice.</div>
+                  <div class="mt-2">
+                    <button id="recheckSystemAudioPermissionBtn" class="btn-primary permission-check-btn hidden">Check System Audio Permission</button>
+                  </div>
                 </div>
                 <label class="toggle"><input type="checkbox" id="systemAudioCheckbox"><span class="slider"></span></label>
               </div>

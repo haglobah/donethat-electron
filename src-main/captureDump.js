@@ -29,9 +29,10 @@ async function getBasePath() {
  * @param {number} timestamp
  * @param {'cloud'|'local'} pathType
  * @param {Object|null} previousScreenshotData { images: [{ base64Data, index }] } or null - exactly as sent to LLM/cloud
+ * @param {boolean} emptyFolderOnly Create the dump directory only (no payload/media files)
  * @returns {Promise<string|null>} Dump dir path or null if disabled/failed
  */
-async function saveCaptureDump(screenshots, inputData, timestamp, pathType, previousScreenshotData = null) {
+async function saveCaptureDump(screenshots, inputData, timestamp, pathType, previousScreenshotData = null, emptyFolderOnly = false) {
   try {
     const store = await getStore()
     const saveEnabled = store.get('saveCaptureDataToFolder')
@@ -53,6 +54,9 @@ async function saveCaptureDump(screenshots, inputData, timestamp, pathType, prev
     const sendDir = path.join(basePath, dateStr, readableStamp)
 
     fs.mkdirSync(sendDir, { recursive: true })
+    if (emptyFolderOnly) {
+      return sendDir
+    }
 
     const audioChunks = inputData?.audioChunks || [];
     const audioChunksMeta = [];

@@ -30,7 +30,6 @@ const validSendChannels = [
   'update-context-capture-enabled',
   'updateWorkhours',
   'updateWorkdays',
-  'pause-capture-due-to-permission',
   'audio-device-changed',
 
   // Chat
@@ -156,7 +155,7 @@ const validReceiveChannels = [
   'systemAudioPermission-recheck',
   'windowsPermission',
   'pauseStateChanged',
-  'disable-capture-features',
+  'flag-permission-issues',
 
   // Analytics / notifications
   'analytics-event',
