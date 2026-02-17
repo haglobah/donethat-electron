@@ -78,6 +78,7 @@
     "electron-store": "^11.0.2",
     "electron-updater": "^6.7.3",
     "firebase": "^12.9.0",
+    "ffmpeg-static": "^5.2.0",
     "get-windows": "^9.2.3",
     "node-fetch": "^3.3.2",
     "jimp": "^1.6.0",

@@ -1,11 +1,16 @@
 const log = require('electron-log')
 const { ipcMain, desktopCapturer } = require('electron')
 const audioSessionDetector = require('./audioSessionDetector')
+const { mergeMicAndSystemChunks } = require('./audioMerge')
+const macSystemAudioCapture = process.platform === 'darwin'
+  ? require('./macosSystemAudioCapture')
+  : null
 
 // Variables to track audio capture
 let isRecording = false
 let mainWindow = null
 let isAudioTrackingActive = false
+let startRecordingPromise = null
 
 // Permission state - check once, remember forever
 let hasMicrophonePermission = null
@@ -13,6 +18,44 @@ let hasMicrophonePermission = null
 // Configuration state
 let currentConfig = {
   systemAudio: false
+}
+let pendingMacSystemChunks = []
+
+function getChunkOverlapMs(a, b) {
+  const aStart = Number(a && a.startMs)
+  const aEnd = Number(a && a.endMs)
+  const bStart = Number(b && b.startMs)
+  const bEnd = Number(b && b.endMs)
+  if (!Number.isFinite(aStart) || !Number.isFinite(aEnd) || !Number.isFinite(bStart) || !Number.isFinite(bEnd)) {
+    return 0
+  }
+  const start = Math.max(aStart, bStart)
+  const end = Math.min(aEnd, bEnd)
+  return Math.max(0, end - start)
+}
+
+function pickBestSystemChunkForMic(micChunk, systemChunks, usedIndexes) {
+  let bestIndex = -1
+  let bestScore = -1
+
+  for (let i = 0; i < systemChunks.length; i += 1) {
+    if (usedIndexes.has(i)) continue
+    const score = getChunkOverlapMs(micChunk, systemChunks[i])
+    if (score > bestScore) {
+      bestScore = score
+      bestIndex = i
+    }
+  }
+
+  // If no overlap at all, fall back to first unused to preserve session ordering.
+  if (bestIndex < 0 || bestScore <= 0) {
+    for (let i = 0; i < systemChunks.length; i += 1) {
+      if (!usedIndexes.has(i)) return i
+    }
+    return -1
+  }
+
+  return bestIndex
 }
 
 /**
@@ -221,6 +264,10 @@ async function checkPermission() {
  * @returns {Promise<boolean>} Success status
  */
 async function startRecordingInternal() {
+  if (startRecordingPromise) {
+    return startRecordingPromise
+  }
+
   if (isRecording) {
     return true
   }
@@ -230,9 +277,19 @@ async function startRecordingInternal() {
     return false
   }
 
-  try {
+  startRecordingPromise = (async () => {
+    try {
+    const shouldUseMacNativeSystemAudio = process.platform === 'darwin' && !!currentConfig.systemAudio
+    if (shouldUseMacNativeSystemAudio) {
+      const startedMacSystemAudio = await macSystemAudioCapture.start()
+      if (!startedMacSystemAudio) {
+        log.error('[AudioCapture] macOS native system audio helper failed to start')
+      }
+    }
+
     let sourceIds = []
-    if (currentConfig.systemAudio) {
+    const rendererSystemAudioRequested = !!currentConfig.systemAudio && process.platform !== 'darwin'
+    if (rendererSystemAudioRequested) {
       try {
         const sources = await desktopCapturer.getSources({ types: ['screen'] })
 
@@ -254,22 +311,30 @@ async function startRecordingInternal() {
     const sourceIdsJson = JSON.stringify(sourceIds)
     const started = await mainWindow.webContents.executeJavaScript(
       `window.startAudioRecording && window.startAudioRecording({
-        systemAudio: ${currentConfig.systemAudio},
+        systemAudio: ${rendererSystemAudioRequested},
         sourceIds: ${sourceIdsJson}
       });`
     )
 
     if (!started) {
-      log.error('Failed to start audio recording in renderer')
+      log.error('[AudioCapture] Failed to start audio recording in renderer', {
+        systemAudioRequested: rendererSystemAudioRequested,
+        sourceIds
+      })
       return false
     }
 
     isRecording = true
     return true
-  } catch (error) {
-    log.error('Error starting audio recording:', error)
-    return false
-  }
+    } catch (error) {
+      log.error('Error starting audio recording:', error)
+      return false
+    } finally {
+      startRecordingPromise = null
+    }
+  })()
+
+  return startRecordingPromise
 }
 
 /**
@@ -314,10 +379,22 @@ async function stopRecordingInternal() {
     }
 
     isRecording = false
+    if (process.platform === 'darwin' && currentConfig.systemAudio && macSystemAudioCapture && macSystemAudioCapture.isRunning()) {
+      try {
+        const systemChunk = await macSystemAudioCapture.flushChunk()
+        if (systemChunk) pendingMacSystemChunks.push(systemChunk)
+      } catch (flushError) {
+        log.error('[AudioCapture] Error flushing macOS system audio chunk on session stop:', flushError)
+      }
+      await macSystemAudioCapture.stop()
+    }
     return true
   } catch (error) {
     log.error('Error stopping audio recording:', error)
     isRecording = false
+    if (process.platform === 'darwin' && macSystemAudioCapture && macSystemAudioCapture.isRunning()) {
+      try { await macSystemAudioCapture.stop() } catch (_) {}
+    }
     return false
   }
 }
@@ -378,6 +455,9 @@ async function startRecording() {
 async function startAudioTracking(config) {
   if (config && config.systemAudio !== undefined) {
     currentConfig.systemAudio = !!config.systemAudio
+    if (!currentConfig.systemAudio) {
+      pendingMacSystemChunks = []
+    }
   }
 
   const hasPermission = await checkPermission()
@@ -401,13 +481,54 @@ async function startAudioTracking(config) {
  */
 async function stopRecording(resetBuffers = false) {
   try {
+    const micChunks = []
+    const outputChunks = []
+    const systemChunks = []
+
     if (isRecording && mainWindow && !mainWindow.isDestroyed()) {
       const audioChunks = await mainWindow.webContents.executeJavaScript(
         `window.getAudioChunksWithTimestamps && window.getAudioChunksWithTimestamps(${resetBuffers})`
       )
       if (audioChunks && Array.isArray(audioChunks) && audioChunks.length > 0) {
-        return { audioChunks }
+        micChunks.push(...audioChunks)
       }
+    }
+
+    if (process.platform === 'darwin' && currentConfig.systemAudio) {
+      if (pendingMacSystemChunks.length > 0) {
+        systemChunks.push(...pendingMacSystemChunks)
+        pendingMacSystemChunks = []
+      }
+
+      if (macSystemAudioCapture && macSystemAudioCapture.isRunning()) {
+        try {
+          const currentSystemChunk = await macSystemAudioCapture.flushChunk()
+          if (currentSystemChunk) systemChunks.push(currentSystemChunk)
+        } catch (error) {
+          log.error('[AudioCapture] Error retrieving macOS native system audio chunk:', error)
+        }
+      }
+    }
+
+    if (process.platform === 'darwin' && currentConfig.systemAudio && micChunks.length > 0 && systemChunks.length > 0) {
+      const usedSystemIndexes = new Set()
+      for (const micChunk of micChunks) {
+        const systemIndex = pickBestSystemChunkForMic(micChunk, systemChunks, usedSystemIndexes)
+        if (systemIndex < 0) {
+          outputChunks.push(micChunk)
+          continue
+        }
+
+        usedSystemIndexes.add(systemIndex)
+        const mergedChunk = await mergeMicAndSystemChunks(micChunk, systemChunks[systemIndex])
+        outputChunks.push(mergedChunk || micChunk)
+      }
+    } else {
+      outputChunks.push(...micChunks)
+    }
+
+    if (outputChunks.length > 0) {
+      return { audioChunks: outputChunks }
     }
     return null
   } catch (error) {
@@ -423,9 +544,14 @@ async function stopRecording(resetBuffers = false) {
 async function shutdownRecording() {
   try {
     isAudioTrackingActive = false
+    pendingMacSystemChunks = []
 
     if (isRecording) {
       await stopRecordingInternal()
+    }
+
+    if (process.platform === 'darwin' && macSystemAudioCapture && macSystemAudioCapture.isRunning()) {
+      await macSystemAudioCapture.stop()
     }
 
     audioSessionDetector.shutdown()

@@ -12,30 +12,47 @@ function run(cmd) {
   }
 }
 
+function buildSwiftHelper({ sourcePath, outputPath, frameworks }) {
+  const moduleCacheDir = path.join(process.cwd(), '.build/module-cache');
+  fs.mkdirSync(moduleCacheDir, { recursive: true });
+  const frameworkArgs = frameworks.map((fw) => `-framework ${fw}`).join(' ');
+  run(`xcrun swiftc -O -module-cache-path "${moduleCacheDir}" ${frameworkArgs} "${sourcePath}" -o "${outputPath}"`);
+  run(`chmod +x "${outputPath}"`);
+}
+
 function main() {
   if (process.platform !== 'darwin') {
     console.log('[postinstall-macos-micstatus] Non-macOS platform, skipping.');
     return;
   }
 
-  console.log('[postinstall-macos-micstatus] Building Swift mic-monitor helper...');
-
-  const sourcePath = path.join(process.cwd(), 'src-os/macos/active-mic.swift');
   const outputDir = path.join(process.cwd(), 'bin');
-  const outputPath = path.join(outputDir, 'mic-monitor');
-  const moduleCacheDir = path.join(process.cwd(), '.build/module-cache');
-
-  if (!fs.existsSync(sourcePath)) {
-    console.error(`[postinstall-macos-micstatus] Error: source file not found: ${sourcePath}`);
-    process.exit(1);
-  }
-
   fs.mkdirSync(outputDir, { recursive: true });
-  fs.mkdirSync(moduleCacheDir, { recursive: true });
 
-  run(`xcrun swiftc -O -module-cache-path "${moduleCacheDir}" -framework CoreAudio -framework Foundation -framework AppKit "${sourcePath}" -o "${outputPath}"`);
-  run(`chmod +x "${outputPath}"`);
-  console.log(`[postinstall-macos-micstatus] Swift mic-monitor helper built: ${outputPath}`);
+  const helperBuilds = [
+    {
+      name: 'mic-monitor',
+      sourcePath: path.join(process.cwd(), 'src-os/macos/active-mic.swift'),
+      outputPath: path.join(outputDir, 'mic-monitor'),
+      frameworks: ['CoreAudio', 'Foundation', 'AppKit']
+    },
+    {
+      name: 'system-audio-capture',
+      sourcePath: path.join(process.cwd(), 'src-os/macos/system-audio-capture.swift'),
+      outputPath: path.join(outputDir, 'system-audio-capture'),
+      frameworks: ['Foundation', 'AVFoundation', 'ScreenCaptureKit', 'CoreMedia']
+    }
+  ];
+
+  for (const helper of helperBuilds) {
+    if (!fs.existsSync(helper.sourcePath)) {
+      console.error(`[postinstall-macos-micstatus] Error: source file not found: ${helper.sourcePath}`);
+      process.exit(1);
+    }
+    console.log(`[postinstall-macos-micstatus] Building Swift helper: ${helper.name}`);
+    buildSwiftHelper(helper);
+    console.log(`[postinstall-macos-micstatus] Built helper: ${helper.outputPath}`);
+  }
 }
 
 main();

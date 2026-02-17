@@ -21,6 +21,24 @@ let micInputStream = null;
 let systemInputStreams = [];
 let lastStartOptions = { systemAudio: false, sourceIds: [] };
 
+function getTrackDebugState(track) {
+  if (!track) return null;
+  return {
+    kind: track.kind,
+    id: track.id,
+    label: track.label,
+    enabled: track.enabled,
+    muted: track.muted,
+    readyState: track.readyState
+  };
+}
+
+function attachSystemTrackDebugListeners(track, sourceId) {
+  // No-op to keep renderer logs quiet during audio capture.
+  void track;
+  void sourceId;
+}
+
 
 // VAD State & Constants
 let userSpeechIntervals = []; // Array of { startMs, endMs }
@@ -316,6 +334,9 @@ window.startAudioRecording = async function(options = {}) {
 
     // 4. Get System Audio Stream(s) (if enabled and sourceId(s) provided)
     if (normalizedOptions.systemAudio) {
+      if (navigator.platform.toLowerCase().includes('mac')) {
+        // console.log('[Audio] macOS system audio capture is handled by main-process helper; renderer path skipped');
+      } else {
       const sourceIds = normalizedOptions.sourceIds;
       
       if (sourceIds.length > 0) {
@@ -351,31 +372,44 @@ window.startAudioRecording = async function(options = {}) {
             const systemStream = await navigator.mediaDevices.getUserMedia(constraints);
             
             const tracks = systemStream.getAudioTracks();
+            const videoTracks = systemStream.getVideoTracks();
+            // Intentionally quiet: avoid verbose per-stream diagnostics in production logs.
   
             if (tracks.length > 0) {
+              tracks.forEach((track) => attachSystemTrackDebugListeners(track, sourceId));
               const sourceNode = audioContext.createMediaStreamSource(systemStream);
               sourceNode.connect(destNode);
               systemSources.push(sourceNode);
               systemInputStreams.push(systemStream);
               
               // Stop any video tracks immediately as we don't need them
-              systemStream.getVideoTracks().forEach(track => track.stop());
+              if (videoTracks.length > 0) {
+                videoTracks.forEach(track => track.stop());
+              }
             } else {
               console.warn(`[Audio] Source ${sourceId} has no audio tracks`);
               // Stop the stream if no audio
               systemStream.getTracks().forEach(track => track.stop());
             }
           } catch (sysErr) {
-            console.error(`[Audio] Capture FAILED for source ${sourceId}:`, sysErr.name, sysErr.message);
+            const errorDetails = {
+              name: sysErr && sysErr.name,
+              message: sysErr && sysErr.message,
+              stack: sysErr && sysErr.stack
+            };
+            console.error(`[Audio] Capture FAILED for source ${sourceId}: ${JSON.stringify(errorDetails)}`);
             // Continue to next source
           }
         }
         
         if (systemSources.length === 0) {
-          console.warn('[Audio] No system audio sources were successfully captured');
+          console.warn(`[Audio] No system audio sources were successfully captured ${JSON.stringify({
+            requestedSourceCount: sourceIds.length
+          })}`);
         }
       } else {
         console.warn('[Audio] System audio requested but no sourceIds provided');
+      }
       }
     }
     

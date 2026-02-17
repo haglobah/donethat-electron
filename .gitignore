@@ -157,6 +157,7 @@ pkcs11properties.cfg
 
 # Native Helpers (compiled)
 bin/mic-monitor
+bin/system-audio-capture
 bin/donethatmicmonitor.exe
 # Swift module cache
 .build/

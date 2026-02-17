@@ -667,11 +667,9 @@ describe('Manual Resume and Pause Scenarios', () => {
       // Manually pause for 4 hours (until 18:00, which is after workday end at 17:00)
       const pauseDuration = 4 * 60 * 60 * 1000; // 4 hours
       
-      // Mock Date.now() to return the test time
-      const originalNow = Date.now;
-      Date.now = jest.fn(() => inWorkHours.getTime());
-      
+      jest.useFakeTimers();
       try {
+        jest.setSystemTime(inWorkHours);
         pauseRecording(pauseDuration, mockWindow, 'manual');
         
         expect(isPaused()).toBe(true);
@@ -684,8 +682,7 @@ describe('Manual Resume and Pause Scenarios', () => {
         // Verify pause extends beyond workday end
         expect(pauseEndTime.getTime()).toBeGreaterThan(workdayEnd.getTime());
       } finally {
-        // Restore original Date.now()
-        Date.now = originalNow;
+        jest.useRealTimers();
       }
     }
   });
@@ -1703,4 +1700,3 @@ afterAll(() => {
   // Force clear all timers and intervals
   jest.clearAllTimers();
 });
-

@@ -1607,9 +1607,9 @@ function createWindow() {
       }
     })
 
-    // Sandboxed renderer needs explicit approval for 'media' so audio-recorder.js getUserMedia works.
+    // Sandboxed renderer needs explicit approval for capture permissions used by audio-recorder.js.
     mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-      const allowedPermissions = ['media']; 
+      const allowedPermissions = ['media', 'display-capture']; 
       
       if (allowedPermissions.includes(permission)) {
         callback(true); // Approve
@@ -2279,4 +2279,3 @@ function scheduleDailyAuthCheck() {
     scheduleDailyAuthCheck();
   }, timeUntilCheck);
 }
-
