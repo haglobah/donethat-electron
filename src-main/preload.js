@@ -49,10 +49,6 @@ const validSendChannels = [
   'updateUserStatus',
 
   // Notifications
-  'notification:close',
-  'notification:action',
-  'notification:content-height',
-  'notification:ready',
   'background:notify',
   'background:hide',
 
@@ -161,8 +157,6 @@ const validReceiveChannels = [
   'analytics-event',
   'request-notification',
   'inapp:hide',
-  'background:notify',
-  'background:hide',
 
   // Navigation / routing
   'navigate',

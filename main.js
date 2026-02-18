@@ -202,7 +202,6 @@ let stateManager = null
 let tray = null
 let mainWindow = null
 let overlayWindow = null
-let notificationWindow = null
 let screenshotInterval = null
 let isInitialStartup = true
 // Persist overlay position
@@ -211,7 +210,6 @@ let savedOverlayPosition = null
 let saveOverlayPositionDebounce = null
 let overlayPositionUserSet = false
 let overlayDisplayMetricsListener = null
-let notificationDisplayMetricsListener = null
 // Track update availability for Windows/Linux update button
 let updateAvailable = false
 
@@ -446,6 +444,34 @@ function hideMainWindowIfVisible() {
       mainWindow.hide();
     }
   } catch (e) {}
+}
+
+function installUpdate(payload) {
+  const runAfter = payload && payload.forceRunAfter === true;
+  if (process.platform === 'win32') {
+    autoUpdater.quitAndInstall(false, runAfter);
+  } else {
+    app.isQuitting = true;
+    autoUpdater.quitAndInstall();
+  }
+}
+
+function dispatchNotificationAction(action) {
+  const channel = action && action.channel;
+  const payload = action && action.payload;
+  if (!channel) return;
+
+  if (channel === 'resumeRecording') {
+    startRecording();
+    return;
+  }
+
+  if (channel === 'update:install') {
+    installUpdate(payload);
+    return;
+  }
+
+  log.warn('Unknown desktop notification action channel:', channel);
 }
 
 ////// AUTOUPDATER /////
@@ -876,114 +902,27 @@ app.whenReady().then(async () => {
   // Background notification handlers
   ipcMain.on('background:notify', (_event, payload) => {
     try {
-      const showNotification = () => {
-        if (!notificationWindow || notificationWindow.isDestroyed()) return;
-        
-        // Position window before showing
-        const isPlatformWindows = process.platform === 'win32';
-        const margin = 20;
-        try {
-          const cursorPoint = screen.getCursorScreenPoint();
-          const targetDisplay = screen.getDisplayNearestPoint(cursorPoint) || screen.getPrimaryDisplay();
-          const work = targetDisplay.workArea;
-          const bounds = notificationWindow.getBounds();
-          
-          if (isPlatformWindows) {
-            notificationWindow.setPosition(
-              Math.floor(work.x + work.width - bounds.width - margin),
-              Math.floor(work.y + work.height - bounds.height - margin)
-            );
-          } else {
-            notificationWindow.setPosition(
-              Math.floor(work.x + work.width - bounds.width - margin),
-              Math.floor(work.y + margin)
-            );
-          }
-        } catch (e) {}
-        
-        // Send payload first, then show window after a brief delay to ensure content is set
-        notificationWindow.webContents.send('background:notify', payload);
-        
-        // Small delay to ensure renderer has processed the message before showing
-        setTimeout(() => {
-          if (notificationWindow && !notificationWindow.isDestroyed()) {
-            // Show without taking focus whenever the API is available.
-            if (typeof notificationWindow.showInactive === 'function') {
-              notificationWindow.showInactive();
-            } else {
-              notificationWindow.show();
-            }
-          }
-        }, 50);
-      };
+      const { title, message, action } = payload || {};
+      const notification = new Notification({
+        title: title || 'DoneThat',
+        body: message || '',
+        icon: iconRecordingPath
+      });
 
-      if (!notificationWindow || notificationWindow.isDestroyed()) {
-        createNotificationWindow();
-        // Wait for window to be ready before showing
-        if (notificationWindow) {
-          notificationWindow.once('ready-to-show', () => {
-            showNotification();
-          });
-        }
-      } else {
-        // Window already exists, show immediately
-        showNotification();
+      if (action && action.channel) {
+        notification.on('click', () => {
+          try { dispatchNotificationAction(action); } catch (e) { log.error('Desktop notification action failed:', e); }
+        });
       }
+
+      notification.show();
     } catch (e) {
-      log.error('Error showing background notification:', e);
+      log.error('Error showing desktop notification:', e);
     }
   });
 
-  ipcMain.on('background:hide', () => {
-    try {
-      if (notificationWindow && !notificationWindow.isDestroyed()) {
-        notificationWindow.hide();
-      }
-    } catch (e) {}
-  });
-
-  ipcMain.on('notification:action', (event, data) => {
-    try {
-      const { channel, payload } = data || {};
-      if (channel) {
-        // Forward action to main window for processing
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send(channel, payload || null);
-        }
-      }
-    } catch (e) {
-      log.error('Error handling notification action:', e);
-    }
-  });
-
-  ipcMain.on('notification:close', () => {
-    try {
-      if (notificationWindow && !notificationWindow.isDestroyed()) {
-        notificationWindow.hide();
-      }
-    } catch (e) {}
-  });
-
-  ipcMain.on('notification:ready', () => {
-    try {
-      if (notificationWindow && !notificationWindow.isDestroyed()) {
-        // Window is ready, can adjust size if needed
-        const bounds = notificationWindow.getBounds();
-        notificationWindow.setSize(bounds.width, bounds.height, false);
-      }
-    } catch (e) {}
-  });
-
-  ipcMain.on('notification:content-height', (_event, contentHeight) => {
-    try {
-      if (notificationWindow && !notificationWindow.isDestroyed()) {
-        // Resize window to fit content (add small buffer for safety)
-        const width = notificationWindow.getBounds().width;
-        const newHeight = Math.max(100, contentHeight + 10); // min 100px, add 10px buffer
-        notificationWindow.setSize(width, newHeight, false);
-      }
-    } catch (e) {}
-  });
+  // Native notifications are OS-managed and cannot be programmatically hidden.
+  ipcMain.on('background:hide', () => {});
 
   // Check if main window is focused
   ipcMain.handle('check-main-window-focus', () => {
@@ -1037,14 +976,7 @@ app.whenReady().then(async () => {
   // IPC to install update from in-app notification or update button
   ipcMain.on('update:install', (_event, payload) => {
     try {
-      const runAfter = payload && payload.forceRunAfter === true;
-      // Windows: silent flag true for runAfter
-      if (process.platform === 'win32') {
-        autoUpdater.quitAndInstall(false, runAfter);
-      } else {
-        app.isQuitting = true;
-        autoUpdater.quitAndInstall();
-      }
+      installUpdate(payload);
     } catch (e) { log.error('Failed to install update from banner:', e); }
   });
 
@@ -1688,7 +1620,6 @@ function checkAndAdjustRecording() {
 // Add IPC handler for resume action
 ipcMain.on('resumeRecording', (event) => {
   startRecording();
-  createApplicationMenu(); // Update menu after resume
 });
 
 ipcMain.handle('get-platform-info', () => {
@@ -2041,101 +1972,6 @@ function createOverlayWindow() {
         }
       }
       screen.on('display-metrics-changed', overlayDisplayMetricsListener)
-    }
-  }
-}
-
-// Notification window setup
-function createNotificationWindow() {
-  if (!notificationWindow) {
-    const isPlatformMac = process.platform === 'darwin';
-    const isPlatformWindows = process.platform === 'win32';
-    const margin = 20;
-    const defaultWidth = 350;
-    const defaultHeight = 100; // Will be adjusted based on content
-    
-    let initX, initY;
-    try {
-      const cursorPoint = screen.getCursorScreenPoint();
-      const targetDisplay = screen.getDisplayNearestPoint(cursorPoint) || screen.getPrimaryDisplay();
-      const work = targetDisplay.workArea;
-      
-      if (isPlatformWindows) {
-        // Windows: bottom-right
-        initX = Math.floor(work.x + work.width - defaultWidth - margin);
-        initY = Math.floor(work.y + work.height - defaultHeight - margin);
-      } else {
-        // Mac/Linux: top-right
-        initX = Math.floor(work.x + work.width - defaultWidth - margin);
-        initY = Math.floor(work.y + margin);
-      }
-    } catch (e) {}
-
-    notificationWindow = new BrowserWindow({
-      width: defaultWidth,
-      height: defaultHeight,
-      x: initX,
-      y: initY,
-      frame: false,
-      resizable: false,
-      movable: false,
-      show: false,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      focusable: false,
-      fullscreenable: false,
-      transparent: true,
-      backgroundColor: '#00000000',
-      webPreferences: {
-        nodeIntegration: false,    // SECURED
-        contextIsolation: true,    // SECURED
-        partition: 'persist:donethat',
-        sandbox: true,             // SECURED
-        preload: path.join(__dirname, 'src-main', 'preload.js'), // NEW PRELOAD
-        backgroundThrottling: true
-      },
-      ...(isPlatformMac ? { visibleOnAllWorkspaces: true } : {})
-    });
-
-    notificationWindow.loadFile('./src/notification.html');
-
-    notificationWindow.webContents.once('did-finish-load', () => {
-      applyLiquidGlass(notificationWindow, { cornerRadius: 12 });
-    });
-
-    notificationWindow.on('closed', () => {
-      if (notificationDisplayMetricsListener) {
-        try { screen.removeListener('display-metrics-changed', notificationDisplayMetricsListener) } catch (_) {}
-        notificationDisplayMetricsListener = null
-      }
-      notificationWindow = null;
-    });
-
-    // Reposition on display changes
-    if (!notificationDisplayMetricsListener) {
-      notificationDisplayMetricsListener = () => {
-        if (notificationWindow && !notificationWindow.isDestroyed()) {
-          try {
-            const cursorPoint = screen.getCursorScreenPoint();
-            const targetDisplay = screen.getDisplayNearestPoint(cursorPoint) || screen.getPrimaryDisplay();
-            const work = targetDisplay.workArea;
-            const bounds = notificationWindow.getBounds();
-
-            if (isPlatformWindows) {
-              notificationWindow.setPosition(
-                Math.floor(work.x + work.width - bounds.width - margin),
-                Math.floor(work.y + work.height - bounds.height - margin)
-              );
-            } else {
-              notificationWindow.setPosition(
-                Math.floor(work.x + work.width - bounds.width - margin),
-                Math.floor(work.y + margin)
-              );
-            }
-          } catch (e) {}
-        }
-      }
-      screen.on('display-metrics-changed', notificationDisplayMetricsListener)
     }
   }
 }
