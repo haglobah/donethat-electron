@@ -472,7 +472,7 @@ async function analyzeScreenshots(screenshots, previousScreenshots, activity, au
 /**
  * Submit processed results to Firebase
  */
-async function submitResults(idToken, timestamp, structured, parameters) {
+async function submitResults(idToken, timestamp, structured, parameters, clientTelemetry = null) {
   try {
     const fetch = await import('node-fetch').then(module => module.default);
     
@@ -482,6 +482,9 @@ async function submitResults(idToken, timestamp, structured, parameters) {
       structured: structured,
       parameters: parameters
     };
+    if (clientTelemetry) {
+      payload.clientTelemetry = clientTelemetry
+    }
     
     const headers = {
       'Content-Type': 'application/json',
@@ -526,7 +529,7 @@ async function submitResults(idToken, timestamp, structured, parameters) {
  * Main function to process data locally
  * @param {string} idToken Firebase ID token
  * @param {Array} screenshots Screenshot data (with diff bounding boxes already applied)
- * @param {Object} inputData Input data (audio, windows, etc.). May include previousScreenshotData for LLM context.
+ * @param {Object} inputData Input data (audio, windows, etc.). May include previousScreenshotData/clientTelemetry.
  * @param {boolean} testMode If true, skip Firebase submission
  */
 async function processDataLocally(idToken, screenshots, inputData, testMode = false) {
@@ -619,7 +622,8 @@ async function processDataLocally(idToken, screenshots, inputData, testMode = fa
       idToken,
       originalTs,
       structured,
-      paramsToSend
+      paramsToSend,
+      inputData?.clientTelemetry || null
     );
 
     return { ...result, structured, parameters: paramsToSend };

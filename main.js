@@ -16,7 +16,7 @@ if (process.platform === 'linux') {
   }
 }
 
-const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification, powerMonitor, globalShortcut, session, desktopCapturer } = require('electron')
+const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification, powerMonitor, globalShortcut, session } = require('electron')
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
@@ -55,6 +55,8 @@ const {
 } = require('./src-main/capture')
 const { startContextCapture, stopContextCapture } = require('./src-main/contextCapture')
 const { initState } = require('./src-main/main-state')
+const { getScreenSources } = require('./src-main/screenCaptureSemaphore')
+const { recordLog } = require('./src-main/telemetry')
 
 // Conditionally load liquid glass with fallback
 let liquidGlass = null;
@@ -208,6 +210,8 @@ let overlayStore = null
 let savedOverlayPosition = null
 let saveOverlayPositionDebounce = null
 let overlayPositionUserSet = false
+let overlayDisplayMetricsListener = null
+let notificationDisplayMetricsListener = null
 // Track update availability for Windows/Linux update button
 let updateAvailable = false
 
@@ -269,6 +273,8 @@ function stopAuthServer() {
 // Track last time we reloaded the embedded webview to avoid excessive reloads
 const RELOAD_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 let lastWebviewReloadAt = 0;
+let mainLogMirrorInstalled = false
+let webContentsLogMirrorInstalled = false
 
 if (DEBUG) {
   // For debugging, replace console with more verbose electron-log
@@ -324,6 +330,90 @@ if (app.isPackaged) {
   log.transports.console.level = 'silly'
   log.transports.file.level = 'silly'
 }
+
+function formatLogArgs(args) {
+  return args
+    .map((arg) => {
+      if (typeof arg === 'string') return arg
+      if (arg instanceof Error) return `${arg.name}: ${arg.message}`
+      try {
+        return JSON.stringify(arg)
+      } catch (_) {
+        return String(arg)
+      }
+    })
+    .join(' ')
+}
+
+function mapRendererConsoleLevel(level) {
+  if (typeof level === 'string') {
+    const normalized = level.toLowerCase()
+    if (normalized === 'error') return 'error'
+    if (normalized === 'warn' || normalized === 'warning') return 'warn'
+    if (normalized === 'debug' || normalized === 'verbose') return 'debug'
+    return 'info'
+  }
+  if (level === 2) return 'error'
+  if (level === 1) return 'warn'
+  if (level === 3) return 'debug'
+  return 'info'
+}
+
+function trimUrl(url) {
+  if (!url || typeof url !== 'string') return ''
+  try {
+    const parsed = new URL(url)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch (_) {
+    return url.split('?')[0].slice(0, 180)
+  }
+}
+
+function setupMainLogMirror() {
+  if (mainLogMirrorInstalled) return
+  mainLogMirrorInstalled = true
+  const levels = ['error', 'warn', 'info', 'debug', 'verbose', 'silly']
+  for (const level of levels) {
+    if (typeof log[level] !== 'function') continue
+    const original = log[level].bind(log)
+    log[level] = (...args) => {
+      try {
+        recordLog(level, 'main', formatLogArgs(args))
+      } catch (_) {}
+      return original(...args)
+    }
+  }
+}
+
+function setupWebContentsLogMirror() {
+  if (webContentsLogMirrorInstalled) return
+  webContentsLogMirrorInstalled = true
+  app.on('web-contents-created', (_event, contents) => {
+    try {
+      contents.on('console-message', (event) => {
+        try {
+          const level = event?.level
+          const message = typeof event?.message === 'string' ? event.message : String(event?.message || '')
+          const lineNumber = event?.lineNumber
+          const sourceId = event?.sourceId
+          const type = typeof contents.getType === 'function' ? contents.getType() : 'unknown'
+          const source = `renderer:${type}:${contents.id}`
+          const meta = {}
+          if (lineNumber) meta.line = String(lineNumber)
+          if (sourceId) meta.sourceId = String(sourceId).split('?')[0].slice(0, 180)
+          if (typeof contents.getURL === 'function') {
+            const currentUrl = trimUrl(contents.getURL())
+            if (currentUrl) meta.url = currentUrl
+          }
+          recordLog(mapRendererConsoleLevel(level), source, message, meta)
+        } catch (_) {}
+      })
+    } catch (_) {}
+  })
+}
+
+setupMainLogMirror()
+setupWebContentsLogMirror()
 
 // Global hook: surface ERROR logs as non-sticky in-app notifications
 // Only enable this behavior in DEBUG mode to avoid disruptive overlays in production
@@ -532,11 +622,11 @@ ipcMain.on('focus-app-window', (event) => {
 
 ipcMain.handle('checkWindowsPermission', async () => {
   try {
-    let hasPermission = await checkWindowsPermission();
+    let hasPermission = await checkWindowsPermission('explicit-check');
     if (!hasPermission) {
       for (let attempt = 0; attempt < 2; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 500));
-        hasPermission = await checkWindowsPermission();
+        hasPermission = await checkWindowsPermission('explicit-check-recheck');
         if (hasPermission) break;
       }
     }
@@ -635,7 +725,20 @@ app.whenReady().then(async () => {
         return
       }
 
-      const sources = await desktopCapturer.getSources({ types: ['screen'] })
+      const sources = await getScreenSources(
+        { types: ['screen'] },
+        {
+          wait: true,
+          timeoutMs: 10000,
+          caller: 'display_media'
+        }
+      )
+      if (!sources) {
+        log.warn('Timed out waiting for screen capture lock in display media request')
+        callback({ video: null, audio: null })
+        return
+      }
+
       if (!sources || sources.length === 0) {
         log.warn('No screen sources available for display media request')
         callback({ video: null, audio: null })
@@ -910,7 +1013,7 @@ app.whenReady().then(async () => {
   setupAutoStart();
   
   // Check screen capture permission (do not block window creation earlier)
-  await checkScreenCapturePermission()
+  await checkScreenCapturePermission('startup')
   
   // Initial state check and schedule daily check
   checkAndAdjustRecording();
@@ -1019,7 +1122,7 @@ ipcMain.handle('overlay:get-state', () => {
   ipcMain.handle('chat:capture-screenshot', async () => {
     try {
       const { captureScreenshot } = require('./src-main/captureScreenshots');
-      const screenshots = await captureScreenshot();
+      const screenshots = await captureScreenshot({ caller: 'chat' });
       
       // The screenshots are already processed by processScreenshotForUpload()
       // and returned as optimized JPEG data URLs, so we can use them directly
@@ -1684,12 +1787,6 @@ function createWindow() {
     if (DEBUG) {
       mainWindow.webContents.openDevTools();
     }
-    // Log any webContents errors (only in debug mode)
-    if (DEBUG) {
-      mainWindow.webContents.on('console-message', (event) => {
-        console.log('Renderer Console:', event.message);
-      });
-    }
 
     // Position the window once it's ready.
     mainWindow.once('ready-to-show', async () => {
@@ -1712,7 +1809,7 @@ function createWindow() {
 
       // Passive initial check for Windows (active apps) permission and notify renderer
       try {
-        const winPerm = await checkWindowsPermission();
+        const winPerm = await checkWindowsPermission('initial-passive-check');
         stateManager?.updateWindowsPermission(winPerm);
         try { mainWindow.webContents.send('windowsPermission', { hasPermission: !!winPerm, source: 'initial-passive-check' }); } catch (e) {}
       } catch (e) {}
@@ -1859,7 +1956,7 @@ function createOverlayWindow() {
         partition: 'persist:donethat',
         sandbox: true,             // SECURED
         preload: path.join(__dirname, 'src-main', 'preload.js'), // NEW PRELOAD
-        backgroundThrottling: false,
+        backgroundThrottling: true,
         spellcheck: true
       },
       ...(isPlatformMac ? { visibleOnAllWorkspaces: true, acceptFirstMouse: true } : {})
@@ -1870,9 +1967,6 @@ function createOverlayWindow() {
     // Debug inspector and console piping for overlay (same as main window)
     if (DEBUG) {
       overlayWindow.webContents.openDevTools();
-      overlayWindow.webContents.on('console-message', (event) => {
-        console.log('Overlay Console:', event.message);
-      });
     }
 
     overlayWindow.once('ready-to-show', () => {
@@ -1896,6 +1990,10 @@ function createOverlayWindow() {
     // Removed focus event that was causing auto-expansion on drag
 
     overlayWindow.on('closed', () => {
+      if (overlayDisplayMetricsListener) {
+        try { screen.removeListener('display-metrics-changed', overlayDisplayMetricsListener) } catch (_) {}
+        overlayDisplayMetricsListener = null
+      }
       overlayWindow = null
     })
 
@@ -1936,11 +2034,14 @@ function createOverlayWindow() {
       }
     });
 
-    screen.on('display-metrics-changed', () => {
-      if (overlayWindow && overlayWindow.isVisible()) {
-        positionOverlayWindow()
+    if (!overlayDisplayMetricsListener) {
+      overlayDisplayMetricsListener = () => {
+        if (overlayWindow && overlayWindow.isVisible()) {
+          positionOverlayWindow()
+        }
       }
-    })
+      screen.on('display-metrics-changed', overlayDisplayMetricsListener)
+    }
   }
 }
 
@@ -1991,7 +2092,7 @@ function createNotificationWindow() {
         partition: 'persist:donethat',
         sandbox: true,             // SECURED
         preload: path.join(__dirname, 'src-main', 'preload.js'), // NEW PRELOAD
-        backgroundThrottling: false
+        backgroundThrottling: true
       },
       ...(isPlatformMac ? { visibleOnAllWorkspaces: true } : {})
     });
@@ -2003,32 +2104,39 @@ function createNotificationWindow() {
     });
 
     notificationWindow.on('closed', () => {
+      if (notificationDisplayMetricsListener) {
+        try { screen.removeListener('display-metrics-changed', notificationDisplayMetricsListener) } catch (_) {}
+        notificationDisplayMetricsListener = null
+      }
       notificationWindow = null;
     });
 
     // Reposition on display changes
-    screen.on('display-metrics-changed', () => {
-      if (notificationWindow && !notificationWindow.isDestroyed()) {
-        try {
-          const cursorPoint = screen.getCursorScreenPoint();
-          const targetDisplay = screen.getDisplayNearestPoint(cursorPoint) || screen.getPrimaryDisplay();
-          const work = targetDisplay.workArea;
-          const bounds = notificationWindow.getBounds();
-          
-          if (isPlatformWindows) {
-            notificationWindow.setPosition(
-              Math.floor(work.x + work.width - bounds.width - margin),
-              Math.floor(work.y + work.height - bounds.height - margin)
-            );
-          } else {
-            notificationWindow.setPosition(
-              Math.floor(work.x + work.width - bounds.width - margin),
-              Math.floor(work.y + margin)
-            );
-          }
-        } catch (e) {}
+    if (!notificationDisplayMetricsListener) {
+      notificationDisplayMetricsListener = () => {
+        if (notificationWindow && !notificationWindow.isDestroyed()) {
+          try {
+            const cursorPoint = screen.getCursorScreenPoint();
+            const targetDisplay = screen.getDisplayNearestPoint(cursorPoint) || screen.getPrimaryDisplay();
+            const work = targetDisplay.workArea;
+            const bounds = notificationWindow.getBounds();
+
+            if (isPlatformWindows) {
+              notificationWindow.setPosition(
+                Math.floor(work.x + work.width - bounds.width - margin),
+                Math.floor(work.y + work.height - bounds.height - margin)
+              );
+            } else {
+              notificationWindow.setPosition(
+                Math.floor(work.x + work.width - bounds.width - margin),
+                Math.floor(work.y + margin)
+              );
+            }
+          } catch (e) {}
+        }
       }
-    });
+      screen.on('display-metrics-changed', notificationDisplayMetricsListener)
+    }
   }
 }
 
@@ -2226,9 +2334,9 @@ function stopRecording() {
 }
 
 // Function to check screen capture permission
-async function checkScreenCapturePermission() {
+async function checkScreenCapturePermission(source = 'runtime') {
   // Get current permission status from OS-level APIs
-  const hasPermission = await moduleCheckPermission();
+  const hasPermission = await moduleCheckPermission(source);
   
   // If permission check was skipped (returned undefined), use cached state
   if (hasPermission === undefined) {
@@ -2251,7 +2359,7 @@ async function checkScreenCapturePermission() {
 
 // Also update the explicit permission check handler
 ipcMain.on('checkScreenCapturePermission', async () => {
-  await checkScreenCapturePermission();
+  await checkScreenCapturePermission('explicit-check');
 
   if (mainWindow) {
     // Send permission status from state manager

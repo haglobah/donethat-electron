@@ -13,6 +13,7 @@ const REPEAT_MS = 60 * 1000
 
 let dwellState = null
 let getIdTokenFn = null
+let contextCaptureInFlight = false
 
 function getWindowId(window) {
   if (!window?.appName) return null
@@ -33,7 +34,7 @@ async function getContextConfig() {
 
 async function captureContextForActiveWindow(activeWin) {
   try {
-    const screenshots = await captureScreenshot()
+    const screenshots = await captureScreenshot({ caller: 'context' })
     if (!screenshots || screenshots.length === 0) {
       return null
     }
@@ -199,13 +200,19 @@ async function onActiveWindowTracked(activeWindowInfo) {
     const sinceLastCapture = now - dwellState.lastCaptureAt
     const shouldCapture = dwellState.lastCaptureAt === 0 || sinceLastCapture >= REPEAT_MS
     if (!shouldCapture) return
+    if (contextCaptureInFlight) return
 
-    const item = await captureContextForActiveWindow(activeWindowInfo)
-    if (item) {
-      dwellState.lastCaptureAt = now
-      await saveContextDump([item])
-      const token = getIdTokenFn ? getIdTokenFn() : null
-      if (token) sendContextToApi(token, [item]).catch(() => {})
+    contextCaptureInFlight = true
+    dwellState.lastCaptureAt = now
+    try {
+      const item = await captureContextForActiveWindow(activeWindowInfo)
+      if (item) {
+        await saveContextDump([item])
+        const token = getIdTokenFn ? getIdTokenFn() : null
+        if (token) sendContextToApi(token, [item]).catch(() => {})
+      }
+    } finally {
+      contextCaptureInFlight = false
     }
   } catch (err) {
   }
@@ -218,6 +225,7 @@ function startContextCapture(getIdToken) {
 function stopContextCapture() {
   dwellState = null
   getIdTokenFn = null
+  contextCaptureInFlight = false
 }
 
 module.exports = { startContextCapture, stopContextCapture, onActiveWindowTracked }

@@ -1,6 +1,7 @@
 const log = require('electron-log')
 const { activeWindow, openWindows } = require('get-windows')
 const { systemPreferences, ipcMain, shell, app, screen } = require('electron')
+const { recordPermissionCheck, recordActiveWindowProbeTimeout } = require('./telemetry')
 
 // Helper to normalize app name
 function normalizeAppName(appName) {
@@ -157,22 +158,66 @@ let firstPermissionDeniedAt = 0 // Timestamp when permission first went false; 0
 // References to communicate permission/state changes without prompting the OS
 let stateManagerRef = null
 let mainWindowRef = null
+let windowsPermissionFocusListener = null
 
 // Separate cache for z-order approximation: window ID -> last activity timestamp
 // Window ID is: normalizedAppName|title (bounds excluded for stability)
 // This is independent of the main timeline and never gets cleared
 let zOrderCache = new Map() // Map<windowId, timestamp>
+const ACTIVE_WINDOW_TIMEOUT = Symbol('active-window-timeout')
+let activeWindowProbePromise = null
+let activeWindowProbeTimeoutStreak = 0
+let activeWindowProbeCooldownUntil = 0
 
 // Helper: call activeWindow with a hard timeout to avoid hangs/crashes
 async function safeActiveWindow(timeoutMs = 300) {
+  const now = Date.now()
+  if (now < activeWindowProbeCooldownUntil) {
+    recordActiveWindowProbeTimeout()
+    return ACTIVE_WINDOW_TIMEOUT
+  }
+
+  if (activeWindowProbePromise) {
+    return activeWindowProbePromise
+  }
+
+  activeWindowProbePromise = (async () => {
+    let timeoutId = null
+    try {
+      const result = await Promise.race([
+        activeWindow(),
+        new Promise((resolve) => {
+          timeoutId = setTimeout(() => resolve(ACTIVE_WINDOW_TIMEOUT), timeoutMs)
+        })
+      ])
+
+      if (result === ACTIVE_WINDOW_TIMEOUT) {
+        recordActiveWindowProbeTimeout()
+        activeWindowProbeTimeoutStreak = Math.min(activeWindowProbeTimeoutStreak + 1, 6)
+        const cooldownMs = Math.min(250 * Math.pow(2, activeWindowProbeTimeoutStreak - 1), 8000)
+        activeWindowProbeCooldownUntil = Date.now() + cooldownMs
+        return ACTIVE_WINDOW_TIMEOUT
+      }
+
+      activeWindowProbeTimeoutStreak = 0
+      activeWindowProbeCooldownUntil = 0
+      return result
+    } catch (_) {
+      activeWindowProbeTimeoutStreak = Math.min(activeWindowProbeTimeoutStreak + 1, 6)
+      const cooldownMs = Math.min(250 * Math.pow(2, activeWindowProbeTimeoutStreak - 1), 8000)
+      activeWindowProbeCooldownUntil = Date.now() + cooldownMs
+      return null
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+    }
+  })()
+
   try {
-    const result = await Promise.race([
-      activeWindow(),
-      new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs))
-    ])
-    return result
-  } catch (_) {
-    return null
+    return await activeWindowProbePromise
+  } finally {
+    activeWindowProbePromise = null
   }
 }
 
@@ -180,24 +225,34 @@ async function safeActiveWindow(timeoutMs = 300) {
  * Checks if the application has permission to access window information
  * @returns {Promise<boolean>} True if permissions are granted, false otherwise
  */
-async function checkPermissions() {
+async function checkPermissions(source = 'runtime') {
+  const startedAt = Date.now()
   try {
     // On macOS, rely on the Accessibility trust state which is stable across focus changes
     if (process.platform === 'darwin') {
       const isTrusted = systemPreferences.isTrustedAccessibilityClient(false)
       // If accessibility is trusted, treat permission as granted even if the probe fails transiently
       if (isTrusted) {
+        recordPermissionCheck('windows', source, 'granted', Date.now() - startedAt)
         return true
       }
+      recordPermissionCheck('windows', source, 'denied', Date.now() - startedAt)
       return false
     }
 
     // Other platforms: best effort probe
     const result = await safeActiveWindow(300)
-    return result !== null
+    if (result === ACTIVE_WINDOW_TIMEOUT) {
+      recordPermissionCheck('windows', source, 'granted', Date.now() - startedAt)
+      return true
+    }
+    const hasPermission = result !== null
+    recordPermissionCheck('windows', source, hasPermission ? 'granted' : 'denied', Date.now() - startedAt)
+    return hasPermission
   } catch (error) {
     // Treat probe failures as transient errors unless we know permission is denied
     log.warn('Window tracking permission probe failed (treated as transient):', error)
+    recordPermissionCheck('windows', source, 'error', Date.now() - startedAt)
     return process.platform === 'darwin'
       ? systemPreferences.isTrustedAccessibilityClient(false)
       : false
@@ -262,7 +317,7 @@ async function startTracking() {
   }
   
   // First check if we have permission
-  const hasPermission = await checkPermissions()
+  const hasPermission = await checkPermissions('start-tracking')
   if (!hasPermission) {
     const message = 'Permission denied for window tracking. Please grant accessibility permissions in system settings.'
     log.warn('Failed to start window tracking:', message)
@@ -422,7 +477,7 @@ async function recordCurrentWindow() {
       processingRecordWindow = false
       return
     }
-    const hasPerm = await checkPermissions()
+    const hasPerm = await checkPermissions('runtime')
     if (!hasPerm) {
       // Always set a sane cooldown immediately to avoid hammering probes
       const nowTs = Date.now()
@@ -455,6 +510,12 @@ async function recordCurrentWindow() {
     // Permission present again: reset denial window
     firstPermissionDeniedAt = 0
     const activeWindowInfo = await safeActiveWindow(300)
+
+    if (activeWindowInfo === ACTIVE_WINDOW_TIMEOUT) {
+      applyBackoff()
+      processingRecordWindow = false
+      return
+    }
     
     if (!activeWindowInfo) {
       // Still record the timestamp but with empty data
@@ -818,7 +879,7 @@ function getCurrentInterval() {
  */
 async function getAllVisibleWindows() {  
   // Check permissions
-  const hasPerm = await checkPermissions()
+  const hasPerm = await checkPermissions('window-enumeration')
   if (!hasPerm) {
     return []
   }
@@ -924,10 +985,10 @@ function initWindowsPermissionHandling(mainWindow, stateManager, checkAndAdjustR
     // Only open system settings if explicitly requested (user clicked toggle)
     if (shouldOpenSettings === true) {
       try {
-        let alreadyGranted = await checkPermissions()
+        let alreadyGranted = await checkPermissions('request')
         if (!alreadyGranted) {
           await new Promise((resolve) => setTimeout(resolve, 400))
-          const secondCheck = await checkPermissions()
+          const secondCheck = await checkPermissions('request-recheck')
           alreadyGranted = !!(alreadyGranted || secondCheck)
         }
         stateManager?.updateWindowsPermission(!!alreadyGranted)
@@ -947,24 +1008,33 @@ function initWindowsPermissionHandling(mainWindow, stateManager, checkAndAdjustR
         return
       }
       // After opening settings, re-check permission exactly once when the app regains focus
+      if (windowsPermissionFocusListener) {
+        app.removeListener('browser-window-focus', windowsPermissionFocusListener)
+        windowsPermissionFocusListener = null
+      }
+
       const focusListener = async () => {
+        if (windowsPermissionFocusListener === focusListener) {
+          windowsPermissionFocusListener = null
+        }
         app.removeListener('browser-window-focus', focusListener);
         try {
-          const hasPermission = await checkPermissions();
+          const hasPermission = await checkPermissions('focus-recheck');
           stateManager?.updateWindowsPermission(hasPermission);
           if (mainWindow) {
             mainWindow.webContents.send('windowsPermission', { hasPermission: !!hasPermission, source: 'request' });
           }
         } catch (e) {}
       };
+      windowsPermissionFocusListener = focusListener
       app.on('browser-window-focus', focusListener);
     } else {
       // Just check permission without opening settings
       // Harden against transient false by confirming twice before emitting false
-      let hasPermission = await checkPermissions();
+      let hasPermission = await checkPermissions('passive-check');
       if (!hasPermission) {
         try { await new Promise(res => setTimeout(res, 500)); } catch (_) {}
-        const second = await checkPermissions();
+        const second = await checkPermissions('passive-check-recheck');
         hasPermission = hasPermission || second; // only stay false if both checks are false
       }
       stateManager?.updateWindowsPermission(hasPermission);

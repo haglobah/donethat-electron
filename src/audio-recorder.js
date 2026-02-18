@@ -21,7 +21,13 @@ let micInputStream = null;
 let systemInputStreams = [];
 let lastStartOptions = { systemAudio: false };
 let deviceChangeListenerAttached = false;
-let systemTrackRestartInFlight = false;
+let audioRestartInFlight = false;
+let lastAutoRestartAt = 0;
+let autoRestartTimestamps = [];
+
+const AUDIO_RESTART_MIN_INTERVAL_MS = 8000;
+const AUDIO_RESTART_WINDOW_MS = 60 * 1000;
+const AUDIO_RESTART_MAX_PER_WINDOW = 6;
 
 // VAD State & Constants
 let userSpeechIntervals = []; // Array of { startMs, endMs }
@@ -72,9 +78,10 @@ window.initAudioRecorder = function(config = {}) {
   // Add device change listener
   if (!deviceChangeListenerAttached && navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
     navigator.mediaDevices.addEventListener('devicechange', () => {
-      // Restart recording with new default device if we're recording
+      // Only restart on device changes if the current pipeline is unhealthy.
+      // This avoids churn from noisy devicechange events while keeping recovery behavior.
       if (isRecording) {
-        restartAudioRecording();
+        requestAudioRestart('devicechange', { requireUnhealthy: true });
       }
       
       // Notify main process about device change
@@ -87,6 +94,105 @@ window.initAudioRecorder = function(config = {}) {
     deviceChangeListenerAttached = true;
   }
 };
+
+function hasLiveEnabledAudioTrack(stream) {
+  if (!stream || typeof stream.getAudioTracks !== 'function') {
+    return false;
+  }
+
+  const tracks = stream.getAudioTracks();
+  return tracks.some((track) => track.readyState === 'live' && track.enabled);
+}
+
+function isCurrentAudioPipelineHealthy() {
+  if (!isRecording) {
+    return true;
+  }
+
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+    return false;
+  }
+
+  if (!hasLiveEnabledAudioTrack(micInputStream)) {
+    return false;
+  }
+
+  if (lastStartOptions.systemAudio) {
+    const hasLiveSystemInput = systemInputStreams.some((stream) => hasLiveEnabledAudioTrack(stream));
+    if (!hasLiveSystemInput) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function pruneAutoRestartHistory(now) {
+  autoRestartTimestamps = autoRestartTimestamps.filter((ts) => now - ts < AUDIO_RESTART_WINDOW_MS);
+}
+
+function emitAudioRestartTelemetry(reason, action) {
+  try {
+    if (!window.electronAPI || typeof window.electronAPI.send !== 'function') return;
+    window.electronAPI.send('audio-device-changed', {
+      event: 'audio-restart-metric',
+      reason,
+      action
+    });
+  } catch (_) {}
+}
+
+async function requestAudioRestart(reason, options = {}) {
+  const { requireUnhealthy = false } = options;
+  if (!isRecording) {
+    return false;
+  }
+
+  if (requireUnhealthy && isCurrentAudioPipelineHealthy()) {
+    emitAudioRestartTelemetry(reason, 'healthy-skip');
+    return false;
+  }
+
+  if (audioRestartInFlight) {
+    emitAudioRestartTelemetry(reason, 'inflight-skip');
+    return false;
+  }
+
+  const now = Date.now();
+  pruneAutoRestartHistory(now);
+
+  if (now - lastAutoRestartAt < AUDIO_RESTART_MIN_INTERVAL_MS) {
+    emitAudioRestartTelemetry(reason, 'throttled');
+    return false;
+  }
+
+  if (autoRestartTimestamps.length >= AUDIO_RESTART_MAX_PER_WINDOW) {
+    console.warn('Skipping audio restart due to restart rate limit:', reason);
+    emitAudioRestartTelemetry(reason, 'rate-limited');
+    return false;
+  }
+
+  audioRestartInFlight = true;
+  try {
+    emitAudioRestartTelemetry(reason, 'attempt');
+    const restarted = await restartAudioRecording();
+    if (restarted) {
+      const timestamp = Date.now();
+      lastAutoRestartAt = timestamp;
+      autoRestartTimestamps.push(timestamp);
+      emitAudioRestartTelemetry(reason, 'success');
+    } else {
+      emitAudioRestartTelemetry(reason, 'failed');
+    }
+    return restarted;
+  } catch (error) {
+    console.error('Error in guarded audio restart:', reason, error);
+    emitAudioRestartTelemetry(reason, 'error');
+    return false;
+  } finally {
+    audioRestartInFlight = false;
+  }
+}
 
 /**
  * Cleanup Audio Context and Nodes
@@ -327,16 +433,9 @@ window.startAudioRecording = async function(options = {}) {
         systemStream.getTracks().forEach((track) => track.stop());
         throw new Error('System audio loopback track is not live');
       }
-      systemTrack.onended = async () => {
-        if (!isRecording || systemTrackRestartInFlight) return;
-        systemTrackRestartInFlight = true;
-        try {
-          await restartAudioRecording();
-        } catch (e) {
-          console.error('Failed to restart recording after system audio track ended:', e);
-        } finally {
-          systemTrackRestartInFlight = false;
-        }
+      systemTrack.onended = () => {
+        if (!isRecording || !lastStartOptions.systemAudio) return;
+        requestAudioRestart('system-track-ended');
       };
 
       const videoTracks = systemStream.getVideoTracks();
@@ -690,6 +789,9 @@ window.shutdownAudioRecording = async function() {
     audioChunks = [];
     chunkTimestamps = [];
     window.allowAudioResume = false;
+    audioRestartInFlight = false;
+    lastAutoRestartAt = 0;
+    autoRestartTimestamps = [];
   }
 
   const postActive = (() => {

@@ -5,6 +5,15 @@ const { isLocalProcessingAvailable, processDataLocally } = require('./processLoc
 const { applyAppExclusions } = require('./appExclusionMasking');
 const { applyImageDiffBoundingBoxes } = require('./imageDiff');
 const { saveCaptureDump, appendCaptureDump } = require('./captureDump');
+const {
+  beginCycle,
+  endCycle,
+  consumeCompletedCycleTelemetry,
+  requeueCompletedCycleTelemetry,
+  recordCyclePhaseDuration,
+  recordPermissionCheck,
+  recordCaptureCycleSkippedOverlap
+} = require('./telemetry');
 
 // Firebase URL constant
 const FIREBASE_CAPTURE_URL = 'https://europe-west1-donethat.cloudfunctions.net/captureScreenshot';
@@ -20,6 +29,12 @@ let captureIntervalMinutes; // Set in main
 let reauthenticateCallback = null; // Store reauthenticate callback function
 let mainWindowRef = null; // Store mainWindow reference
 let getIdTokenFunction = null; // Store the getIdToken function reference
+let captureCycleInFlight = false;
+let microphonePermissionFocusListener = null;
+let systemAudioPermissionFocusListener = null;
+
+const WINDOW_CACHE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+let lastWindowCacheCleanupAt = 0;
 
 
 // Track input data settings
@@ -153,6 +168,22 @@ async function _startAudioTracking() {
     );
     
     return false;
+  }
+}
+
+async function probePermission(type, source, fn) {
+  const startedAt = Date.now();
+  try {
+    const result = await fn();
+    let outcome = 'unknown';
+    if (result === true) outcome = 'granted';
+    else if (result === false) outcome = 'denied';
+    else if (result === null || result === undefined) outcome = 'skipped_busy';
+    recordPermissionCheck(type, source, outcome, Date.now() - startedAt);
+    return result;
+  } catch (error) {
+    recordPermissionCheck(type, source, 'error', Date.now() - startedAt);
+    throw error;
   }
 }
 
@@ -334,7 +365,7 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
     const { shell } = require('electron');
     const { checkMicrophonePermission } = require('./captureAudio');
     
-    const hasPermission = await checkMicrophonePermission(true);
+    const hasPermission = await probePermission('microphone', 'request', () => checkMicrophonePermission(true));
     
     if (hasPermission) {
       if (mainWindow) {
@@ -368,16 +399,25 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
     
     // Check permission on focus
     const app = require('electron').app;
+    if (microphonePermissionFocusListener) {
+      app.removeListener('browser-window-focus', microphonePermissionFocusListener);
+      microphonePermissionFocusListener = null;
+    }
+
     const focusListener = async () => {
+      if (microphonePermissionFocusListener === focusListener) {
+        microphonePermissionFocusListener = null;
+      }
       app.removeListener('browser-window-focus', focusListener);
       
-      const newHasPermission = await checkMicrophonePermission(true);
+      const newHasPermission = await probePermission('microphone', 'focus-recheck', () => checkMicrophonePermission(true));
       
       if (mainWindow) {
         mainWindow.webContents.send('microphonePermission', { hasPermission: !!newHasPermission, source: 'request' });
       }
     };
     
+    microphonePermissionFocusListener = focusListener;
     app.on('browser-window-focus', focusListener);
   });
 
@@ -388,7 +428,7 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
     
     // System audio is part of screen recording permission on macOS
     if (process.platform === 'darwin') {
-      const hasSystemAudioPermission = await checkSystemAudioPermission();
+      const hasSystemAudioPermission = await probePermission('systemAudio', 'request', () => checkSystemAudioPermission());
       if (hasSystemAudioPermission === null) {
         // Permission check was skipped/in-progress; keep current UI state.
         return;
@@ -422,15 +462,24 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
     
     // Check permission on focus (for macOS/Windows)
     const app = require('electron').app;
+    if (systemAudioPermissionFocusListener) {
+      app.removeListener('browser-window-focus', systemAudioPermissionFocusListener);
+      systemAudioPermissionFocusListener = null;
+    }
+
     const focusListener = async () => {
+      if (systemAudioPermissionFocusListener === focusListener) {
+        systemAudioPermissionFocusListener = null;
+      }
       app.removeListener('browser-window-focus', focusListener);
       
       if (!mainWindow) return;
-      const hasSystemAudioPermission = await checkSystemAudioPermission();
+      const hasSystemAudioPermission = await probePermission('systemAudio', 'focus-recheck', () => checkSystemAudioPermission());
       if (hasSystemAudioPermission === null) return;
       mainWindow.webContents.send('systemAudioPermission', { hasPermission: !!hasSystemAudioPermission, source: 'request' });
     };
     
+    systemAudioPermissionFocusListener = focusListener;
     app.on('browser-window-focus', focusListener);
   });
 
@@ -559,7 +608,7 @@ async function collectInputData(resetBuffers = true) {
  * @param {Object} inputData Additional input data to send (audio, windows)
  * @returns {Promise<Object|boolean>} Response status
  */
-async function _sendToServer(idToken, screenshots, inputData = {}, previousScreenshotData = null) {
+async function _sendToServer(idToken, screenshots, inputData = {}, previousScreenshotData = null, clientTelemetry = null) {
   if (!idToken) {
     if (reauthenticateCallback) {
       log.warn('_sendToServer: Calling reauthenticate callback with authError (no token).'); // Keep specific warning
@@ -574,7 +623,7 @@ async function _sendToServer(idToken, screenshots, inputData = {}, previousScree
     
     if (localProcessingAvailable) {
       try {
-        const result = await processDataLocally(idToken, screenshots, { ...inputData, previousScreenshotData });
+        const result = await processDataLocally(idToken, screenshots, { ...inputData, previousScreenshotData, clientTelemetry });
         return result;
       } catch (error) {
         // Handle local processing auth errors consistently with cloud path
@@ -609,6 +658,9 @@ async function _sendToServer(idToken, screenshots, inputData = {}, previousScree
         screenshots: screenshots,
         previousScreenshotData: previousScreenshotData || null
       };
+      if (clientTelemetry) {
+        payload.clientTelemetry = clientTelemetry;
+      }
       
       if (inputData) {
         if (inputData.audioChunks && inputData.audioChunks.length > 0) {
@@ -705,9 +757,10 @@ async function captureAndSend(idToken) {
 
     // Capture screenshots only if enabled
     let screenshots = [];
+    const screenshotPhaseStartedAt = Date.now();
     if (inputDataSettings.screen !== false) {
       try {
-        screenshots = await captureScreenshot();
+        screenshots = await captureScreenshot({ caller: 'periodic' });
         resetFailureStreak('screen');
       } catch (error) {
         captureErrors.screen = true;
@@ -733,6 +786,7 @@ async function captureAndSend(idToken) {
     } catch (error) {
       log.warn('Error applying image diff bounding boxes:', error);
     }
+    recordCyclePhaseDuration('screenshot', Date.now() - screenshotPhaseStartedAt);
 
     if (!screenshots || screenshots.length === 0) {
         // No screenshots captured, continuing with other data
@@ -740,7 +794,7 @@ async function captureAndSend(idToken) {
 
     if (inputDataSettings.screen !== false && (!screenshots || screenshots.length === 0)) {
       try {
-        const hasScreenPermission = await checkScreenCapturePermission();
+        const hasScreenPermission = await checkScreenCapturePermission('capture-cycle');
         if (hasScreenPermission === false) {
           captureErrors.screen = true;
         }
@@ -748,7 +802,9 @@ async function captureAndSend(idToken) {
     }
 
     // Get input data while resetting buffers
+    const inputCollectionStartedAt = Date.now();
     const inputData = await collectInputData(true);
+    recordCyclePhaseDuration('input_collection', Date.now() - inputCollectionStartedAt);
     const moduleErrors = inputData.captureErrors || {};
     captureErrors.windows = !!moduleErrors.windows;
     captureErrors.microphone = !!moduleErrors.microphone;
@@ -808,7 +864,13 @@ async function captureAndSend(idToken) {
       log.warn('[capture] Capture dump save failed:', e?.message)
     }
 
-    const sendResult = await _sendToServer(idToken, screenshots, inputData, previousForUpload)
+    const clientTelemetry = consumeCompletedCycleTelemetry()
+    const sendStartedAt = Date.now();
+    const sendResult = await _sendToServer(idToken, screenshots, inputData, previousForUpload, clientTelemetry)
+    recordCyclePhaseDuration('send', Date.now() - sendStartedAt);
+    if (clientTelemetry && sendResult === false) {
+      requeueCompletedCycleTelemetry(clientTelemetry)
+    }
 
     if (dumpDir && sendResult?.structured) {
       try {
@@ -923,24 +985,55 @@ function handleCaptureError(error, context, captureErrors = null, stopCapture = 
   }
 }
 
+async function maybeCleanupWindowCache() {
+  if (!inputDataSettings.windows) {
+    return;
+  }
+
+  const now = Date.now();
+  if ((now - lastWindowCacheCleanupAt) < WINDOW_CACHE_CLEANUP_INTERVAL_MS) {
+    return;
+  }
+
+  lastWindowCacheCleanupAt = now;
+  try {
+    await windowsCapture.getAllVisibleWindows();
+  } catch (error) {
+    log.warn('[windows] Periodic cache cleanup failed:', error?.message || error);
+  }
+}
+
 // Internal function to run a single capture cycle
 async function _runCaptureCycle() {
-  // Fetch the current token *inside* the cycle
-  const currentIdToken = getIdTokenFunction ? getIdTokenFunction() : null;
-  
-  // Check if token exists before proceeding
-  if (!currentIdToken) {
+  if (captureCycleInFlight) {
+    log.warn('_runCaptureCycle: Previous cycle still running; skipping overlap.');
+    recordCaptureCycleSkippedOverlap();
+    return;
+  }
+
+  captureCycleInFlight = true;
+  beginCycle({ captureIntervalMin: captureIntervalMinutes });
+  let cycleStatus = 'success';
+  let cycleAuthError = false;
+  let cycleTokenExpired = false;
+  try {
+    // Fetch the current token *inside* the cycle
+    const currentIdToken = getIdTokenFunction ? getIdTokenFunction() : null;
+
+    // Check if token exists before proceeding
+    if (!currentIdToken) {
       log.warn('_runCaptureCycle: No ID token available. Skipping capture cycle.');
       // Optionally, trigger re-authentication or stop interval if needed
       // For now, just skip this cycle
       // Re-evaluate if stopping is better - currently relies on _sendToServer detecting lack of token
       if (reauthenticateCallback) {
-          reauthenticateCallback({ authError: true }); // Signal general auth error if no token
+        reauthenticateCallback({ authError: true }); // Signal general auth error if no token
       }
+      cycleStatus = 'auth_error';
+      cycleAuthError = true;
       return; // Exit the cycle
-  }
+    }
 
-  try {
     // Start audio capture if needed
     if (inputDataSettings.audio && !audioCapture.getStatus().tracking) {
       await _startAudioTracking();
@@ -953,11 +1046,32 @@ async function _runCaptureCycle() {
 
     // Capture and send data, passing the fetched token
     const result = await captureAndSend(currentIdToken); // Pass currentIdToken
-
+    if (result && typeof result === 'object') {
+      if (result.authError) {
+        cycleStatus = 'auth_error';
+        cycleAuthError = true;
+      } else if (result.tokenExpired) {
+        cycleStatus = 'token_expired';
+        cycleTokenExpired = true;
+      } else if (result.success === false) {
+        cycleStatus = 'send_failed';
+      }
+    } else if (result === false) {
+      cycleStatus = 'send_failed';
+    }
+    await maybeCleanupWindowCache();
   } catch (error) {
     // Handle errors from captureAndSend or other cycle errors
     log.error('Error during capture cycle:', error);
     handleCaptureError(error, 'capture-cycle', null, false); 
+    cycleStatus = 'error';
+  } finally {
+    endCycle({
+      status: cycleStatus,
+      authError: cycleAuthError,
+      tokenExpired: cycleTokenExpired
+    });
+    captureCycleInFlight = false;
   }
 }
 
@@ -969,6 +1083,8 @@ function startCaptureInterval() {
   // Token is now fetched inside _runCaptureCycle
   // Clear existing interval and stop tracking
   stopCaptureInterval(); // Ensure clean state
+  captureCycleInFlight = false;
+  lastWindowCacheCleanupAt = 0;
   
   // Reset window start retry state on fresh interval start
   if (windowStartRetryTimer) {
@@ -1023,6 +1139,7 @@ function stopCaptureInterval() {
     windowStartRetryTimer = null;
   }
   windowStartRetryCount = 0;
+  captureCycleInFlight = false;
   
   // Stop ongoing captures
   if (inputDataSettings.audio) {

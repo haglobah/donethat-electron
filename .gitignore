@@ -150,6 +150,9 @@ tools/
 # Release
 release/
 
+# Tmp
+tmp/
+
 # DigiCert
 pkcs11properties.config
 Certificate_pkcs12.p12

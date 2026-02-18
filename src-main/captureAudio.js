@@ -1,6 +1,7 @@
 const log = require('electron-log')
 const { ipcMain } = require('electron')
 const audioSessionDetector = require('./audioSessionDetector')
+const { recordAudioRestart } = require('./telemetry')
 
 // Variables to track audio capture
 let isRecording = false
@@ -53,6 +54,10 @@ function initialize(window, config = {}) {
   } catch (_) {}
 
   ipcMain.on('audio-device-changed', (_event, info) => {
+    if (info?.event === 'audio-restart-metric') {
+      recordAudioRestart(info.reason, info.action)
+      return
+    }
     handleDeviceSwitch(info).catch((error) => {
       log.error('Failed to handle audio-device-changed event:', error)
     })
@@ -74,7 +79,7 @@ function initialize(window, config = {}) {
  */
 function initializeSessionDetection(_config) {
   try {
-    const initialized = audioSessionDetector.initialize({ checkIntervalMs: 1000 })
+    const initialized = audioSessionDetector.initialize({ checkIntervalMs: 5000 })
     if (!initialized) {
       log.error('Failed to initialize audio session detector')
       return
@@ -260,9 +265,9 @@ async function checkMicrophonePermissionPassive() {
 
 async function checkSystemAudioPermission() {
   if (process.platform === 'darwin') {
-    const { checkScreenCapturePermission } = require('./captureScreenshots')
+      const { checkScreenCapturePermission } = require('./captureScreenshots')
     try {
-      const result = await checkScreenCapturePermission()
+      const result = await checkScreenCapturePermission('system-audio')
       if (result === undefined) {
         return null
       }

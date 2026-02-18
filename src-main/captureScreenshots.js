@@ -1,7 +1,9 @@
-const { desktopCapturer, nativeImage, screen, ipcMain, shell, app } = require('electron')
+const { nativeImage, screen, ipcMain, shell, app } = require('electron')
 const { execSync } = require('child_process')
 const path = require('path')
 const log = require('electron-log')
+const { getScreenSources } = require('./screenCaptureSemaphore')
+const { recordPermissionCheck } = require('./telemetry')
 
 // Store Linux screenshot command
 let linuxScreenshotCommand = null
@@ -15,8 +17,7 @@ const PREVIOUS_SCREENSHOT_SCALE_FACTOR = 0.5
 // Maximum age factor for previous screenshot (1.5x the capture interval)
 const PREVIOUS_SCREENSHOT_MAX_AGE_FACTOR = 1.5
 
-// Track if desktopCapturer.getSources() is currently in progress to prevent overlapping calls
-let isGrabbingInProgress = false
+let screenPermissionFocusListener = null
 
 ///// UTILITIES /////
 // Function to scale down a screenshot to the configured scale factor
@@ -86,35 +87,38 @@ function saveCurrentScreenshot(screenshots) {
 
 
 // Function to check screen capture permission
-async function checkScreenCapturePermission() {
+async function checkScreenCapturePermission(source = 'unknown') {
+  const startedAt = Date.now()
   try {
     // Linux-specific handling
     if (process.platform === 'linux') {    
       const hasPermission = await checkLinuxScreenCapturePermission()
+      recordPermissionCheck('screen', source, hasPermission ? 'granted' : 'denied', Date.now() - startedAt)
       return hasPermission
     }
     
-    // Skip if already grabbing (permission check should not block or interfere)
-    if (isGrabbingInProgress) {
-      // Return undefined/null to indicate "skipped" rather than false (which implies denied)
-      // Caller should use cached state if this returns undefined
-      return undefined
-    }
-    
     // For other platforms (macOS, Windows)
-    // Set flag to prevent overlapping calls to desktopCapturer.getSources()
-    isGrabbingInProgress = true
-    try {
-      const sources = await desktopCapturer.getSources({
+    const sources = await getScreenSources(
+      {
         types: ['screen'],
         thumbnailSize: { width: 1, height: 1 }
-      })
-      return sources && sources.length > 0
-    } finally {
-      isGrabbingInProgress = false
+      },
+      {
+        wait: true,
+        timeoutMs: 2000,
+        caller: 'permission_probe'
+      }
+    )
+    if (!sources) {
+      recordPermissionCheck('screen', source, 'skipped_busy', Date.now() - startedAt)
+      return undefined
     }
+    const granted = !!(sources && sources.length > 0)
+    recordPermissionCheck('screen', source, granted ? 'granted' : 'denied', Date.now() - startedAt)
+    return granted
   } catch (error) {
     console.error('Error checking screen capture permission:', error)
+    recordPermissionCheck('screen', source, 'error', Date.now() - startedAt)
     return false
   }
 }
@@ -196,66 +200,43 @@ async function checkLinuxScreenCapturePermission() {
 
 ///// MAIN /////
 
-// Helper function to wait with exponential backoff (total wait capped at 10 seconds)
-async function waitWithBackoff(attempt, totalWaited) {
-  const baseDelay = 1000 // 1 second
-  const maxTotalWait = 10000 // 10 seconds total
-  const remainingWait = maxTotalWait - totalWaited
-  if (remainingWait <= 0) {
-    return 0
-  }
-  const delay = Math.min(baseDelay * Math.pow(2, attempt), remainingWait)
-  await new Promise(resolve => setTimeout(resolve, delay))
-  return delay
-}
-
 // Use a single unified method for all platforms - only captures screenshots
-async function captureScreenshot() {
+async function captureScreenshot(options = {}) {
   try {
+    const { caller = 'unknown' } = options
     let screenshots = [];
     
     // Use Linux-specific method on Linux platforms
     if (process.platform === 'linux') {
       screenshots = await captureScreenshotsLinux();
     } else {
-      // Wait with exponential backoff if already grabbing (max 10 seconds total)
-      let attempt = 0
-      let totalWaited = 0
-      const maxTotalWait = 10000 // 10 seconds total
-      while (isGrabbingInProgress && totalWaited < maxTotalWait) {
-        const delay = await waitWithBackoff(attempt, totalWaited)
-        if (delay === 0) break
-        totalWaited += delay
-        attempt++
-      }
-      
-      // Give up if still grabbing after backoff
-      if (isGrabbingInProgress) {
-        log.warn('Screenshot capture skipped - grab still in progress after backoff')
-        return []
-      }
-      
-      // Use the standard Electron approach for other platforms
-      isGrabbingInProgress = true
-      try {
-        const sources = await desktopCapturer.getSources({
+      const sources = await getScreenSources(
+        {
           types: ['screen'],
           thumbnailSize: { width: 1920, height: 1080 }
-        });
-        
-        if (sources.length === 0) {
-          log.warn('No screen sources found');
-          return [];
-        }      
-        // Process each source
-        screenshots = await Promise.all(
-          sources.map(async source => {
-            return await processScreenshotForUpload(source.thumbnail.toDataURL());
-          })
-        );
-      } finally {
-        isGrabbingInProgress = false
+        },
+        {
+          wait: true,
+          timeoutMs: 10000,
+          caller
+        }
+      )
+      if (!sources) {
+        log.warn('Screenshot capture skipped - timed out waiting for shared screen sources')
+        return []
       }
+
+      // Use the standard Electron approach for other platforms
+      if (sources.length === 0) {
+        log.warn('No screen sources found');
+        return [];
+      }
+      // Process each source
+      screenshots = await Promise.all(
+        sources.map(async source => {
+          return await processScreenshotForUpload(source.thumbnail.toDataURL());
+        })
+      );
     }
     
     if (screenshots.length === 0) {
@@ -265,7 +246,6 @@ async function captureScreenshot() {
 
     return screenshots;
   } catch (error) {
-    isGrabbingInProgress = false
     log.error('Screenshot capture error:', error.message, error.stack);
     return [];
   }
@@ -371,13 +351,13 @@ function initScreenCapturePermissionHandling(mainWindow, stateManager, checkAndA
   ipcMain.on('requestScreenCapturePermission', async (_event, shouldOpenSettings = true) => {
     // Never open system settings if permission is already granted.
     try {
-      let alreadyGranted = await checkScreenCapturePermission();
+      let alreadyGranted = await checkScreenCapturePermission('request');
       if (alreadyGranted === undefined) {
         alreadyGranted = stateManager?.hasScreenCapturePermission();
       }
       if (!alreadyGranted) {
         await new Promise((resolve) => setTimeout(resolve, 400));
-        let secondCheck = await checkScreenCapturePermission();
+        let secondCheck = await checkScreenCapturePermission('request-recheck');
         if (secondCheck === undefined) {
           secondCheck = stateManager?.hasScreenCapturePermission();
         }
@@ -422,12 +402,20 @@ function initScreenCapturePermissionHandling(mainWindow, stateManager, checkAndA
     }
 
     // After opening settings, we should check permission again when app regains focus
+    if (screenPermissionFocusListener) {
+      app.removeListener('browser-window-focus', screenPermissionFocusListener)
+      screenPermissionFocusListener = null
+    }
+
     const focusListener = async () => {
       // Remove listener immediately to prevent multiple triggers
+      if (screenPermissionFocusListener === focusListener) {
+        screenPermissionFocusListener = null
+      }
       app.removeListener('browser-window-focus', focusListener);
 
       const oldPermission = stateManager?.hasScreenCapturePermission();
-      const hasPermission = await checkScreenCapturePermission();
+      const hasPermission = await checkScreenCapturePermission('focus-recheck');
       stateManager?.updateScreenCapturePermission(hasPermission);
 
       if (stateManager?.hasScreenCapturePermission() !== oldPermission && mainWindow) { // Check if permission *changed*
@@ -441,7 +429,8 @@ function initScreenCapturePermissionHandling(mainWindow, stateManager, checkAndA
         if (sendOverlayState) sendOverlayState();
       }
     };
-    
+
+    screenPermissionFocusListener = focusListener
     app.on('browser-window-focus', focusListener);
   });
 

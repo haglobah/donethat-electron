@@ -1225,7 +1225,7 @@ function setupIPCHandlers() {
         idleTime: 0
       };
 
-      const screenshots = await require('./captureScreenshots').captureScreenshot();
+      const screenshots = await require('./captureScreenshots').captureScreenshot({ caller: 'test-local-processing' });
 
       // Check if we have local processing available and determine which provider
       const { isLocalProcessingAvailable } = require('./processLocal');
@@ -1342,13 +1342,13 @@ function setupIPCHandlers() {
       }
 
       // Capture fresh screenshots
-      const screenshots = await captureScreenshot();
+      const screenshots = await captureScreenshot({ caller: 'test-app-exclusions' });
       if (!screenshots || screenshots.length === 0) {
         return { success: false, message: 'Failed to capture screenshots' };
       }
 
       // Check if we have permission to access windows
-      const hasPermission = await windowsCapture.checkPermissions();
+      const hasPermission = await windowsCapture.checkPermissions('test-app-exclusions');
       if (!hasPermission) {
         return { success: false, message: 'Window tracking permission is not granted. Please enable "Active applications" in Required permissions and grant system permission.' };
       }

@@ -1,5 +1,6 @@
-const { desktopCapturer, nativeImage, screen, BrowserWindow } = require('electron');
+const { nativeImage, screen, BrowserWindow } = require('electron');
 const log = require('electron-log');
+const { getScreenSources } = require('./screenCaptureSemaphore')
 
 /**
  * Captures a screenshot of the display containing the focused window
@@ -8,11 +9,21 @@ const log = require('electron-log');
  */
 async function captureFeedbackScreenshot(mainWindow) {
   try {
-    // Get all screen sources
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: 1920, height: 1080 }
-    });
+    const sources = await getScreenSources(
+      {
+        types: ['screen'],
+        thumbnailSize: { width: 1920, height: 1080 }
+      },
+      {
+        wait: true,
+        timeoutMs: 10000,
+        caller: 'feedback'
+      }
+    )
+    if (!sources) {
+      log.warn('[Feedback] Skipping screenshot: screen capture busy');
+      return null;
+    }
     
     if (sources.length === 0) {
       log.warn('No screen sources found for feedback screenshot');
@@ -99,4 +110,3 @@ async function captureFeedbackScreenshot(mainWindow) {
 module.exports = {
   captureFeedbackScreenshot
 };
-
