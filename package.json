@@ -86,7 +86,6 @@
   },
   "build": {
     "appId": "com.donethat.app",
-    "companyName": "DoneThat",
     "productName": "DoneThat",
     "asar": true,
     "asarUnpack": [

@@ -275,7 +275,6 @@ function applyBackoff() {
   // Log more detailed information about backoff
   const now = Date.now()
   const timeSinceLastBackoff = now - lastBackoffTime
-  log.warn(`Window tracking failed ${consecutiveFailures} times. Backing off to ${currentTrackingIntervalMs}ms interval. Time since last backoff: ${timeSinceLastBackoff}ms`)
   lastBackoffTime = now
   
   // Restart tracking with new interval if we're still tracking
