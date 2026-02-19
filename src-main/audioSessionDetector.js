@@ -207,6 +207,49 @@ class AudioSessionManager {
     return false;
   }
 
+  isChildOfOwnProcess(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    if (pid === process.pid) return true;
+    if (process.platform !== 'linux') return false;
+
+    try {
+      let currentPid = pid;
+      const visited = new Set();
+      while (currentPid > 1 && !visited.has(currentPid)) {
+        visited.add(currentPid);
+        const status = fs.readFileSync(`/proc/${currentPid}/status`, 'utf8');
+        const ppidMatch = status.match(/^PPid:\s+(\d+)$/m);
+        if (!ppidMatch) return false;
+        const parentPid = parseInt(ppidMatch[1], 10);
+        if (!Number.isInteger(parentPid) || parentPid <= 0) return false;
+        if (parentPid === process.pid) return true;
+        currentPid = parentPid;
+      }
+    } catch (_) {
+      return false;
+    }
+
+    return false;
+  }
+
+  isOwnLinuxSession(stream) {
+    if (!stream || typeof stream !== 'object') return false;
+    const props = stream.properties || {};
+    const rawPid = props['application.process.id'];
+    const pid = typeof rawPid === 'number' ? rawPid : parseInt(rawPid, 10);
+    if (Number.isInteger(pid) && (this.isOwnProcessPid(pid) || this.isChildOfOwnProcess(pid))) {
+      return true;
+    }
+
+    const appName = String(props['application.name'] || '').toLowerCase();
+    const processBinary = String(props['application.process.binary'] || '').toLowerCase();
+    if (appName.includes('donethat') || processBinary.includes('donethat')) {
+      return true;
+    }
+
+    return false;
+  }
+
   isOwnBundleId(bundleId) {
     if (typeof bundleId !== 'string' || !bundleId) return false;
     const normalized = bundleId.toLowerCase();
@@ -347,18 +390,7 @@ class AudioSessionManager {
         
         // Filter for valid recording streams
         // PulseAudio/PipeWire might list monitor streams or other artifacts
-        const recordingStreams = streams.filter(s => {
-          // Verify it's not a monitor of an output (usually handled by source types, but good to check)
-          // For source-outputs, they are recording streams.
-          
-          // Filter out our own process
-          // properties['application.process.id'] might be a string or number
-          const pid = s.properties && s.properties['application.process.id'];
-          if (pid && (pid == process.pid)) {
-            return false;
-          }
-          return true;
-        });
+        const recordingStreams = streams.filter((stream) => !this.isOwnLinuxSession(stream));
 
         if (recordingStreams.length > 0) {
           const s = recordingStreams[0];
@@ -390,18 +422,27 @@ class AudioSessionManager {
           // Extract PID
           const pidMatch = block.match(/application\.process\.id\s*=\s*"(\d+)"/);
           const pid = pidMatch ? parseInt(pidMatch[1], 10) : null;
-          
-          // Filter out our own process
-          if (pid === process.pid) continue;
 
           // Extract Name
           const nameMatch = block.match(/application\.name\s*=\s*"(.*?)"/);
           const name = nameMatch ? nameMatch[1] : 'Unknown Linux App';
+          const binaryMatch = block.match(/application\.process\.binary\s*=\s*"(.*?)"/);
+          const binary = binaryMatch ? binaryMatch[1] : '';
+          if (this.isOwnLinuxSession({
+            properties: {
+              'application.process.id': pid,
+              'application.name': name,
+              'application.process.binary': binary
+            }
+          })) {
+            continue;
+          }
 
           return {
             isActive: true,
             pid: pid,
-            name: name
+            name: name,
+            path: binary || null
           };
         }
         
