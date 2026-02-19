@@ -14,6 +14,10 @@ if (process.platform === 'linux') {
   if (!process.env.GTK_DEBUG) {
     process.env.GTK_DEBUG = 'no-css-cache'
   }
+  // Helps xdg-desktop-portal persist grants against a stable desktop file id.
+  if (!process.env.DESKTOP_FILE_ID) {
+    process.env.DESKTOP_FILE_ID = 'donethat.desktop'
+  }
 }
 
 const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification, powerMonitor, globalShortcut, session } = require('electron')
@@ -38,6 +42,9 @@ if (process.platform === 'linux') {
   // Chromium log levels: 0=INFO, 1=WARNING, 2=ERROR, 3=FATAL
   // GLib assertion errors are logged as ERROR, so we need level 3 to suppress them
   app.commandLine.appendSwitch('log-level', '3')
+  try {
+    app.setDesktopName('donethat.desktop')
+  } catch (_) {}
 }
 const {
   checkScreenCapturePermission: moduleCheckPermission,
@@ -57,6 +64,7 @@ const { startContextCapture, stopContextCapture } = require('./src-main/contextC
 const { initState } = require('./src-main/main-state')
 const { getScreenSources } = require('./src-main/screenCaptureSemaphore')
 const { recordLog } = require('./src-main/telemetry')
+const linuxAutostart = require('./src-main/linuxAutostart')
 
 // Conditionally load liquid glass with fallback
 let liquidGlass = null;
@@ -763,8 +771,9 @@ function setupAutoStart() {
         path: macOSPath
       });
 
-    } else {
-      // Linux - autostart is not currently supported
+    } else if (process.platform === 'linux') {
+      const enabled = !!overlayStore?.get('linuxAutostartEnabled')
+      linuxAutostart.reconcile(enabled)
     }
 
     // After update is installed, this will run again with the new executable path

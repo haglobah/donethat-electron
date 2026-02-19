@@ -3,6 +3,7 @@ const log = require('electron-log');
 const path = require('path');
 const { encryptData, decryptData } = require('./encryption');
 const { default: Store } = require('electron-store');
+const linuxAutostart = require('./linuxAutostart');
 
 // State variables
 let store = null;
@@ -1425,6 +1426,42 @@ function setupIPCHandlers() {
       return { success: true, command: command || null };
     } catch (error) {
       log.error('Error retrieving Linux screenshot command:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('get-linux-autostart', async () => {
+    try {
+      if (process.platform !== 'linux') {
+        return { success: true, enabled: false, filePath: null, execPath: null, exists: false, isCurrent: false };
+      }
+      const enabled = !!safeStoreOperation(() => store?.get('linuxAutostartEnabled'), 'get linux autostart enabled');
+      const state = linuxAutostart.getState(enabled);
+      return { success: true, ...state };
+    } catch (error) {
+      log.error('Error retrieving Linux autostart state:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('set-linux-autostart', async (_event, enabled) => {
+    try {
+      if (process.platform !== 'linux') {
+        return { success: true, enabled: false, filePath: null, execPath: null, exists: false, isCurrent: false };
+      }
+      if (typeof enabled !== 'boolean') {
+        throw new Error('Invalid linux autostart value');
+      }
+
+      safeStoreOperation(() => {
+        if (!store) throw new Error('Store not initialized');
+        store.set('linuxAutostartEnabled', enabled);
+      }, 'save linux autostart enabled');
+
+      const state = linuxAutostart.setEnabled(enabled);
+      return { success: true, ...state };
+    } catch (error) {
+      log.error('Error updating Linux autostart state:', error);
       return { success: false, error: error.message };
     }
   });

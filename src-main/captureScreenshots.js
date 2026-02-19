@@ -1,4 +1,4 @@
-const { nativeImage, screen, ipcMain, shell, app } = require('electron')
+const { nativeImage, ipcMain, shell, app } = require('electron')
 const { execSync } = require('child_process')
 const path = require('path')
 const log = require('electron-log')
@@ -18,6 +18,7 @@ const PREVIOUS_SCREENSHOT_SCALE_FACTOR = 0.5
 const PREVIOUS_SCREENSHOT_MAX_AGE_FACTOR = 1.5
 
 let screenPermissionFocusListener = null
+const DEFAULT_LINUX_SCREENSHOT_COMMAND = `bash -c 'getOriginalAnimationSetting=$(gsettings get org.gnome.desktop.interface enable-animations); getOriginalSoundSetting=$(gsettings get org.gnome.desktop.sound event-sounds); gsettings set org.gnome.desktop.interface enable-animations false; gsettings set org.gnome.desktop.sound event-sounds false; gnome-screenshot -f "%s"; gsettings set org.gnome.desktop.interface enable-animations $getOriginalAnimationSetting; gsettings set org.gnome.desktop.sound event-sounds $getOriginalSoundSetting'`
 
 ///// UTILITIES /////
 // Function to scale down a screenshot to the configured scale factor
@@ -136,12 +137,9 @@ async function loadLinuxScreenshotCommand() {
     const store = new Store({ name: 'donethat-config' });
     let customCommand = store.get('linuxScreenshotCommand');
     
-    // If no custom command exists, set a default one based on takeGnomeScreenshot logic
+    // Always seed a default Linux command so Wayland fallback is available too.
     if (!customCommand) {
-      // Create a default command that includes the full gsettings logic
-      customCommand = `bash -c 'getOriginalAnimationSetting=$(gsettings get org.gnome.desktop.interface enable-animations); getOriginalSoundSetting=$(gsettings get org.gnome.desktop.sound event-sounds); gsettings set org.gnome.desktop.interface enable-animations false; gsettings set org.gnome.desktop.sound event-sounds false; gnome-screenshot -f "%s"; gsettings set org.gnome.desktop.interface enable-animations $getOriginalAnimationSetting; gsettings set org.gnome.desktop.sound event-sounds $getOriginalSoundSetting'`;
-      
-      // Save the default command to store
+      customCommand = DEFAULT_LINUX_SCREENSHOT_COMMAND
       store.set('linuxScreenshotCommand', customCommand);
       log.info('Set default Linux screenshot command');
     }
@@ -176,7 +174,7 @@ async function checkLinuxScreenCapturePermission() {
       await loadLinuxScreenshotCommand();
     }
     
-    // Only use Linux command - no fallback detection
+    // Linux command fallback
     if (linuxScreenshotCommand) {
       try {
         // Test the Linux command
@@ -254,6 +252,9 @@ async function captureScreenshot(options = {}) {
 // Simplified Linux screenshot function - only uses custom command
 async function captureScreenshotsLinux() {
   try {
+    if (!linuxScreenshotCommand) {
+      await loadLinuxScreenshotCommand()
+    }
     // If no Linux command available, abort
     if (!linuxScreenshotCommand) {
       log.error('No Linux screenshot command available')

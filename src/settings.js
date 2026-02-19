@@ -62,6 +62,15 @@ const llmManagedLocks = {
 let applyAppExclusionsManagedConfig = null;
 let applyContextCaptureManagedConfig = null;
 let applySaveCaptureManagedConfig = null;
+let waylandWindowsPersistInFlight = false;
+
+function isWaylandLinuxSession() {
+  return window.electronAPI.platform === 'linux' && !!window.electronAPI.isWayland;
+}
+
+function isWaylandWindowsForcedOff() {
+  return isWaylandLinuxSession();
+}
 
 function isManagedValue(value) {
   return value !== null && value !== undefined;
@@ -313,7 +322,7 @@ function applyInputDataManagedLockUI() {
     setManagedRowLock(screenCheckbox, !!inputDataManagedLocks.screen);
   }
   if (windowsCheckbox) {
-    windowsCheckbox.disabled = !!inputDataManagedLocks.windows;
+    windowsCheckbox.disabled = !!inputDataManagedLocks.windows || isWaylandWindowsForcedOff();
     setManagedRowLock(windowsCheckbox, !!inputDataManagedLocks.windows);
   }
   if (audioCheckbox) {
@@ -447,6 +456,7 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
 
   // Set up Wayland detection
   setupWaylandDetection();
+  setupLinuxAutostartListeners();
   
   refreshCaptureDependentVisibility();
 }
@@ -763,6 +773,14 @@ async function updateSettingsUI(settings) {
     systemAudio: resolveInputDataValue(managedInputData.systemAudio, loadedInputData.systemAudio, false),
     screen: resolveInputDataValue(managedInputData.screen, loadedInputData.screen, true)
   };
+
+  if (isWaylandLinuxSession()) {
+    const wasEnabled = !!inputData.windows;
+    inputData.windows = false;
+    if (wasEnabled || loadedInputData.windows === true) {
+      ensureWaylandWindowsSettingPersisted();
+    }
+  }
 
   // Compute and send only changed flags to main to avoid clobbering
   const delta = {};
@@ -1961,6 +1979,8 @@ function setupWaylandDetection() {
   if (window.electronAPI.platform !== 'linux') return;
   
   const waylandNote = document.getElementById('waylandNote');
+  const forcedOffNote = document.getElementById('waylandWindowsForcedOffNote');
+  const windowsCheckbox = document.getElementById('windowsCheckbox');
   if (!waylandNote) return;
   
   // Check for Wayland via environment variables (standard detection methods)
@@ -1970,9 +1990,92 @@ function setupWaylandDetection() {
   
   if (isWayland) {
     waylandNote.classList.remove('hidden');
+    if (forcedOffNote) forcedOffNote.classList.remove('hidden');
+    if (windowsCheckbox) {
+      windowsCheckbox.checked = false;
+      windowsCheckbox.disabled = true;
+    }
   } else {
     waylandNote.classList.add('hidden');
+    if (forcedOffNote) forcedOffNote.classList.add('hidden');
+    if (windowsCheckbox) {
+      windowsCheckbox.disabled = !!inputDataManagedLocks.windows;
+    }
   }
+}
+
+function ensureWaylandWindowsSettingPersisted() {
+  if (!isWaylandLinuxSession() || waylandWindowsPersistInFlight) return;
+  waylandWindowsPersistInFlight = true;
+  saveUserSettings('inputData', { windows: false, __partial: true })
+    .catch((error) => {
+      console.error('Failed to persist Wayland windows disable state:', error);
+    })
+    .finally(() => {
+      waylandWindowsPersistInFlight = false;
+    });
+}
+
+function setupLinuxAutostartListeners() {
+  if (window.electronAPI.platform !== 'linux') return;
+
+  const section = document.getElementById('linuxAutostartSection');
+  const checkbox = document.getElementById('linuxAutostartCheckbox');
+  const status = document.getElementById('linuxAutostartStatus');
+  const errorEl = document.getElementById('linuxAutostartError');
+  if (!section || !checkbox) return;
+
+  section.classList.remove('hidden');
+
+  const renderState = (state) => {
+    if (!state) return;
+    checkbox.checked = !!state.enabled;
+    if (status) {
+      const filePath = state.filePath || '~/.config/autostart/donethat.desktop';
+      const execPath = state.execPath || '';
+      status.textContent = `Desktop file: ${filePath}${execPath ? ` | Exec: ${execPath} --no-sandbox` : ''}`;
+      status.classList.remove('hidden');
+    }
+  };
+
+  const setError = (message) => {
+    if (!errorEl) return;
+    if (message) {
+      errorEl.textContent = message;
+      errorEl.classList.remove('hidden');
+    } else {
+      errorEl.textContent = '';
+      errorEl.classList.add('hidden');
+    }
+  };
+
+  ipcRenderer.invoke('get-linux-autostart').then((result) => {
+    if (result?.success) {
+      renderState(result);
+      setError(null);
+    } else {
+      setError(result?.error || 'Failed to load Linux autostart state');
+    }
+  }).catch((error) => {
+    setError(error.message || 'Failed to load Linux autostart state');
+  });
+
+  checkbox.addEventListener('change', async () => {
+    const enabled = !!checkbox.checked;
+    try {
+      const result = await ipcRenderer.invoke('set-linux-autostart', enabled);
+      if (!result?.success) {
+        checkbox.checked = !enabled;
+        setError(result?.error || 'Failed to update Linux autostart');
+        return;
+      }
+      renderState(result);
+      setError(null);
+    } catch (error) {
+      checkbox.checked = !enabled;
+      setError(error.message || 'Failed to update Linux autostart');
+    }
+  });
 }
 
 // Set up save capture data to folder toggle and path (same pattern as other main-process settings)

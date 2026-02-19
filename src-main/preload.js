@@ -73,6 +73,8 @@ const validInvokeChannels = [
 
   // Settings / Tailwind-related helpers
   'settings:load',
+  'get-linux-autostart',
+  'set-linux-autostart',
   'get-linux-screenshot-command',
   'save-linux-screenshot-command',
   'test-linux-screenshot-command',

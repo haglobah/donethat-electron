@@ -429,11 +429,12 @@ function updateDashboardCaptureWarning() {
 
   const screenToggle = document.getElementById('screenCheckbox');
   const windowsToggle = document.getElementById('windowsCheckbox');
+  const isWaylandLinux = window.electronAPI?.platform === 'linux' && !!window.electronAPI?.isWayland;
 
   const screenEnabledByToggle = !!screenToggle?.checked;
-  const windowsEnabledByToggle = !!windowsToggle?.checked;
+  const windowsEnabledByToggle = isWaylandLinux ? true : !!windowsToggle?.checked;
   const screenPermissionGranted = !!hasScreenCapturePermission();
-  const windowsPermissionGranted = !!hasWindowsPermission();
+  const windowsPermissionGranted = isWaylandLinux ? true : !!hasWindowsPermission();
 
   const screenEffective = screenEnabledByToggle && screenPermissionGranted;
   const windowsEffective = windowsEnabledByToggle && windowsPermissionGranted;
@@ -451,7 +452,7 @@ function updateDashboardCaptureWarning() {
       issues.push('Screenshare permission is missing');
     }
   }
-  if (!windowsEffective) {
+  if (!windowsEffective && !isWaylandLinux) {
     if (!windowsEnabledByToggle) {
       issues.push('Active applications are turned off in Setup');
     } else if (!windowsPermissionGranted) {

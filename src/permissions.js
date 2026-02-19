@@ -26,6 +26,10 @@ const permissionIssueVisibleState = {
 };
 let hasRequestedInitialSystemAudioCheck = false;
 
+function isWaylandLinuxSession() {
+  return window.electronAPI.platform === 'linux' && !!window.electronAPI.isWayland;
+}
+
 function emitCaptureStateUpdated() {
   document.dispatchEvent(new CustomEvent('capture-state-updated'));
 }
@@ -137,9 +141,13 @@ function setupPermissionIndicatorRefresh() {
 function checkPermissionsOnStartup() {
   ipcRenderer.send('checkScreenCapturePermission');
 
-  retryWindowsPermissionStartupCheck().then((hasPermission) => {
-    applyWindowsPermissionUpdate(!!hasPermission, true, 'startup-passive-check');
-  });
+  if (isWaylandLinuxSession()) {
+    applyWindowsPermissionUpdate(false, true, 'wayland-forced-disabled');
+  } else {
+    retryWindowsPermissionStartupCheck().then((hasPermission) => {
+      applyWindowsPermissionUpdate(!!hasPermission, true, 'startup-passive-check');
+    });
+  }
   retryMicrophonePermissionStartupCheck().then((hasPermission) => {
     applyMicrophonePermissionUpdate(!!hasPermission, true, 'startup-passive-check');
   });
@@ -470,6 +478,12 @@ function setupWindowsCheckboxBehavior() {
   if (!checkbox) return;
 
   checkbox.addEventListener('change', async () => {
+    if (isWaylandLinuxSession()) {
+      checkbox.checked = false;
+      updateWindowsCheckbox(false);
+      emitCaptureStateUpdated();
+      return;
+    }
     const enabled = !!checkbox.checked;
     const result = await handleCaptureToggleIntent('windows', enabled);
     if (result?.reverted) {
@@ -538,13 +552,17 @@ function setupPermissionRecheckButtons() {
 
   const recheckWindowsBtn = document.getElementById('recheckWindowsPermissionBtn');
   if (recheckWindowsBtn) {
-    recheckWindowsBtn.addEventListener('click', () => {
-      logAnalyticsEvent('permission_recheck_clicked', {
-        type: 'windows',
-        platform: window.electronAPI.platform
+    if (isWaylandLinuxSession()) {
+      recheckWindowsBtn.classList.add('hidden');
+    } else {
+      recheckWindowsBtn.addEventListener('click', () => {
+        logAnalyticsEvent('permission_recheck_clicked', {
+          type: 'windows',
+          platform: window.electronAPI.platform
+        });
+        requestWindowsPermission(true);
       });
-      requestWindowsPermission(true);
-    });
+    }
   }
 
   const recheckMicrophoneBtn = document.getElementById('recheckMicrophonePermissionBtn');
@@ -579,6 +597,10 @@ function requestMicrophonePermission() {
 }
 
 function requestWindowsPermission(shouldOpenSettings = true) {
+  if (isWaylandLinuxSession()) {
+    applyWindowsPermissionUpdate(false, false, 'wayland-forced-disabled');
+    return;
+  }
   logAnalyticsEvent('windows_capture_requested', {
     status: 'requested',
     platform: window.electronAPI.platform
