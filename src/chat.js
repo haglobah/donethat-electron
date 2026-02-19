@@ -3,9 +3,22 @@
 const ipcRenderer = window.electronAPI;
 // routeLink is now loaded globally via script tag in chat.html
 
+const isMacPlatform = !!(window.electronAPI && window.electronAPI.platform === 'darwin')
+
+function updateOverlayVisualMode() {
+  const root = document.documentElement
+  if (!root) return
+  root.classList.toggle('non-mac', !isMacPlatform)
+  const isLiquidGlass = root.classList.contains('liquid-glass-active')
+  root.classList.toggle('fallback-overlay', !isMacPlatform && !isLiquidGlass)
+}
+
 ipcRenderer.on('liquid-glass-active', () => {
   document.documentElement.classList.add('liquid-glass-active')
+  updateOverlayVisualMode()
 })
+
+updateOverlayVisualMode()
 
 const input0 = document.getElementById('chatInput')
 const includeScreenBtn = document.getElementById('includeScreenBtn')
@@ -822,10 +835,9 @@ window.addEventListener('keydown', (e) => {
 
 // Update close tooltip for platform
 try {
-  const isMac = window.electronAPI && window.electronAPI.platform === 'darwin'
   const closeBtn = document.getElementById('closeOverlayBtn')
   if (closeBtn) {
-    closeBtn.title = `Close chat (Esc, ${isMac ? 'Cmd' : 'Ctrl'}+Shift+D)`
+    closeBtn.title = `Close chat (Esc, ${isMacPlatform ? 'Cmd' : 'Ctrl'}+Shift+D)`
   }
 } catch (e) {}
 
@@ -1012,7 +1024,6 @@ async function loadChatById(chatId) {
 // Initialize
 updateIncludeScreenBtn()
 renderChat()
-
 
 
 

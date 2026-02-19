@@ -74,6 +74,12 @@
       .bubble h5, .bubble h6 { font-size: 12px; font-weight: 600; opacity: 0.9; }
       .z-chat { position: relative; z-index: 1; }
       .z-input { position: relative; z-index: 2; }
+      /* Fallback visuals for non-mac non-liquid-glass overlay */
+      html.non-mac.fallback-overlay .overlay-card { background: rgba(255,255,255,0.74); }
+      html.non-mac.fallback-overlay .input-wrap textarea,
+      html.non-mac.fallback-overlay .input-wrap textarea:focus { background: rgba(255,255,255,0.82) !important; }
+      html.non-mac.fallback-overlay .input-wrap textarea { padding-right: 40px !important; }
+      html.non-mac.fallback-overlay .screen-toggle { right: 18px; }
     </style>
   </head>
   <body class="w-full h-full overflow-visible">
