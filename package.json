@@ -40,7 +40,7 @@
     "url": "git+https://github.com/donethatai/donethat-releases.git"
   },
   "author": {
-    "name": "Christoph Hartmann",
+    "name": "DoneThat",
     "email": "christoph@donethat.ai"
   },
   "license": "UNLICENSED",
@@ -130,6 +130,9 @@
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "binaries": [
+        "bin/mic-monitor"
+      ],
       "entitlements": "resources/entitlements.mac.plist",
       "entitlementsInherit": "resources/entitlements.mac.plist",
       "target": [
@@ -162,9 +165,9 @@
     },
     "nsis": {
       "runAfterFinish": true,
-      "oneClick": false,
+      "oneClick": true,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
       "multiLanguageInstaller": true
     },
     "linux": {

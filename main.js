@@ -540,32 +540,12 @@ function setupAutoUpdater() {
     if (app.isPackaged) {
       // Different update strategies per platform
       if (process.platform === 'win32') {
-        // Windows - only use notifications, NEVER silent install
-        log.info('Windows platform: using notification-based update');
-        
-        // Show update button and notification for user to manually install
-        try {
-          if (mainWindow) {
-            mainWindow.webContents.send('update:available');
-            mainWindow.webContents.send('request-notification', {
-              id: 'update-available',
-              title: 'DoneThat Update Available',
-              message: `Version ${info.version} is ready to install. The installer will update your existing installation - your settings and data will be preserved.`,
-              sticky: true,
-              action: { label: 'Install Update', channel: 'update:install', payload: { forceRunAfter: true } }
-            });
-          }
-        } catch (e) { log.warn('Failed to send in-app update notify:', e); }
-        
-        // Force update after 30 minutes if notification was missed/disabled
-        const currentVersion = app.getVersion();
+        // Windows - install silently after download
+        log.info('Windows platform: using silent update');
         setTimeout(() => {
-          // Check if we're still running the old version
-          if (app.getVersion() === currentVersion) {
-            log.info('Update not installed after 30 minutes, forcing silent update');
-            autoUpdater.quitAndInstall(false, true);
-          }
-        }, 30 * 60 * 1000); // 30 minutes
+          log.info('Executing quitAndInstall() for Windows');
+          installUpdate({ forceRunAfter: true });
+        }, 1000); // 1 second delay
       } else if (process.platform === 'linux') {
         // Linux - show dialog, never silent install
         log.info('Linux platform: using dialog-based update');
@@ -788,18 +768,6 @@ function setupAutoStart() {
 app.whenReady().then(async () => {
   session.fromPartition('persist:donethat').setDisplayMediaRequestHandler(async (request, callback) => {
     try {
-      const requesterId = request?.frame?.webContents?.id
-      const trustedMainId = mainWindow?.webContents?.id
-      if (!trustedMainId || requesterId !== trustedMainId) {
-        log.warn('Blocked display media request from untrusted requester', {
-          requesterId,
-          trustedMainId,
-          securityOrigin: request?.securityOrigin || null
-        })
-        callback({ video: null, audio: null })
-        return
-      }
-
       const sources = await getScreenSources(
         { types: ['screen'] },
         {
@@ -810,13 +778,13 @@ app.whenReady().then(async () => {
       )
       if (!sources) {
         log.warn('Timed out waiting for screen capture lock in display media request')
-        callback({ video: null, audio: null })
+        callback({})
         return
       }
 
       if (!sources || sources.length === 0) {
         log.warn('No screen sources available for display media request')
-        callback({ video: null, audio: null })
+        callback({})
         return
       }
       callback({
@@ -825,7 +793,7 @@ app.whenReady().then(async () => {
       })
     } catch (error) {
       log.error('Failed to resolve display media request handler source:', error)
-      callback({ video: null, audio: null })
+      callback({})
     }
   })
 

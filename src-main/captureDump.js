@@ -117,13 +117,13 @@ async function saveCaptureDump(screenshots, inputData, timestamp, pathType, prev
   }
 }
 
+/**
+ * Append structured, parameters, and optional telemetry to existing dump dir (for local path)
+ */
 function shouldWriteTelemetryDump(dumpDir) {
   return typeof dumpDir === 'string' && dumpDir.includes('DEBUG')
 }
 
-/**
- * Append structured, parameters, and optional telemetry to existing dump dir (for local path)
- */
 function appendCaptureDump(dumpDir, structured, parameters, telemetry) {
   try {
     if (!dumpDir) return

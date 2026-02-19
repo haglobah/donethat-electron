@@ -1,5 +1,6 @@
 const log = require('electron-log');
 const { exec, execFile } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { promisify } = require('util');
@@ -24,6 +25,19 @@ function buildOwnMacBundlePrefixes() {
   const envAppId = process.env.DONETHAT_APP_ID || process.env.npm_package_build_appId;
   if (typeof envAppId === 'string' && envAppId.trim()) {
     prefixes.add(envAppId.trim());
+  }
+
+  if (process.platform === 'darwin') {
+    try {
+      const appBundlePath = path.resolve(process.execPath, '../../..');
+      const infoPlistPath = path.join(appBundlePath, 'Contents', 'Info');
+      const bundleId = execFileSync('/usr/bin/defaults', ['read', infoPlistPath, 'CFBundleIdentifier'], {
+        encoding: 'utf8'
+      }).trim();
+      if (bundleId) {
+        prefixes.add(bundleId);
+      }
+    } catch (_) {}
   }
 
   return [...prefixes];
@@ -142,7 +156,6 @@ class AudioSessionManager {
         log.warn('[AudioSession] macOS mic helper binary not found');
         return null;
       }
-
       const { stdout } = await execFileAsync(helperPath);
       const sessions = JSON.parse(stdout);
       if (!Array.isArray(sessions)) {
@@ -196,9 +209,15 @@ class AudioSessionManager {
 
   isOwnBundleId(bundleId) {
     if (typeof bundleId !== 'string' || !bundleId) return false;
+    const normalized = bundleId.toLowerCase();
+
+    if (normalized.includes('donethat')) {
+      return true;
+    }
 
     for (const prefix of OWN_MAC_BUNDLE_PREFIXES) {
-      if (bundleId === prefix || bundleId.startsWith(prefix + '.')) {
+      const normalizedPrefix = String(prefix || '').toLowerCase();
+      if (normalized === normalizedPrefix || normalized.startsWith(normalizedPrefix + '.')) {
         return true;
       }
     }
@@ -215,15 +234,14 @@ class AudioSessionManager {
   }
   resolveMacMicHelperPath() {
     const binaryName = 'mic-monitor';
-
     const pathsToCheck = [
-      path.resolve(process.cwd(), 'bin', binaryName),
-      path.resolve(__dirname, '..', 'bin', binaryName),
-      process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', binaryName) : null,
       process.resourcesPath ? path.resolve(process.resourcesPath, 'app.asar.unpacked', 'bin', binaryName) : null,
-    ].filter(Boolean);
+      process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', binaryName) : null,
+      path.resolve(process.cwd(), 'bin', binaryName),
+      path.resolve(__dirname, '..', 'bin', binaryName)
+    ];
 
-    for (const candidatePath of pathsToCheck) {
+    for (const candidatePath of pathsToCheck.filter(Boolean)) {
       try {
         if (fs.existsSync(candidatePath)) return candidatePath;
       } catch (_) {}

@@ -50,7 +50,6 @@ This document explains the DoneThat Desktop app to autonomous coding agents. It 
 ### Capture Cycle
 1. Interval configured in `main.js` with `setCaptureInterval(minutes)` (default 5). Token is fetched inside each cycle.
 2. On each cycle (`src-main/capture.js`):
-   - Optionally skip screenshots if `shouldDisableScreenshotsInMeetings()` (mic activity).
    - Collect audio transcript, window timeline into compact activity.
    - Try local processing (`processLocal`) with current + previous screenshots; else POST to Cloud Function `captureScreenshot` with `Authorization: Bearer <idToken>`.
 3. Errors/permission issues flag runtime issues per failing module and notify renderer; auth/token expiry is signaled back for refresh.
@@ -68,7 +67,7 @@ This document explains the DoneThat Desktop app to autonomous coding agents. It 
 
 ## IPC Contract (non-exhaustive)
 
-- Renderer → Main: `chat:send-message`, `overlay:*` (`overlay:toggle`, `overlay:show`, `overlay:hide`, `overlay:open-main`, `overlay:resize`, `overlay:get-state`), `requestMicrophonePermission`, `updateInputDataSettings`, `updateDisableScreenshotsInMeetings`, `login`, `logout`, `token-refreshed`, `inapp:notify`, `hotkey:set`, `hotkey:get`, `focus-app-window`, `checkScreenCapturePermission`.
+- Renderer → Main: `chat:send-message`, `overlay:*` (`overlay:toggle`, `overlay:show`, `overlay:hide`, `overlay:open-main`, `overlay:resize`, `overlay:get-state`), `requestMicrophonePermission`, `updateInputDataSettings`, `login`, `logout`, `token-refreshed`, `inapp:notify`, `hotkey:set`, `hotkey:get`, `focus-app-window`, `checkScreenCapturePermission`.
 - Main → Renderer: `inapp:notify`, `screenCapturePermission`, `windowsPermission`, `overlay:state`, `chat:receive-messages`, `hotkey:updated`, `chat:message-update`, `chat:reset-state`, `webview:reload`, `router:open-link`, `firebase-custom-token`, `refresh-token`, `auth-error`.
 
 ## Build/Run
@@ -82,7 +81,6 @@ This document explains the DoneThat Desktop app to autonomous coding agents. It 
 - Workdays/hours and pause state persisted in `electron-store`.
 - Screen capture permission checks are surfaced to renderer; Windows (active apps) permission handled similarly.
 - Audio/windows are opt-in toggles; failures surface runtime issues without changing user toggle settings.
-- “Disable screenshots during meetings” switches based on mic activity from audio module.
 
 ### Terminology Conventions
 
