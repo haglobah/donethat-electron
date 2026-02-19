@@ -40,7 +40,7 @@
     "url": "git+https://github.com/donethatai/donethat-releases.git"
   },
   "author": {
-    "name": "Christoph Hartmann",
+    "name": "DoneThat",
     "email": "christoph@donethat.ai"
   },
   "license": "UNLICENSED",
@@ -86,6 +86,7 @@
   },
   "build": {
     "appId": "com.donethat.app",
+    "companyName": "DoneThat",
     "productName": "DoneThat",
     "asar": true,
     "asarUnpack": [
@@ -162,9 +163,9 @@
     },
     "nsis": {
       "runAfterFinish": true,
-      "oneClick": false,
+      "oneClick": true,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
       "multiLanguageInstaller": true
     },
     "linux": {
