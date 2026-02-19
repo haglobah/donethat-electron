@@ -1979,6 +1979,7 @@ function setupWaylandDetection() {
   if (window.electronAPI.platform !== 'linux') return;
   
   const waylandNote = document.getElementById('waylandNote');
+  const waylandMeetingAudioNote = document.getElementById('waylandMeetingAudioNote');
   const forcedOffNote = document.getElementById('waylandWindowsForcedOffNote');
   const windowsCheckbox = document.getElementById('windowsCheckbox');
   if (!waylandNote) return;
@@ -1990,6 +1991,7 @@ function setupWaylandDetection() {
   
   if (isWayland) {
     waylandNote.classList.remove('hidden');
+    if (waylandMeetingAudioNote) waylandMeetingAudioNote.classList.remove('hidden');
     if (forcedOffNote) forcedOffNote.classList.remove('hidden');
     if (windowsCheckbox) {
       windowsCheckbox.checked = false;
@@ -1997,6 +1999,7 @@ function setupWaylandDetection() {
     }
   } else {
     waylandNote.classList.add('hidden');
+    if (waylandMeetingAudioNote) waylandMeetingAudioNote.classList.add('hidden');
     if (forcedOffNote) forcedOffNote.classList.add('hidden');
     if (windowsCheckbox) {
       windowsCheckbox.disabled = !!inputDataManagedLocks.windows;
