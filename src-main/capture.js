@@ -8,8 +8,6 @@ const { saveCaptureDump, appendCaptureDump } = require('./captureDump');
 const {
   beginCycle,
   endCycle,
-  consumeCompletedCycleTelemetry,
-  requeueCompletedCycleTelemetry,
   recordCyclePhaseDuration,
   recordPermissionCheck,
   recordCaptureCycleSkippedOverlap
@@ -764,7 +762,6 @@ async function _sendToServer(idToken, screenshots, inputData = {}, previousScree
           });
         }
       }
-       
       // Send data to Firebase
       const headers = {
         'Content-Type': 'application/json',
@@ -902,7 +899,6 @@ async function captureAndSend(idToken) {
     const hasScreenshots = screenshots && screenshots.length > 0;
     const hasAudioChunks = inputData && inputData.audioChunks && inputData.audioChunks.length > 0;
     const hasActivity = inputData && inputData.activity && inputData.activity.length > 0;
-
     const hasAnyPayloadData = !!(hasScreenshots || hasAudioChunks || hasActivity);
     if (!hasAnyPayloadData) {
       log.debug('[capture] Uploading empty capture payload (no screenshots/audio/activity this cycle)');
@@ -940,23 +936,14 @@ async function captureAndSend(idToken) {
       log.warn('[capture] Capture dump save failed:', e?.message)
     }
 
-    const clientTelemetry = consumeCompletedCycleTelemetry()
     const sendStartedAt = Date.now();
-    const sendResult = await _sendToServer(idToken, screenshots, inputData, previousForUpload, clientTelemetry)
+    const sendResult = await _sendToServer(idToken, screenshots, inputData, previousForUpload, null)
     recordCyclePhaseDuration('send', Date.now() - sendStartedAt);
-    if (clientTelemetry && sendResult === false) {
-      requeueCompletedCycleTelemetry(clientTelemetry)
-    }
 
-    if (dumpDir && (sendResult?.structured || sendResult?.parameters || clientTelemetry)) {
-      try {
-        appendCaptureDump(dumpDir, sendResult?.structured, sendResult?.parameters, clientTelemetry)
-      } catch (e) {
-        log.warn('Capture dump append failed:', e?.message)
-      }
+    return {
+      sendResult,
+      dumpDir
     }
-
-    return sendResult
   } catch (error) {
     // Handle errors specifically from captureScreenshot or collectInputData
     handleCaptureError(error, 'unknown', null, false);
@@ -1092,6 +1079,7 @@ async function _runCaptureCycle() {
   let cycleStatus = 'success';
   let cycleAuthError = false;
   let cycleTokenExpired = false;
+  let cycleCaptureResult = null;
   try {
     // Fetch the current token *inside* the cycle
     const currentIdToken = getIdTokenFunction ? getIdTokenFunction() : null;
@@ -1121,18 +1109,21 @@ async function _runCaptureCycle() {
     }
 
     // Capture and send data, passing the fetched token
-    const result = await captureAndSend(currentIdToken); // Pass currentIdToken
-    if (result && typeof result === 'object') {
-      if (result.authError) {
+    cycleCaptureResult = await captureAndSend(currentIdToken); // Pass currentIdToken
+    const sendResult = cycleCaptureResult && Object.prototype.hasOwnProperty.call(cycleCaptureResult, 'sendResult')
+      ? cycleCaptureResult.sendResult
+      : cycleCaptureResult
+    if (sendResult && typeof sendResult === 'object') {
+      if (sendResult.authError) {
         cycleStatus = 'auth_error';
         cycleAuthError = true;
-      } else if (result.tokenExpired) {
+      } else if (sendResult.tokenExpired) {
         cycleStatus = 'token_expired';
         cycleTokenExpired = true;
-      } else if (result.success === false) {
+      } else if (sendResult.success === false) {
         cycleStatus = 'send_failed';
       }
-    } else if (result === false) {
+    } else if (sendResult === false) {
       cycleStatus = 'send_failed';
     }
     await maybeCleanupWindowCache();
@@ -1142,11 +1133,18 @@ async function _runCaptureCycle() {
     handleCaptureError(error, 'capture-cycle', null, false); 
     cycleStatus = 'error';
   } finally {
-    endCycle({
+    const cycleTelemetry = endCycle({
       status: cycleStatus,
       authError: cycleAuthError,
       tokenExpired: cycleTokenExpired
     });
+    if (cycleCaptureResult?.dumpDir && (cycleCaptureResult?.sendResult?.structured || cycleCaptureResult?.sendResult?.parameters || cycleTelemetry)) {
+      try {
+        appendCaptureDump(cycleCaptureResult.dumpDir, cycleCaptureResult?.sendResult?.structured, cycleCaptureResult?.sendResult?.parameters, cycleTelemetry)
+      } catch (e) {
+        log.warn('Capture dump append failed:', e?.message)
+      }
+    }
     captureCycleInFlight = false;
   }
 }

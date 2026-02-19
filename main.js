@@ -779,18 +779,6 @@ function setupAutoStart() {
 app.whenReady().then(async () => {
   session.fromPartition('persist:donethat').setDisplayMediaRequestHandler(async (request, callback) => {
     try {
-      const requesterId = request?.frame?.webContents?.id
-      const trustedMainId = mainWindow?.webContents?.id
-      if (!trustedMainId || requesterId !== trustedMainId) {
-        log.warn('Blocked display media request from untrusted requester', {
-          requesterId,
-          trustedMainId,
-          securityOrigin: request?.securityOrigin || null
-        })
-        callback({ video: null, audio: null })
-        return
-      }
-
       const sources = await getScreenSources(
         { types: ['screen'] },
         {
@@ -801,13 +789,13 @@ app.whenReady().then(async () => {
       )
       if (!sources) {
         log.warn('Timed out waiting for screen capture lock in display media request')
-        callback({ video: null, audio: null })
+        callback({})
         return
       }
 
       if (!sources || sources.length === 0) {
         log.warn('No screen sources available for display media request')
-        callback({ video: null, audio: null })
+        callback({})
         return
       }
       callback({
@@ -816,7 +804,7 @@ app.whenReady().then(async () => {
       })
     } catch (error) {
       log.error('Failed to resolve display media request handler source:', error)
-      callback({ video: null, audio: null })
+      callback({})
     }
   })
 
