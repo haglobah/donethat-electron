@@ -142,7 +142,6 @@ class AudioSessionManager {
         log.warn('[AudioSession] macOS mic helper binary not found');
         return null;
       }
-
       const { stdout } = await execFileAsync(helperPath);
       const sessions = JSON.parse(stdout);
       if (!Array.isArray(sessions)) {
@@ -215,15 +214,14 @@ class AudioSessionManager {
   }
   resolveMacMicHelperPath() {
     const binaryName = 'mic-monitor';
-
     const pathsToCheck = [
-      path.resolve(process.cwd(), 'bin', binaryName),
-      path.resolve(__dirname, '..', 'bin', binaryName),
-      process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', binaryName) : null,
       process.resourcesPath ? path.resolve(process.resourcesPath, 'app.asar.unpacked', 'bin', binaryName) : null,
-    ].filter(Boolean);
+      process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', binaryName) : null,
+      path.resolve(process.cwd(), 'bin', binaryName),
+      path.resolve(__dirname, '..', 'bin', binaryName)
+    ];
 
-    for (const candidatePath of pathsToCheck) {
+    for (const candidatePath of pathsToCheck.filter(Boolean)) {
       try {
         if (fs.existsSync(candidatePath)) return candidatePath;
       } catch (_) {}
