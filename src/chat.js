@@ -72,9 +72,9 @@ function createRowForMessage(message) {
   const bubble = document.createElement('div')
   bubble.className = 'bubble no-drag ' + (message.role === 'user' ? 'bubble-user' : 'bubble-system')
   if (message.typing) {
-    bubble.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>'
+    bubble.replaceChildren(createTypingIndicator())
   } else {
-    bubble.innerHTML = parseMarkdown(message.text)
+    renderMarkdownIntoBubble(bubble, message.text)
   }
   row.appendChild(bubble)
   return row
@@ -144,6 +144,76 @@ function buildSafeChatAnchor(displayText, url) {
   if (!safeUrl) return displayText
   const escapedUrl = escapeHtmlAttribute(safeUrl)
   return `<a href="${escapedUrl}" class="chat-link" data-url="${escapedUrl}">${displayText}</a>`
+}
+
+function createTypingIndicator() {
+  const typing = document.createElement('div')
+  typing.className = 'typing'
+  for (let i = 0; i < 3; i++) {
+    typing.appendChild(document.createElement('span'))
+  }
+  return typing
+}
+
+function sanitizeMarkdownElement(node, doc) {
+  const allowedTags = new Set([
+    'A', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'DIV', 'EM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+    'HR', 'INPUT', 'LI', 'OL', 'PRE', 'STRONG', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL'
+  ])
+
+  if (node.nodeType === 3) return doc.createTextNode(node.textContent || '')
+  if (node.nodeType !== 1) return doc.createTextNode('')
+
+  const tag = node.tagName.toUpperCase()
+  if (!allowedTags.has(tag)) return doc.createTextNode(node.textContent || '')
+
+  const clean = doc.createElement(tag.toLowerCase())
+
+  if (tag === 'A') {
+    const rawHref = node.getAttribute('href') || node.getAttribute('data-url') || ''
+    const safeUrl = sanitizeChatUrl(rawHref)
+    if (!safeUrl) return doc.createTextNode(node.textContent || '')
+    clean.setAttribute('href', safeUrl)
+    clean.setAttribute('data-url', safeUrl)
+    clean.className = 'chat-link'
+  } else if (tag === 'BLOCKQUOTE') {
+    clean.className = 'border-l-4 border-gray-300 pl-4 my-2 text-gray-700'
+  } else if (tag === 'OL') {
+    const start = node.getAttribute('start')
+    if (/^\d+$/.test(start || '')) clean.setAttribute('start', start)
+  } else if (tag === 'TH' || tag === 'TD') {
+    const rawStyle = node.getAttribute('style') || ''
+    const alignMatch = rawStyle.match(/text-align\s*:\s*(left|right|center)/i)
+    if (alignMatch) clean.setAttribute('style', `text-align:${alignMatch[1].toLowerCase()}`)
+  } else if (tag === 'INPUT') {
+    const type = (node.getAttribute('type') || '').toLowerCase()
+    if (type !== 'checkbox') return doc.createTextNode('')
+    clean.setAttribute('type', 'checkbox')
+    if (node.hasAttribute('disabled')) clean.setAttribute('disabled', '')
+    if (node.hasAttribute('checked')) clean.setAttribute('checked', '')
+  }
+
+  for (const child of node.childNodes) {
+    clean.appendChild(sanitizeMarkdownElement(child, doc))
+  }
+
+  return clean
+}
+
+function renderMarkdownIntoBubble(bubble, text) {
+  const rawHtml = parseMarkdown(text)
+  const parsed = new DOMParser().parseFromString(`<div>${rawHtml}</div>`, 'text/html')
+  const wrapper = parsed.body.firstElementChild
+  if (!wrapper) {
+    bubble.replaceChildren()
+    return
+  }
+
+  const fragment = document.createDocumentFragment()
+  for (const child of Array.from(wrapper.childNodes)) {
+    fragment.appendChild(sanitizeMarkdownElement(child, document))
+  }
+  bubble.replaceChildren(fragment)
 }
 
 // Enhanced markdown parser for chat bubbles (supports bold, italic, code, lists, and links)
@@ -454,8 +524,11 @@ function renderChat() {
       const bubble = row.querySelector('.bubble')
       const desiredBubbleClass = 'bubble no-drag ' + (msg.role === 'user' ? 'bubble-user' : 'bubble-system')
       if (bubble.className !== desiredBubbleClass) bubble.className = desiredBubbleClass
-      const newHtml = msg.typing ? '<div class="typing"><span></span><span></span><span></span></div>' : parseMarkdown(msg.text)
-      if (bubble.innerHTML !== newHtml) bubble.innerHTML = newHtml
+      if (msg.typing) {
+        bubble.replaceChildren(createTypingIndicator())
+      } else {
+        renderMarkdownIntoBubble(bubble, msg.text)
+      }
     }
 
     // Place row at correct position if needed
@@ -1067,8 +1140,6 @@ async function loadChatById(chatId) {
 // Initialize
 updateIncludeScreenBtn()
 renderChat()
-
-
 
 
 

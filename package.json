@@ -98,7 +98,7 @@
       "bin/**/*"
     ],
     "afterSign": "scripts/notarize.js",
-    "icon": "resources/icon_inverse.png",
+    "icon": "resources/icon-ios.png",
     "artifactName": "${productName}-${arch}.${ext}",
     "generateUpdatesFilesForAllChannels": true,
     "protocols": [
