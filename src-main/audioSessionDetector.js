@@ -65,7 +65,6 @@ class AudioSessionManager {
     this.platform = process.platform;
     this.isChecking = false;
     this.currentCheckPromise = null;
-    this.windowsHelperMissingLogged = false;
   }
 
   initialize(options = 1000) {
@@ -233,43 +232,21 @@ class AudioSessionManager {
     return false;
   }
 
-  async getWindowsParentPid(pid) {
-    if (!Number.isInteger(pid) || pid <= 0) return null;
-
-    try {
-      const { stdout } = await execAsync(
-        `powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-CimInstance Win32_Process -Filter \\"ProcessId = ${pid}\\").ParentProcessId"`
-      );
-      const parsed = parseInt(String(stdout || '').trim(), 10);
-      if (!Number.isInteger(parsed) || parsed <= 0) return null;
-      return parsed;
-    } catch (_) {
-      return null;
+  normalizeWindowsMicName(rawName) {
+    const normalized = String(rawName || '').trim();
+    if (!normalized) return 'Unknown Windows App';
+    const decoded = normalized.replace(/#/g, '\\');
+    const baseName = path.basename(decoded);
+    if (baseName && baseName !== '.' && baseName !== '\\') {
+      return baseName;
     }
+    return decoded;
   }
 
-  async isChildOfOwnProcessWindows(pid) {
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    if (this.isOwnProcessPid(pid)) return true;
-    if (process.platform !== 'win32') return false;
-
-    const visited = new Set();
-    let currentPid = pid;
-    while (currentPid > 0 && !visited.has(currentPid)) {
-      visited.add(currentPid);
-
-      if (this.isOwnProcessPid(currentPid)) {
-        return true;
-      }
-
-      const parentPid = await this.getWindowsParentPid(currentPid);
-      if (!Number.isInteger(parentPid) || parentPid <= 0) {
-        return false;
-      }
-      currentPid = parentPid;
-    }
-
-    return false;
+  isOwnWindowsMicEntry(entry) {
+    const key = String(entry?.key || '').toLowerCase();
+    const leaf = String(entry?.leaf || '').toLowerCase();
+    return key.includes('donethat') || leaf.includes('donethat');
   }
 
   isOwnLinuxSession(stream) {
@@ -334,85 +311,63 @@ class AudioSessionManager {
   }
 
   /**
-   * Windows: Uses helper binary (donethatmicmonitor.exe) to check for actual microphone usage.
-   * Only returns true when an external app is actively using the microphone.
+   * Windows: query privacy consent-store state to detect active microphone usage.
    */
   async detectWindowsMicrophoneUsage() {
     try {
-      const helperPath = this.resolveWindowsHelperPath();
-      if (!helperPath) {
-        if (!this.windowsHelperMissingLogged) {
-          this.windowsHelperMissingLogged = true;
-          log.warn('[AudioSession] Windows mic helper not found; microphone session detection disabled');
+      const script = `
+        $root='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone'
+        if (-not (Test-Path $root)) { Write-Output '[]'; exit 0 }
+        $active = Get-ChildItem -Path $root -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+          try {
+            $item = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction Stop
+            $stop = $item.LastUsedTimeStop
+            if ($null -eq $stop) { return }
+            $isActive = $false
+            if ($stop -is [byte[]]) {
+              $isActive = -not ($stop | Where-Object { $_ -ne 0 })
+            } else {
+              $isActive = ([int64]$stop -eq 0)
+            }
+            if ($isActive) { [PSCustomObject]@{ key = $_.Name; leaf = $_.PSChildName } }
+          } catch {}
         }
+        @($active) | ConvertTo-Json -Compress
+      `
+      const { stdout } = await execFileAsync('powershell', [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        script
+      ]);
+
+      const raw = String(stdout || '').trim();
+      log.debug(`[AudioSession] Windows mic registry raw stdout: ${raw}`);
+      if (!raw) {
         return null;
       }
 
-      try {
-        const { stdout } = await execAsync(`"${helperPath}"`);
-        log.debug(`[AudioSession] Windows helper raw stdout: ${String(stdout || '').trim()}`);
-        const sessions = JSON.parse(stdout);
-        const externalSessions = [];
-        let ownFilteredCount = 0;
+      const parsed = JSON.parse(raw);
+      const sessions = Array.isArray(parsed) ? parsed : [parsed];
+      const externalSessions = sessions.filter((entry) => !this.isOwnWindowsMicEntry(entry));
+      log.debug(`[AudioSession] Windows mic registry sessions: total=${sessions.length}, external=${externalSessions.length}`);
 
-        for (const session of sessions) {
-          const pid = Number(session && session.pid);
-          const name = String((session && session.name) || '').toLowerCase();
-
-          const isOwnSession =
-            (Number.isInteger(pid) && (this.isOwnProcessPid(pid) || await this.isChildOfOwnProcessWindows(pid))) ||
-            name.includes('donethat');
-
-          if (isOwnSession) {
-            ownFilteredCount += 1;
-            continue;
-          }
-          externalSessions.push(session);
-        }
-
-        log.debug(`[AudioSession] Windows helper sessions: total=${sessions.length}, ownFiltered=${ownFilteredCount}, external=${externalSessions.length}`);
-
-        if (externalSessions.length > 0) {
-          const s = externalSessions[0];
-          return {
-            isActive: true,
-            pid: s.pid,
-            name: s.name || 'Unknown Windows App',
-            path: null // path not returned by helper yet
-          };
-        }
-        return null;
-      } catch (helperError) {
-        log.error('[AudioSession] Windows helper execution failed:', helperError.message || helperError);
+      if (externalSessions.length === 0) {
         return null;
       }
+
+      const active = externalSessions[0];
+      return {
+        isActive: true,
+        pid: null,
+        name: this.normalizeWindowsMicName(active?.leaf || active?.key),
+        path: String(active?.key || '') || null
+      };
     } catch (error) {
-      log.error('Error in detectWindowsMicrophoneUsage:', error.message);
+      log.error('[AudioSession] Windows mic registry detection failed:', error.message || error);
       return null;
     }
-  }
-
-  resolveWindowsHelperPath() {
-    const binaryName = 'donethatmicmonitor.exe';
-    
-    const pathsToCheck = [
-      process.resourcesPath ? path.resolve(process.resourcesPath, 'app.asar.unpacked', 'bin', binaryName) : null,
-      process.resourcesPath ? path.resolve(process.resourcesPath, 'bin', binaryName) : null,
-      path.resolve(process.cwd(), 'bin', binaryName),
-      path.resolve(__dirname, '..', 'bin', binaryName),
-    ].filter(Boolean);
-
-    for (const p of pathsToCheck) {
-      try {
-        const normalized = p.toLowerCase();
-        if (normalized.includes(`${path.sep}app.asar${path.sep}`) && !normalized.includes(`${path.sep}app.asar.unpacked${path.sep}`)) {
-          continue;
-        }
-        if (fs.existsSync(p)) return p;
-      } catch (_) {}
-    }
-    
-    return null;
   }
 
   /**
