@@ -22,7 +22,6 @@ if (process.platform === 'linux') {
 
 const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification, powerMonitor, globalShortcut, session } = require('electron')
 const path = require('path')
-const fs = require('fs')
 const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
 const { AuthServer } = require('./src-main/auth-server')
@@ -215,59 +214,9 @@ if (!app.isPackaged) {
 // Set interval in the capture module
 setCaptureInterval(SCREENSHOT_INTERVAL_MINUTES);
 
-function resolveTrayIconPath(fileName) {
-  const candidates = [path.join(__dirname, 'resources', fileName)]
-  if (process.platform === 'linux' && app.isPackaged) {
-    candidates.unshift(
-      path.join(process.resourcesPath, 'tray-icons', fileName),
-      path.join(process.resourcesPath, fileName),
-      path.join(process.resourcesPath, 'resources', fileName),
-      path.join(process.resourcesPath, 'app.asar', 'resources', fileName),
-      path.join(process.resourcesPath, 'app.asar.unpacked', 'resources', fileName),
-      path.join(app.getAppPath(), 'resources', fileName)
-    )
-  }
-
-  for (const candidate of candidates) {
-    try {
-      if (process.platform === 'linux') {
-        log.info('[tray-icon] candidate', { fileName, candidate, exists: fs.existsSync(candidate) })
-      }
-      if (fs.existsSync(candidate)) {
-        if (process.platform === 'linux') {
-          log.info('[tray-icon] resolved icon path', { fileName, selected: candidate, candidates })
-        }
-        return candidate
-      }
-    } catch (_) {}
-  }
-
-  if (process.platform === 'linux') {
-    log.warn('[tray-icon] no icon candidate exists on disk, using fallback candidate[0]', { fileName, fallback: candidates[0], candidates })
-  }
-  return candidates[0]
-}
-
-function logTrayImageState(label, image, iconPath) {
-  if (process.platform !== 'linux') return
-  try {
-    const size = image && typeof image.getSize === 'function' ? image.getSize() : { width: 0, height: 0 }
-    const empty = !image || (typeof image.isEmpty === 'function' ? image.isEmpty() : true)
-    log.info('[tray-icon] image state', {
-      label,
-      iconPath,
-      empty,
-      width: size.width || 0,
-      height: size.height || 0
-    })
-  } catch (error) {
-    log.warn('[tray-icon] failed to inspect image state', { label, iconPath, error: error?.message || String(error) })
-  }
-}
-
-let iconRecordingPath = resolveTrayIconPath('icon_recording.png')
-let iconPausedPath = resolveTrayIconPath('icon_paused.png')
-let iconErrorPath = resolveTrayIconPath('icon_error.png')
+let iconRecordingPath = path.join(__dirname, 'resources', 'icon_recording.png')
+let iconPausedPath = path.join(__dirname, 'resources', 'icon_paused.png')
+let iconErrorPath = path.join(__dirname, 'resources', 'icon_error.png')
 // State module and variables
 let stateManager = null
 let tray = null
@@ -1010,24 +959,15 @@ app.whenReady().then(async () => {
   });
 
   // Create tray with initial error icon
-  if (process.platform === 'linux') {
-    let trayIconPath = iconErrorPath
-    if (!fs.existsSync(trayIconPath)) {
-      const fallbackPath = resolveTrayIconPath('icon.png')
-      log.warn('Linux tray icon path missing, using fallback icon path', { iconErrorPath, fallbackPath })
-      trayIconPath = fallbackPath
-    }
-    log.info('[tray-icon] creating tray from path', { trayIconPath })
-    tray = new Tray(trayIconPath)
-  } else {
-    let trayIcon = nativeImage.createFromPath(iconErrorPath)
-    // Apply platform-specific resizing for initial icon
-    if (process.platform === 'darwin') {
-      // macOS menu bar icons should be 18-22px
-      trayIcon = trayIcon.resize({ width: 18, height: 18 })
-    }
-    tray = new Tray(trayIcon)
+  let trayIcon = nativeImage.createFromPath(iconErrorPath)
+
+  // Apply platform-specific resizing for initial icon
+  if (process.platform === 'darwin') {
+    // macOS menu bar icons should be 18-22px
+    trayIcon = trayIcon.resize({ width: 18, height: 18 })
   }
+
+  tray = new Tray(trayIcon)
   tray.setToolTip('DoneThat')
 
   // Call setupAutoStart here to ensure it runs after app is ready
@@ -1358,27 +1298,16 @@ function updateTrayIcon(isActuallyRecording) {
     tooltip = 'DoneThat - Error';
   }
 
-  if (process.platform === 'linux') {
-    let iconPathToUse = iconPath
-    if (!fs.existsSync(iconPathToUse)) {
-      const fallbackPath = resolveTrayIconPath('icon.png')
-      log.warn('Linux tray state icon path missing, using fallback icon path', { iconPath, fallbackPath })
-      iconPathToUse = fallbackPath
-    }
-    log.info('[tray-icon] setting tray image from path', { iconPath, iconPathToUse })
-    tray.setImage(iconPathToUse)
-  } else {
-    // Load and set the appropriate icon
-    let icon = nativeImage.createFromPath(iconPath)
+  // Load and set the appropriate icon
+  let icon = nativeImage.createFromPath(iconPath)
 
-    // MODIFY the resizing code to skip Windows
-    if (process.platform === 'darwin') {
-      // macOS menu bar icons look best at 18-22px
-      icon = icon.resize({ width: 18, height: 18 })
-    }
-
-    tray.setImage(icon)
+  // MODIFY the resizing code to skip Windows
+  if (process.platform === 'darwin') {
+    // macOS menu bar icons look best at 18-22px
+    icon = icon.resize({ width: 18, height: 18 })
   }
+
+  tray.setImage(icon)
 
   // Clear any previous title (macOS specific)
   if (process.platform === 'darwin') {
