@@ -1852,8 +1852,15 @@ function setupContextCaptureListeners() {
           if (!pattern || !pattern.trim()) return;
           const chip = document.createElement('div');
           chip.className = 'context-pattern-chip inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-700 rounded text-sm';
-          chip.innerHTML = `<span>${pattern}</span><button type="button" class="text-gray-500 hover:text-gray-700 ml-1 chip-remove">×</button>`;
-          chip.querySelector('.chip-remove').addEventListener('click', () => {
+
+          const chipText = document.createElement('span');
+          chipText.textContent = pattern;
+          const chipRemove = document.createElement('button');
+          chipRemove.type = 'button';
+          chipRemove.className = 'text-gray-500 hover:text-gray-700 ml-1 chip-remove';
+          chipRemove.textContent = '×';
+
+          chipRemove.addEventListener('click', () => {
             if (contextManaged) return;
             const i = titlePatterns.indexOf(pattern);
             if (i !== -1) {
@@ -1863,6 +1870,8 @@ function setupContextCaptureListeners() {
               saveContextApps();
             }
           });
+          chip.appendChild(chipText);
+          chip.appendChild(chipRemove);
           titlePatternContainer.insertBefore(chip, titlePatternInput);
         });
       };

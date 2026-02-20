@@ -42,7 +42,13 @@ function routeLink(url, opts = {}) {
       return { ok: true, type: 'internal', view };
     }
 
-    shell.openExternal(url);
+    const parsed = new URL(url);
+    const protocol = parsed.protocol.toLowerCase();
+    if (protocol !== 'http:' && protocol !== 'https:' && protocol !== 'mailto:') {
+      return { ok: false, reason: 'unsupported-protocol' };
+    }
+
+    shell.openExternal(parsed.toString());
     return { ok: true, type: 'external' };
   } catch (e) {
     console.error('[routeLink] error', source, e);
@@ -56,5 +62,4 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
   window.routeLink = routeLink;
 }
-
 

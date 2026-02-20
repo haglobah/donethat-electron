@@ -107,6 +107,45 @@ function applyScrollAndClamp(desired) {
   chatContainer.scrollTop = chatContainer.scrollHeight
 }
 
+function escapeHtmlAttribute(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function sanitizeChatUrl(url) {
+  if (!url) return null
+  const value = String(url).trim()
+  if (!value) return null
+
+  if (value.startsWith('donethat://')) {
+    return value
+  }
+
+  try {
+    const parsed = new URL(value)
+    const protocol = parsed.protocol.toLowerCase()
+    if (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:') {
+      return parsed.toString()
+    }
+  } catch (_) {}
+
+  if (value.toLowerCase().startsWith('mailto:')) {
+    return value
+  }
+
+  return null
+}
+
+function buildSafeChatAnchor(displayText, url) {
+  const safeUrl = sanitizeChatUrl(url)
+  if (!safeUrl) return displayText
+  const escapedUrl = escapeHtmlAttribute(safeUrl)
+  return `<a href="${escapedUrl}" class="chat-link" data-url="${escapedUrl}">${displayText}</a>`
+}
+
 // Enhanced markdown parser for chat bubbles (supports bold, italic, code, lists, and links)
 function parseMarkdown(text) {
   if (!text) return ''
@@ -166,13 +205,13 @@ function parseMarkdown(text) {
       // Images: ![alt](url) -> render alt text only
       .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1')
       // Angle links: <https://...> or <mailto:...>
-      .replace(/<((?:https?:\/\/|mailto:)[^\s>]+)>/g, '<a href="$1" class="chat-link" data-url="$1">$1</a>')
+      .replace(/<((?:https?:\/\/|mailto:)[^\s>]+)>/g, (_m, url) => buildSafeChatAnchor(url, url))
       // Plain emails -> mailto links
-      .replace(/\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g, '<a href="mailto:$1" class="chat-link" data-url="mailto:$1">$1</a>')
+      .replace(/\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g, (_m, email) => buildSafeChatAnchor(email, `mailto:${email}`))
       // Markdown links: [text](url) FIRST
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="chat-link" data-url="$2">$1</a>')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, textValue, url) => buildSafeChatAnchor(textValue, url))
       // Plain URLs (including donethat://) AFTER markdown links, avoid matching inside attributes
-      .replace(/(^|[^"'>=])((?:https?:\/\/|donethat:\/\/)[^\s]+)/g, (m, p1, url) => `${p1}<a href="${url}" class="chat-link" data-url="${url}">${url}</a>`)
+      .replace(/(^|[^"'>=])((?:https?:\/\/|donethat:\/\/)[^\s]+)/g, (_m, p1, url) => `${p1}${buildSafeChatAnchor(url, url)}`)
       // Bold: **text** or __text__
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/__(.*?)__/g, '<strong>$1</strong>')
@@ -872,31 +911,41 @@ function renderRecentChatsList() {
   const chatsToShow = recentChats.slice(0, endIndex)
   const hasMore = endIndex < recentChats.length
 
-  let html = '<div class="recent-chats-list">'
-  
-  chatsToShow.forEach((chat, index) => {
+  const listEl = document.createElement('div')
+  listEl.className = 'recent-chats-list'
+
+  chatsToShow.forEach((chat) => {
     let preview = chat.previewText || 'New conversation'
     // Truncate to max 30 characters and add ellipsis
     const MAX_PREVIEW_LENGTH = 30
     if (preview.length > MAX_PREVIEW_LENGTH) {
       preview = preview.substring(0, MAX_PREVIEW_LENGTH) + '...'
     }
-    html += `
-      <div class="recent-chat-item" data-chat-id="${chat.id}">
-        <span class="recent-chat-preview">${escapeHtml(preview)}</span>
-      </div>
-    `
+
+    const chatItem = document.createElement('div')
+    chatItem.className = 'recent-chat-item'
+    if (chat && chat.id != null) {
+      chatItem.dataset.chatId = String(chat.id)
+    }
+
+    const previewEl = document.createElement('span')
+    previewEl.className = 'recent-chat-preview'
+    previewEl.textContent = preview
+
+    chatItem.appendChild(previewEl)
+    listEl.appendChild(chatItem)
   })
 
   if (hasMore) {
-    html += '<div class="recent-chats-load-more">→</div>'
+    const loadMore = document.createElement('div')
+    loadMore.className = 'recent-chats-load-more'
+    loadMore.textContent = '→'
+    listEl.appendChild(loadMore)
   }
 
-  html += '</div>'
-  recentChatsContainer.innerHTML = html
+  recentChatsContainer.replaceChildren(listEl)
 
   // Infinite scroll detection and drag scrolling - attach listener to the scrollable list (horizontal scroll)
-  const listEl = recentChatsContainer.querySelector('.recent-chats-list')
   if (listEl) {
     // Add drag scrolling support (re-add each time since innerHTML replaces the element)
     let isDragging = false
@@ -975,12 +1024,6 @@ function renderRecentChatsList() {
   })
 }
 
-function escapeHtml(text) {
-  const div = document.createElement('div')
-  div.textContent = text
-  return div.innerHTML
-}
-
 function updateRecentChatsVisibility() {
   const hasActiveChat = messages.length > 0 || pendingMessages.length > 0
   if (hasActiveChat || isLoadingChat) {
@@ -1024,7 +1067,6 @@ async function loadChatById(chatId) {
 // Initialize
 updateIncludeScreenBtn()
 renderChat()
-
 
 
 

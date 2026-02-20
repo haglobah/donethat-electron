@@ -56,7 +56,7 @@
     "dotenv": "^17.2.4",
     "dotenv-cli": "^11.0.0",
     "electron": "^40.2.1",
-    "electron-builder": "^26.7.0",
+    "electron-builder": "^26.8.1",
     "electron-notarize": "^1.2.2",
     "jest": "^30.2.0",
     "npm-check-updates": "^19.3.2",
@@ -85,6 +85,9 @@
   },
   "optionalDependencies": {
     "electron-liquid-glass": "^1.1.1"
+  },
+  "overrides": {
+    "tar": "7.5.8"
   },
   "build": {
     "appId": "com.donethat.app",

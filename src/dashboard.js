@@ -350,22 +350,40 @@ if (summarySubmitBtn) {
             }
           }
   
-          // Render bullet points with time information
-          const bulletHTML = bulletPoints.map((point, index) => {
-            const isChecked = bulletPointsChecked[index];
-            const timeInfo = point.duration && formatDuration(point.duration) ? `<span class="bullet-time-chip ${!isChecked ? 'bullet-time-chip-crossed' : ''}">${formatDuration(point.duration)}</span>` : '';
-            return `
-              <div class="bullet-item">
-                <input type="checkbox" class="bullet-checkbox" id="bullet-${index}" ${isChecked ? 'checked' : ''}>
-                <label for="bullet-${index}" class="bullet-text ${!isChecked ? 'bullet-text-crossed' : ''}">${point.text}</label>
-                ${timeInfo}
-              </div>
-            `;
-          }).join('');
-
           // Populate overlay bullets
           if (summaryBulletsContainer) {
-            summaryBulletsContainer.innerHTML = bulletHTML;
+            summaryBulletsContainer.textContent = '';
+            const bulletsFragment = document.createDocumentFragment();
+            bulletPoints.forEach((point, index) => {
+              const isChecked = bulletPointsChecked[index];
+              const bulletItem = document.createElement('div');
+              bulletItem.className = 'bullet-item';
+
+              const checkbox = document.createElement('input');
+              checkbox.type = 'checkbox';
+              checkbox.className = 'bullet-checkbox';
+              checkbox.id = `bullet-${index}`;
+              checkbox.checked = !!isChecked;
+
+              const label = document.createElement('label');
+              label.setAttribute('for', `bullet-${index}`);
+              label.className = `bullet-text ${!isChecked ? 'bullet-text-crossed' : ''}`;
+              label.textContent = point?.text || '';
+
+              bulletItem.appendChild(checkbox);
+              bulletItem.appendChild(label);
+
+              const durationText = point.duration && formatDuration(point.duration);
+              if (durationText) {
+                const timeInfo = document.createElement('span');
+                timeInfo.className = `bullet-time-chip ${!isChecked ? 'bullet-time-chip-crossed' : ''}`;
+                timeInfo.textContent = durationText;
+                bulletItem.appendChild(timeInfo);
+              }
+
+              bulletsFragment.appendChild(bulletItem);
+            });
+            summaryBulletsContainer.appendChild(bulletsFragment);
           }
   
           // Render custom bullets

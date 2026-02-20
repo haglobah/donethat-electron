@@ -98,7 +98,8 @@ jobs:
           
       - name: Setup DigiCert code signing for Windows
         if: matrix.platform == 'win'
-        uses: digicert/ssm-code-signing@v1.1.1
+        # Pinned to commit SHA to prevent mutable-tag supply chain risk.
+        uses: digicert/ssm-code-signing@9476a0a3282f68a0ad4ca1898bb7cefd5be1f0db
         
       - name: Setup DigiCert certificate and environment variables
         if: matrix.platform == 'win'
