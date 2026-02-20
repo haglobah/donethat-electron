@@ -350,6 +350,7 @@ class AudioSessionManager {
 
       try {
         const { stdout } = await execAsync(`"${helperPath}"`);
+        log.debug(`[AudioSession] Windows helper raw stdout: ${String(stdout || '').trim()}`);
         const sessions = JSON.parse(stdout);
         const externalSessions = [];
         let ownFilteredCount = 0;
