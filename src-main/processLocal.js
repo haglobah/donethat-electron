@@ -555,12 +555,6 @@ async function processDataLocally(idToken, screenshots, inputData, testMode = fa
       idleTime = inputData.idleTime;
     }
 
-    // Skip local processing if system idle time exceeds 5 minutes (300 seconds)
-    if (typeof idleTime === 'number' && idleTime >= 300) {
-      log.warn('Skipping local processing due to idle time > 5 minutes');
-      return { success: false, skipped: true, reason: 'idle' };
-    }
-
     const prevImages = inputData?.previousScreenshotData?.images?.map(i => i.base64Data) ?? [];
     let structured;
     try {
@@ -601,8 +595,7 @@ async function processDataLocally(idToken, screenshots, inputData, testMode = fa
     const baseParams = config.parameters || {};
     const paramsToSend = {
       ...baseParams,
-      application_activity: applicationActivity || '',
-      audio_transcript: (audioChunks && audioChunks.length > 0) ? '(audio provided as multimodal input)' : ''
+      application_activity: applicationActivity || ''
     };
 
     // If no structured result (LLM failed after retries), skip submission this round

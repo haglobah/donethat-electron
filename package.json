@@ -119,6 +119,28 @@
       "src-main/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "resources/icon_recording.png",
+        "to": "tray-icons/icon_recording.png"
+      },
+      {
+        "from": "resources/icon_paused.png",
+        "to": "tray-icons/icon_paused.png"
+      },
+      {
+        "from": "resources/icon_error.png",
+        "to": "tray-icons/icon_error.png"
+      },
+      {
+        "from": "resources/icon_inverse.png",
+        "to": "tray-icons/icon_inverse.png"
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "tray-icons/icon.png"
+      }
+    ],
     "directories": {
       "buildResources": "resources",
       "output": "release"

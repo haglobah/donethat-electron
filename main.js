@@ -52,14 +52,15 @@ const {
   initScreenCapturePermissionHandling
 } = require('./src-main/captureScreenshots')
 const { initWindowsPermissionHandling, checkPermissions: checkWindowsPermission } = require('./src-main/captureWindows')
-const { checkMicrophonePermissionPassive } = require('./src-main/captureAudio')
+const { checkMicrophonePermission } = require('./src-main/captureAudio')
 
 const {
   startCaptureInterval,
   stopCaptureInterval,
   isCapturing,
   setCaptureInterval,
-  initCapture
+  initCapture,
+  getInputDataSettings
 } = require('./src-main/capture')
 const { startContextCapture, stopContextCapture } = require('./src-main/contextCapture')
 const { initState } = require('./src-main/main-state')
@@ -218,8 +219,10 @@ function resolveTrayIconPath(fileName) {
   const candidates = [path.join(__dirname, 'resources', fileName)]
   if (process.platform === 'linux' && app.isPackaged) {
     candidates.unshift(
+      path.join(process.resourcesPath, 'tray-icons', fileName),
       path.join(process.resourcesPath, fileName),
       path.join(process.resourcesPath, 'resources', fileName),
+      path.join(process.resourcesPath, 'app.asar', 'resources', fileName),
       path.join(process.resourcesPath, 'app.asar.unpacked', 'resources', fileName),
       path.join(app.getAppPath(), 'resources', fileName)
     )
@@ -227,6 +230,9 @@ function resolveTrayIconPath(fileName) {
 
   for (const candidate of candidates) {
     try {
+      if (process.platform === 'linux') {
+        log.info('[tray-icon] candidate', { fileName, candidate, exists: fs.existsSync(candidate) })
+      }
       if (fs.existsSync(candidate)) {
         if (process.platform === 'linux') {
           log.info('[tray-icon] resolved icon path', { fileName, selected: candidate, candidates })
@@ -272,6 +278,8 @@ let startupMainWindowReady = false
 let startupAuthCheckResolved = false
 let startupIsAuthenticated = null
 let startupUnauthedWindowShown = false
+let startupPermissionWindowShown = false
+let startupInputDataListenerRegistered = false
 // Persist overlay position
 let overlayStore = null
 let savedOverlayPosition = null
@@ -753,33 +761,12 @@ ipcMain.handle('checkWindowsPermission', async () => {
 
 ipcMain.handle('checkMicrophonePermission', async (_event, forceRefresh = false) => {
   try {
-    const passive = !!(await checkMicrophonePermissionPassive(!!forceRefresh));
-    if (passive) return true;
-
-    // Fallback for startup ordering: query microphone permission directly from renderer context
-    // even before captureAudio.initialize() has bound its mainWindow reference.
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      try {
-        const status = await mainWindow.webContents.executeJavaScript(
-          `new Promise((resolve) => {
-            try {
-              if (!navigator.permissions || !navigator.permissions.query) {
-                resolve('unknown');
-                return;
-              }
-              navigator.permissions.query({ name: 'microphone' })
-                .then((result) => resolve(result && result.state ? result.state : 'unknown'))
-                .catch(() => resolve('unknown'));
-            } catch (_) {
-              resolve('unknown');
-            }
-          })`
-        );
-        return status === 'granted';
-      } catch (_) {}
-    }
-
-    return false;
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    const hasPermission = await checkMicrophonePermission(!!forceRefresh, {
+      allowPrompt: false,
+      mainWindow
+    });
+    return !!hasPermission;
   } catch (error) {
     log.warn('Passive microphone permission check failed:', error);
     return false;
@@ -1848,6 +1835,14 @@ function createWindow() {
       
       // Initialize capture with auth error handler
       initCapture(mainWindow, handleCaptureAuthErrors, stateManager.getIdToken);
+      if (!startupInputDataListenerRegistered) {
+        startupInputDataListenerRegistered = true;
+        ipcMain.on('updateInputDataSettings', () => {
+          setTimeout(() => {
+            maybeShowStartupWindowForUnauthenticated();
+          }, 0);
+        });
+      }
 
       // Initialize permission handlers
       initScreenCapturePermissionHandling(mainWindow, stateManager, checkAndAdjustRecording, sendOverlayState);
@@ -1859,6 +1854,7 @@ function createWindow() {
         stateManager?.updateWindowsPermission(winPerm);
         try { mainWindow.webContents.send('windowsPermission', { hasPermission: !!winPerm, source: 'initial-passive-check' }); } catch (e) {}
       } catch (e) {}
+      maybeShowStartupWindowForUnauthenticated();
 
       // Renderer will handle opening the window if a permission is missing based on emitted events
     })
@@ -2196,13 +2192,28 @@ function showWindowBelowTray() {
 }
 
 function maybeShowStartupWindowForUnauthenticated() {
-  if (startupUnauthedWindowShown) return;
   if (!startupMainWindowReady) return;
   if (!startupAuthCheckResolved) return;
 
-  if (startupIsAuthenticated === true) return;
+  if (startupIsAuthenticated !== true) {
+    if (startupUnauthedWindowShown) return;
+    startupUnauthedWindowShown = true;
+    showWindowBelowTray();
+    return;
+  }
 
-  startupUnauthedWindowShown = true;
+  if (startupPermissionWindowShown) return;
+
+  const inputDataSettings = getInputDataSettings();
+  const noScreenSetting = inputDataSettings?.screen === false;
+  const noWindowSetting = inputDataSettings?.windows === false;
+  const noScreenPermission = !(stateManager?.hasScreenCapturePermission() ?? false);
+  const noWindowPermission = !(stateManager?.hasWindowsPermission() ?? false);
+  const shouldShowForPermissionState = (noScreenSetting || noScreenPermission) && (noWindowSetting && noWindowPermission);
+
+  if (!shouldShowForPermissionState) return;
+
+  startupPermissionWindowShown = true;
   showWindowBelowTray();
 }
 
@@ -2358,6 +2369,7 @@ ipcMain.on('checkScreenCapturePermission', async () => {
       source: 'explicit-check'
     });
   }
+  maybeShowStartupWindowForUnauthenticated();
 });
 
 /**

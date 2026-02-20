@@ -178,8 +178,10 @@ async function handleDeviceSwitch(_deviceInfo) {
  * Check microphone permission once
  * @returns {Promise<boolean>} Permission status
  */
-async function checkMicrophonePermission(forceRefresh = false) {
-  if (!mainWindow) return false
+async function checkMicrophonePermission(forceRefresh = false, options = {}) {
+  const allowPrompt = options.allowPrompt !== false
+  const targetWindow = options.mainWindow || mainWindow
+  if (!targetWindow || targetWindow.isDestroyed?.()) return false
 
   if (forceRefresh) {
     hasMicrophonePermission = null
@@ -198,31 +200,38 @@ async function checkMicrophonePermission(forceRefresh = false) {
 
       // Only prompt on explicit user-driven checks.
       if (forceRefresh && status === 'not-determined') {
+        if (!allowPrompt) {
+          hasMicrophonePermission = false
+          if (targetWindow && !targetWindow.isDestroyed()) {
+            try { targetWindow.webContents.send('microphonePermission', { hasPermission: false, source: 'runtime-check' }) } catch (_) {}
+          }
+          return false
+        }
         const granted = await systemPreferences.askForMediaAccess('microphone')
         hasMicrophonePermission = !!granted
-        if (!granted && mainWindow && !mainWindow.isDestroyed()) {
-          try { mainWindow.webContents.send('microphonePermission', { hasPermission: false, source: 'runtime-check' }) } catch (_) {}
+        if (!granted && targetWindow && !targetWindow.isDestroyed()) {
+          try { targetWindow.webContents.send('microphonePermission', { hasPermission: false, source: 'runtime-check' }) } catch (_) {}
         }
         return !!granted
       }
 
       hasMicrophonePermission = false
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        try { mainWindow.webContents.send('microphonePermission', { hasPermission: false, source: 'runtime-check' }) } catch (_) {}
+      if (targetWindow && !targetWindow.isDestroyed()) {
+        try { targetWindow.webContents.send('microphonePermission', { hasPermission: false, source: 'runtime-check' }) } catch (_) {}
       }
       return false
     } catch (error) {
       log.error('Error checking microphone permission via macOS API:', error)
       hasMicrophonePermission = false
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        try { mainWindow.webContents.send('microphonePermission', { hasPermission: false, source: 'runtime-check' }) } catch (_) {}
+      if (targetWindow && !targetWindow.isDestroyed()) {
+        try { targetWindow.webContents.send('microphonePermission', { hasPermission: false, source: 'runtime-check' }) } catch (_) {}
       }
       return false
     }
   }
 
   try {
-    const hasPermission = await mainWindow.webContents.executeJavaScript(
+    const hasPermission = await targetWindow.webContents.executeJavaScript(
       `new Promise(resolve => {
         navigator.mediaDevices.getUserMedia({ audio: true, video: false })
           .then(stream => {
@@ -242,16 +251,16 @@ async function checkMicrophonePermission(forceRefresh = false) {
 
     hasMicrophonePermission = hasPermission
 
-    if (!hasPermission && mainWindow && !mainWindow.isDestroyed()) {
-      try { mainWindow.webContents.send('microphonePermission', { hasPermission: false, source: 'runtime-check' }) } catch (_) {}
+    if (!hasPermission && targetWindow && !targetWindow.isDestroyed()) {
+      try { targetWindow.webContents.send('microphonePermission', { hasPermission: false, source: 'runtime-check' }) } catch (_) {}
     }
     return hasPermission
   } catch (error) {
     log.error('Error checking microphone permission:', error)
     hasMicrophonePermission = false
     try {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('microphonePermission', { hasPermission: false, source: 'runtime-check' })
+      if (targetWindow && !targetWindow.isDestroyed()) {
+        targetWindow.webContents.send('microphonePermission', { hasPermission: false, source: 'runtime-check' })
       }
     } catch (_) {}
     return false

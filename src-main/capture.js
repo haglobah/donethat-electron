@@ -1,5 +1,12 @@
 const log = require('electron-log');
-const { captureScreenshot, getPreviousScreenshots, saveCurrentScreenshot, scaleScreenshotToPreviousSize, checkScreenCapturePermission } = require('./captureScreenshots');
+const {
+  captureScreenshot,
+  getPreviousScreenshots,
+  saveCurrentScreenshot,
+  scaleScreenshotToPreviousSize,
+  checkScreenCapturePermission,
+  PREVIOUS_SCREENSHOT_SCALE_FACTOR
+} = require('./captureScreenshots');
 const { ipcMain, powerMonitor } = require('electron');
 const { default: Store } = require('electron-store');
 const { isLocalProcessingAvailable, processDataLocally } = require('./processLocal');
@@ -9,6 +16,8 @@ const { saveCaptureDump, appendCaptureDump } = require('./captureDump');
 const {
   beginCycle,
   endCycle,
+  consumeCompletedCycleTelemetry,
+  requeueCompletedCycleTelemetry,
   recordCyclePhaseDuration,
   recordPermissionCheck,
   recordCaptureCycleSkippedOverlap
@@ -961,6 +970,7 @@ async function captureAndSend(idToken) {
     const scaledPreviousScreenshotData = previousScreenshotData?.images?.length
       ? {
           timestamp: previousScreenshotData.timestamp,
+          scale: PREVIOUS_SCREENSHOT_SCALE_FACTOR,
           images: previousScreenshotData.images.map((img) => {
             const dataUrl = img?.base64Data ?? img
             if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return { ...img }
@@ -986,9 +996,16 @@ async function captureAndSend(idToken) {
       log.warn('[capture] Capture dump save failed:', e?.message)
     }
 
+    const clientTelemetry = consumeCompletedCycleTelemetry();
     const sendStartedAt = Date.now();
-    const sendResult = await _sendToServer(idToken, screenshots, inputData, previousForUpload, null)
+    const sendResult = await _sendToServer(idToken, screenshots, inputData, previousForUpload, clientTelemetry)
     recordCyclePhaseDuration('send', Date.now() - sendStartedAt);
+
+    const sendFailed = sendResult === false
+      || !!(sendResult && typeof sendResult === 'object' && (sendResult.authError || sendResult.tokenExpired || sendResult.success === false));
+    if (sendFailed && clientTelemetry) {
+      requeueCompletedCycleTelemetry(clientTelemetry);
+    }
 
     return {
       sendResult,
