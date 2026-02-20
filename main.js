@@ -22,6 +22,7 @@ if (process.platform === 'linux') {
 
 const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification, powerMonitor, globalShortcut, session } = require('electron')
 const path = require('path')
+const fs = require('fs')
 const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
 const { AuthServer } = require('./src-main/auth-server')
@@ -159,8 +160,17 @@ function getHotkeyLabel() {
   return `${getHotkeyLabelPrefix()}+Shift+${suffix}`;
 }
 
+function isWaylandLinuxSession() {
+  if (process.platform !== 'linux') return false;
+  return !!(process.env.WAYLAND_DISPLAY || (process.env.XDG_SESSION_TYPE && process.env.XDG_SESSION_TYPE.toLowerCase() === 'wayland'));
+}
+
 function registerGlobalShortcut() {
   try {
+    if (isWaylandLinuxSession()) {
+      log.info('Skipping global shortcut registration on Wayland (unsupported by many compositors)');
+      return;
+    }
     const accel = getHotkeyAccelerator();
     if (lastRegisteredAccelerator) {
       try { globalShortcut.unregister(lastRegisteredAccelerator); } catch (_) {}
@@ -207,12 +217,17 @@ setCaptureInterval(SCREENSHOT_INTERVAL_MINUTES);
 function resolveTrayIconPath(fileName) {
   const candidates = [path.join(__dirname, 'resources', fileName)]
   if (process.platform === 'linux' && app.isPackaged) {
-    candidates.unshift(path.join(process.resourcesPath, fileName))
+    candidates.unshift(
+      path.join(process.resourcesPath, fileName),
+      path.join(process.resourcesPath, 'resources', fileName),
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'resources', fileName),
+      path.join(app.getAppPath(), 'resources', fileName)
+    )
   }
 
   for (const candidate of candidates) {
     try {
-      if (require('fs').existsSync(candidate)) return candidate
+      if (fs.existsSync(candidate)) return candidate
     } catch (_) {}
   }
 
@@ -984,6 +999,11 @@ app.whenReady().then(async () => {
 
   // Create tray with initial error icon
   let trayIcon = nativeImage.createFromPath(iconErrorPath)
+  if (process.platform === 'linux' && trayIcon.isEmpty()) {
+    const fallbackPath = resolveTrayIconPath('icon.png')
+    trayIcon = nativeImage.createFromPath(fallbackPath)
+    log.warn('Linux tray icon was empty, using fallback icon path', { iconErrorPath, fallbackPath })
+  }
 
   // Apply platform-specific resizing for initial icon
   if (process.platform === 'darwin') {
@@ -1324,6 +1344,11 @@ function updateTrayIcon(isActuallyRecording) {
 
   // Load and set the appropriate icon
   let icon = nativeImage.createFromPath(iconPath)
+  if (process.platform === 'linux' && icon.isEmpty()) {
+    const fallbackPath = resolveTrayIconPath('icon.png')
+    icon = nativeImage.createFromPath(fallbackPath)
+    log.warn('Linux tray state icon was empty, using fallback icon path', { iconPath, fallbackPath })
+  }
 
   // MODIFY the resizing code to skip Windows
   if (process.platform === 'darwin') {
