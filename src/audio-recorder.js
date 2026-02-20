@@ -463,6 +463,7 @@ window.startAudioRecording = async function(options = {}) {
     window.allowAudioResume = true;
     audioChunks = [];
     chunkTimestamps = [];
+    accumulatedChunks = [];
     cycleRecordingIntervals = [];
     currentRecordingIntervalStartMs = null;
     stopAllInputStreams();
@@ -777,6 +778,10 @@ function concatUint8Arrays(chunks) {
   return merged;
 }
 
+function uint8ArrayToArrayBuffer(uint8) {
+  return uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength);
+}
+
 function encodeAudioBufferToWav(audioBuffer) {
   const numChannels = audioBuffer.numberOfChannels;
   const sampleRate = audioBuffer.sampleRate;
@@ -858,6 +863,54 @@ async function convertAudioBase64ToWavBase64(base64Audio) {
   }
 }
 
+async function mergePreparedChunksToWavBase64(preparedChunks) {
+  let decodeContext = null;
+  try {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) return null;
+    if (!Array.isArray(preparedChunks) || preparedChunks.length === 0) return null;
+
+    decodeContext = new AudioContextCtor();
+    const decodedBuffers = [];
+
+    for (const chunk of preparedChunks) {
+      const decoded = await decodeContext.decodeAudioData(uint8ArrayToArrayBuffer(chunk.bytes));
+      if (!decoded || decoded.length === 0) {
+        return null;
+      }
+      decodedBuffers.push(decoded);
+    }
+
+    const targetSampleRate = decodedBuffers[0].sampleRate;
+    const targetChannels = decodedBuffers.reduce(
+      (max, b) => Math.max(max, b.numberOfChannels || 1),
+      1
+    );
+    const totalLength = decodedBuffers.reduce((sum, b) => sum + b.length, 0);
+    if (!Number.isFinite(totalLength) || totalLength <= 0) {
+      return null;
+    }
+
+    const mergedBuffer = decodeContext.createBuffer(targetChannels, totalLength, targetSampleRate);
+    let frameOffset = 0;
+    for (const decoded of decodedBuffers) {
+      for (let c = 0; c < targetChannels; c++) {
+        const sourceChannel = decoded.getChannelData(Math.min(c, decoded.numberOfChannels - 1));
+        mergedBuffer.getChannelData(c).set(sourceChannel, frameOffset);
+      }
+      frameOffset += decoded.length;
+    }
+
+    return arrayBufferToBase64(encodeAudioBufferToWav(mergedBuffer));
+  } catch (_) {
+    return null;
+  } finally {
+    if (decodeContext) {
+      try { await decodeContext.close(); } catch (_) {}
+    }
+  }
+}
+
 /**
  * Create a chunk from the current buffer
  */
@@ -913,7 +966,7 @@ window.getAudioChunksWithTimestamps = async function(resetBuffers = false) {
   }
 };
 
-function normalizeAudioChunksForCycle(audioChunksInput, recordingIntervals, systemAudioEnabled) {
+async function normalizeAudioChunksForCycle(audioChunksInput, recordingIntervals, systemAudioEnabled) {
   const prepared = (audioChunksInput || [])
     .map((chunk, index) => {
       const rawBase64 = typeof chunk?.base64Data === 'string' && chunk.base64Data.includes(',')
@@ -947,8 +1000,8 @@ function normalizeAudioChunksForCycle(audioChunksInput, recordingIntervals, syst
 
   if (prepared.length === 0) return null;
 
-  const cycleStartMs = prepared[0].startMs;
-  const cycleEndMs = prepared[prepared.length - 1].endMs;
+  const cycleStartMs = Math.min(...prepared.map((chunk) => chunk.startMs));
+  const cycleEndMs = Math.max(...prepared.map((chunk) => chunk.endMs));
   if (!Number.isFinite(cycleStartMs) || !Number.isFinite(cycleEndMs) || cycleEndMs <= cycleStartMs) {
     return null;
   }
@@ -957,14 +1010,29 @@ function normalizeAudioChunksForCycle(audioChunksInput, recordingIntervals, syst
     prepared.flatMap((chunk) => chunk.speechIntervals)
   );
 
-  const mergedBytes = concatUint8Arrays(prepared.map((chunk) => chunk.bytes));
-  if (!mergedBytes || mergedBytes.length === 0) {
-    return null;
+  const hasMultipleSegments = prepared.length > 1;
+  let payloadBase64 = null;
+  let payloadMimeType = prepared[0].mimeType;
+
+  if (hasMultipleSegments) {
+    const wavBase64 = await mergePreparedChunksToWavBase64(prepared);
+    if (wavBase64) {
+      payloadBase64 = wavBase64;
+      payloadMimeType = 'audio/wav';
+    }
+  }
+
+  if (!payloadBase64) {
+    const mergedBytes = concatUint8Arrays(prepared.map((chunk) => chunk.bytes));
+    if (!mergedBytes || mergedBytes.length === 0) {
+      return null;
+    }
+    payloadBase64 = arrayBufferToBase64(mergedBytes.buffer);
   }
 
   return {
-    base64Data: arrayBufferToBase64(mergedBytes.buffer),
-    mimeType: prepared[0].mimeType,
+    base64Data: payloadBase64,
+    mimeType: payloadMimeType,
     cycleStartMs,
     cycleEndMs,
     recordingIntervals: mergeIntervals(recordingIntervals),
@@ -985,10 +1053,13 @@ window.getAudioCycleWithMetadata = async function(resetBuffers = false, includeO
     const snapshotAt = Date.now();
     const recordingIntervalsSnapshot = getRecordingIntervalsSnapshot(snapshotAt);
     const chunks = await window.getAudioChunksWithTimestamps(resetBuffers);
-    const audioCycle = normalizeAudioChunksForCycle(chunks, recordingIntervalsSnapshot, lastStartOptions.systemAudio);
+    const audioCycle = await normalizeAudioChunksForCycle(chunks, recordingIntervalsSnapshot, lastStartOptions.systemAudio);
 
     if (audioCycle && includeOpenAIWav) {
-      const wavBase64 = await convertAudioBase64ToWavBase64(audioCycle.base64Data);
+      const alreadyWav = (audioCycle.mimeType || '').split(';')[0] === 'audio/wav';
+      const wavBase64 = alreadyWav
+        ? audioCycle.base64Data
+        : await convertAudioBase64ToWavBase64(audioCycle.base64Data);
       if (wavBase64) {
         audioCycle.openai = {
           base64Data: wavBase64,
@@ -1023,7 +1094,7 @@ function trimAudioBuffer() {
   const now = Date.now();
   const cutoffTime = now - MAX_BUFFER_DURATION_MS;
   
-  let cutoffIndex = 0;
+  let cutoffIndex = -1;
   for (let i = 0; i < chunkTimestamps.length; i++) {
     if (chunkTimestamps[i] >= cutoffTime) {
       cutoffIndex = i;
@@ -1031,13 +1102,16 @@ function trimAudioBuffer() {
     }
   }
   
-  if (cutoffIndex > 0) {
+  if (cutoffIndex === -1) {
+    audioChunks = [];
+    chunkTimestamps = [];
+  } else if (cutoffIndex > 0) {
     audioChunks = audioChunks.slice(cutoffIndex);
     chunkTimestamps = chunkTimestamps.slice(cutoffIndex);
-    
-    // Prune old intervals
-    userSpeechIntervals = userSpeechIntervals.filter(i => i.endMs >= cutoffTime);
   }
+
+  // Prune old intervals
+  userSpeechIntervals = userSpeechIntervals.filter(i => i.endMs >= cutoffTime);
 }
 
 /**
