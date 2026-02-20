@@ -9,6 +9,7 @@ const MAX_LOG_META_LENGTH = 240
 
 let pendingAggregate = createAggregate()
 let activeCycle = null
+const pendingLogs = []
 const completedQueue = []
 let cycleSeq = 0
 
@@ -48,6 +49,17 @@ function trimLogs(logs) {
   while (logs.length > MAX_LOG_ENTRIES_PER_CYCLE) {
     logs.shift()
   }
+}
+
+function cloneLogs(logs) {
+  if (!Array.isArray(logs) || logs.length === 0) return []
+  return logs.slice(-MAX_LOG_ENTRIES_PER_CYCLE)
+}
+
+function getTargetLogs() {
+  return activeCycle && Array.isArray(activeCycle.logs)
+    ? activeCycle.logs
+    : pendingLogs
 }
 
 function parsePositiveNumber(value, fallback = 0) {
@@ -99,10 +111,7 @@ function sanitizeMeta(meta = {}) {
 }
 
 function recordLog(level, source, message, meta = null) {
-  if (!activeCycle || !Array.isArray(activeCycle.logs)) {
-    return
-  }
-  const logs = activeCycle.logs
+  const logs = getTargetLogs()
   const entry = {
     ts: Date.now(),
     level: clampString(level, 'info', 16),
@@ -147,8 +156,9 @@ function beginCycle(metadata = {}) {
       captureIntervalMin: parsePositiveNumber(metadata.captureIntervalMin, 0)
     },
     aggregate: mergedAggregate,
-    logs: []
+    logs: cloneLogs(pendingLogs)
   }
+  pendingLogs.length = 0
   trimLogs(activeCycle.logs)
 }
 
