@@ -9,7 +9,7 @@ let mainWindow = null
 let isAudioTrackingActive = false
 let startRecordingPromise = null
 
-// Permission state - check once, remember forever
+// Permission state cache (updated by checks; do not treat as permanent truth)
 let hasMicrophonePermission = null
 
 // Configuration state
@@ -184,7 +184,6 @@ async function checkMicrophonePermission(forceRefresh = false) {
   if (forceRefresh) {
     hasMicrophonePermission = null
   }
-
   if (hasMicrophonePermission !== null) {
     return hasMicrophonePermission
   }
@@ -264,9 +263,11 @@ async function checkMicrophonePermission(forceRefresh = false) {
  * Returns true only when permission is already granted.
  * @returns {Promise<boolean>}
  */
-async function checkMicrophonePermissionPassive() {
+async function checkMicrophonePermissionPassive(forceRefresh = false) {
   if (!mainWindow || mainWindow.isDestroyed()) return false
-
+  if (forceRefresh) {
+    hasMicrophonePermission = null
+  }
   if (hasMicrophonePermission !== null) {
     return hasMicrophonePermission
   }

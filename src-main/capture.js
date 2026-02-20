@@ -59,7 +59,7 @@ function isValidImageDataUrl(dataUrl) {
 // Track input data settings
 let inputDataSettings = {
   audio: false,
-  windows: false,
+  windows: true,
   systemAudio: false,
   screen: true
 };
@@ -487,6 +487,7 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
 
     // Open system settings based on platform
     if (process.platform === 'darwin') {
+      markPermissionFocusOnNextLaunch('microphone-permission');
       shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
     } else if (process.platform === 'win32') {
       shell.openExternal('ms-settings:privacy-microphone');
@@ -1285,11 +1286,16 @@ function isCapturing() {
   return isActive;
 }
 
+function getInputDataSettings() {
+  return { ...inputDataSettings };
+}
+
 module.exports = {
   captureAndSend,
   startCaptureInterval,
   stopCaptureInterval,
   isCapturing,
+  getInputDataSettings,
   setCaptureInterval,
   initCapture,
 

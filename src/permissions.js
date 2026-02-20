@@ -168,7 +168,7 @@ async function retryWindowsPermissionStartupCheck() {
 
 async function retryMicrophonePermissionStartupCheck() {
   try {
-    const hasPermission = await ipcRenderer.invoke('checkMicrophonePermission');
+    const hasPermission = await ipcRenderer.invoke('checkMicrophonePermission', true);
     return !!hasPermission;
   } catch (_) {}
   return false;

@@ -204,9 +204,24 @@ if (!app.isPackaged) {
 // Set interval in the capture module
 setCaptureInterval(SCREENSHOT_INTERVAL_MINUTES);
 
-let iconRecordingPath = path.join(__dirname, 'resources', 'icon_recording.png')
-let iconPausedPath = path.join(__dirname, 'resources', 'icon_paused.png')
-let iconErrorPath = path.join(__dirname, 'resources', 'icon_error.png')
+function resolveTrayIconPath(fileName) {
+  const candidates = [path.join(__dirname, 'resources', fileName)]
+  if (process.platform === 'linux' && app.isPackaged) {
+    candidates.unshift(path.join(process.resourcesPath, fileName))
+  }
+
+  for (const candidate of candidates) {
+    try {
+      if (require('fs').existsSync(candidate)) return candidate
+    } catch (_) {}
+  }
+
+  return candidates[0]
+}
+
+let iconRecordingPath = resolveTrayIconPath('icon_recording.png')
+let iconPausedPath = resolveTrayIconPath('icon_paused.png')
+let iconErrorPath = resolveTrayIconPath('icon_error.png')
 // State module and variables
 let stateManager = null
 let tray = null
@@ -696,9 +711,9 @@ ipcMain.handle('checkWindowsPermission', async () => {
   }
 });
 
-ipcMain.handle('checkMicrophonePermission', async () => {
+ipcMain.handle('checkMicrophonePermission', async (_event, forceRefresh = false) => {
   try {
-    const passive = !!(await checkMicrophonePermissionPassive());
+    const passive = !!(await checkMicrophonePermissionPassive(!!forceRefresh));
     if (passive) return true;
 
     // Fallback for startup ordering: query microphone permission directly from renderer context

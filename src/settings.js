@@ -34,7 +34,7 @@ let userTimezone = "UTC"; // Default timezone
 let workdays = [1, 2, 3, 4, 5]; // Default Mon-Fri (0=Sun, 6=Sat)
 let workhours = { start: "09:00", end: "17:00" }; // Default 9 AM to 5 PM
 let inputData = {
-  windows: false,
+  windows: true,
   audio: false,
   systemAudio: false,
   screen: true
@@ -624,7 +624,7 @@ async function saveUserSettings(type, value) {
           const partial = { ...value };
           delete partial.__partial;
           const merged = {
-            windows: partial.windows != null ? !!partial.windows : (current.windows != null ? !!current.windows : false),
+            windows: partial.windows != null ? !!partial.windows : (current.windows != null ? !!current.windows : true),
             audio: partial.audio != null ? !!partial.audio : (current.audio != null ? !!current.audio : false),
             systemAudio: partial.systemAudio != null ? !!partial.systemAudio : (current.systemAudio != null ? !!current.systemAudio : false),
             screen: partial.screen != null ? !!partial.screen : (current.screen != null ? !!current.screen : true)
@@ -642,7 +642,7 @@ async function saveUserSettings(type, value) {
           const fallback = { ...value };
           delete fallback.__partial;
           settingsData.inputData = {
-            windows: fallback.windows != null ? !!fallback.windows : false,
+            windows: fallback.windows != null ? !!fallback.windows : true,
             audio: fallback.audio != null ? !!fallback.audio : false,
             systemAudio: fallback.systemAudio != null ? !!fallback.systemAudio : false,
             screen: fallback.screen != null ? !!fallback.screen : true
@@ -774,9 +774,9 @@ async function updateSettingsUI(settings) {
   };
 
   // Use persisted user toggle state; permissions are tracked separately.
-  // Defaults: screen=true, systemAudio=false
+  // Defaults: screen=true, windows=true, systemAudio=false
   inputData = {
-    windows: resolveInputDataValue(managedInputData.windows, loadedInputData.windows, false),
+    windows: resolveInputDataValue(managedInputData.windows, loadedInputData.windows, true),
     audio: resolveInputDataValue(managedInputData.audio, loadedInputData.audio, false),
     systemAudio: resolveInputDataValue(managedInputData.systemAudio, loadedInputData.systemAudio, false),
     screen: resolveInputDataValue(managedInputData.screen, loadedInputData.screen, true)
