@@ -49,6 +49,8 @@ const PORTAL_RELOAD_COOLDOWN_MS = 10000; // avoid reloads shortly after token de
 const PORTAL_BLANK_URL = 'about:blank';
 const PORTAL_DEFAULT_URL = 'https://app.donethat.ai';
 let portalSuspendedForTray = false;
+let portalSuspendInFlight = false;
+let portalResumePendingAfterSuspend = false;
 
 // Inform main that renderer is ready to receive auth tokens as early as possible
 try { ipcRenderer.send('renderer:ready-for-auth'); } catch (_) {}
@@ -160,6 +162,9 @@ function canReloadPortalNow() {
 function safePortalReload(reason) {
   try {
     if (!portalView) return;
+    if (portalSuspendedForTray) return;
+    const currentSrc = portalView.getAttribute('src') || '';
+    if (currentSrc === PORTAL_BLANK_URL) return;
     // Only reload once the webview has emitted dom-ready; calling reload too early
     // can throw “WebView must be attached to the DOM and dom-ready emitted”.
     if (!portalDomReady) return;
@@ -185,9 +190,12 @@ function setPortalSuspendedPlaceholderVisible(visible) {
 
 function suspendPortalForTray() {
   if (!portalView) return;
+  if (portalSuspendedForTray) return;
   try { clearPortalLoadWatchdog(); } catch (_) {}
   try { hidePortalSpinner(); } catch (_) {}
   portalDomReady = false;
+  portalSuspendInFlight = true;
+  portalResumePendingAfterSuspend = false;
   const currentSrc = portalView.getAttribute('src') || '';
   if (currentSrc && currentSrc !== PORTAL_BLANK_URL) {
     portalView.setAttribute('data-last-src', currentSrc);
@@ -202,6 +210,10 @@ function suspendPortalForTray() {
 
 function resumePortalFromTrayIfNeeded() {
   if (!portalView || !portalSuspendedForTray) return;
+  if (portalSuspendInFlight) {
+    portalResumePendingAfterSuspend = true;
+    return;
+  }
   if (!(getCurrentView && getCurrentView() === 'dashboard')) {
     return;
   }
@@ -568,6 +580,9 @@ document.addEventListener('DOMContentLoaded', () => {
     reloadSuspendedPortalBtn.addEventListener('click', () => {
       portalSuspendedForTray = true;
       resumePortalFromTrayIfNeeded();
+      if (portalSuspendInFlight) return;
+      const currentSrc = portalView ? (portalView.getAttribute('src') || '') : '';
+      if (!portalView || currentSrc === PORTAL_BLANK_URL) return;
       if (portalView && navigator.onLine) {
         try {
           hideWebviewError();
@@ -669,6 +684,12 @@ document.addEventListener('DOMContentLoaded', () => {
             showWebviewError();
             return;
           }
+          if (portalSuspendedForTray) {
+            resumePortalFromTrayIfNeeded();
+            if (portalSuspendInFlight) return;
+          }
+          const currentSrc = portalView.getAttribute('src') || '';
+          if (currentSrc === PORTAL_BLANK_URL) return;
           hideWebviewError();
           if (typeof portalView.reloadIgnoringCache === 'function') {
             portalView.reloadIgnoringCache();
@@ -881,12 +902,26 @@ document.addEventListener('DOMContentLoaded', () => {
       showWebviewError();
       clearPortalLoadWatchdog();
       hidePortalSpinner();
+      if (portalSuspendInFlight) {
+        portalSuspendInFlight = false;
+        if (portalResumePendingAfterSuspend) {
+          portalResumePendingAfterSuspend = false;
+          resumePortalFromTrayIfNeeded();
+        }
+      }
     });
     try { portalView.addEventListener('did-fail-provisional-load', (event) => {
       console.error('[Webview] Provisional load failed:', event);
       showWebviewError();
       clearPortalLoadWatchdog();
       hidePortalSpinner();
+      if (portalSuspendInFlight) {
+        portalSuspendInFlight = false;
+        if (portalResumePendingAfterSuspend) {
+          portalResumePendingAfterSuspend = false;
+          resumePortalFromTrayIfNeeded();
+        }
+      }
     }); } catch (_) {}
 
     try { portalView.addEventListener('did-start-loading', () => {
@@ -901,6 +936,13 @@ document.addEventListener('DOMContentLoaded', () => {
     try { portalView.addEventListener('did-stop-loading', () => {
       clearPortalLoadWatchdog();
       hidePortalSpinner();
+      if (portalSuspendInFlight) {
+        portalSuspendInFlight = false;
+        if (portalResumePendingAfterSuspend) {
+          portalResumePendingAfterSuspend = false;
+          resumePortalFromTrayIfNeeded();
+        }
+      }
     }); } catch (_) {}
 
     // When the webview is ready, send login token and optionally open devtools
