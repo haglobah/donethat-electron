@@ -535,7 +535,9 @@ window.startAudioRecording = async function(options = {}) {
     if (normalizedOptions.systemAudio) {
       const systemStream = await navigator.mediaDevices.getDisplayMedia({
         audio: true,
-        video: false
+        // Keep macOS/Windows behavior unchanged; request video on Linux where
+        // portals may require an active display stream for loopback stability.
+        video: isWaylandLinuxSession()
       });
       const systemTrack = systemStream.getAudioTracks()[0];
       if (!systemTrack || systemTrack.readyState !== 'live') {
