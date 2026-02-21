@@ -241,17 +241,6 @@ function emitAudioRestartTelemetry(reason, action) {
   } catch (_) {}
 }
 
-function emitAudioConversionMetric(action, meta = {}) {
-  try {
-    if (!window.electronAPI || typeof window.electronAPI.send !== 'function') return;
-    window.electronAPI.send('audio-device-changed', {
-      event: 'audio-conversion-metric',
-      action,
-      ...meta
-    });
-  } catch (_) {}
-}
-
 async function requestAudioRestart(reason, options = {}) {
   const { requireUnhealthy = false } = options;
   if (!isRecording) {
@@ -499,7 +488,6 @@ window.startAudioRecording = async function(options = {}) {
     window.allowAudioResume = true;
     audioChunks = [];
     chunkTimestamps = [];
-    accumulatedChunks = [];
     cycleRecordingIntervals = [];
     currentRecordingIntervalStartMs = null;
     stopAllInputStreams();
@@ -691,6 +679,14 @@ async function restartAudioRecording() {
   try {
     const wasIntervalActive = currentRecordingIntervalStartMs != null;
     endRecordingInterval(Date.now());
+
+    // Flush pending MediaRecorder data before we snapshot in-memory blobs.
+    try {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.requestData();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    } catch (_) {}
     
     // Stop the current recording cleanly
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
@@ -792,161 +788,6 @@ function base64ToUint8Array(base64) {
   return new Uint8Array(base64ToArrayBuffer(base64));
 }
 
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const sub = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-    binary += String.fromCharCode.apply(null, sub);
-  }
-  return btoa(binary);
-}
-
-function concatUint8Arrays(chunks) {
-  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return merged;
-}
-
-function uint8ArrayToArrayBuffer(uint8) {
-  return uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength);
-}
-
-function encodeAudioBufferToWav(audioBuffer) {
-  const numChannels = audioBuffer.numberOfChannels;
-  const sampleRate = audioBuffer.sampleRate;
-  const length = audioBuffer.length;
-  const bytesPerSample = 2;
-  const blockAlign = numChannels * bytesPerSample;
-  const dataSize = length * blockAlign;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-
-  function writeString(offset, str) {
-    for (let i = 0; i < str.length; i++) {
-      view.setUint8(offset + i, str.charCodeAt(i));
-    }
-  }
-
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * blockAlign, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true); // bits per sample
-  writeString(36, 'data');
-  view.setUint32(40, dataSize, true);
-
-  const channelData = [];
-  for (let c = 0; c < numChannels; c++) {
-    channelData.push(audioBuffer.getChannelData(c));
-  }
-
-  let offset = 44;
-  for (let i = 0; i < length; i++) {
-    for (let c = 0; c < numChannels; c++) {
-      const sample = Math.max(-1, Math.min(1, channelData[c][i]));
-      const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-      view.setInt16(offset, int16, true);
-      offset += 2;
-    }
-  }
-
-  return buffer;
-}
-
-async function convertAudioBase64ToWavBase64(base64Audio) {
-  let decodeContext = null;
-  try {
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextCtor) {
-      emitAudioConversionMetric('unsupported-no-audiocontext');
-      return null;
-    }
-
-    const arrayBuffer = base64ToArrayBuffer(base64Audio);
-    decodeContext = new AudioContextCtor();
-    const decoded = await decodeContext.decodeAudioData(arrayBuffer.slice(0));
-
-    const wavBuffer = encodeAudioBufferToWav(decoded);
-    emitAudioConversionMetric('success', {
-      sampleRate: decoded.sampleRate,
-      numberOfChannels: decoded.numberOfChannels,
-      length: decoded.length
-    });
-    return arrayBufferToBase64(wavBuffer);
-  } catch (error) {
-    console.warn('Failed to convert audio payload to WAV:', error);
-    emitAudioConversionMetric('failed', {
-      error: error?.message || String(error)
-    });
-    return null;
-  } finally {
-    if (decodeContext) {
-      try { await decodeContext.close(); } catch (_) {}
-    }
-  }
-}
-
-async function mergePreparedChunksToWavBase64(preparedChunks) {
-  let decodeContext = null;
-  try {
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextCtor) return null;
-    if (!Array.isArray(preparedChunks) || preparedChunks.length === 0) return null;
-
-    decodeContext = new AudioContextCtor();
-    const decodedBuffers = [];
-
-    for (const chunk of preparedChunks) {
-      const decoded = await decodeContext.decodeAudioData(uint8ArrayToArrayBuffer(chunk.bytes));
-      if (!decoded || decoded.length === 0) {
-        return null;
-      }
-      decodedBuffers.push(decoded);
-    }
-
-    const targetSampleRate = decodedBuffers[0].sampleRate;
-    const targetChannels = decodedBuffers.reduce(
-      (max, b) => Math.max(max, b.numberOfChannels || 1),
-      1
-    );
-    const totalLength = decodedBuffers.reduce((sum, b) => sum + b.length, 0);
-    if (!Number.isFinite(totalLength) || totalLength <= 0) {
-      return null;
-    }
-
-    const mergedBuffer = decodeContext.createBuffer(targetChannels, totalLength, targetSampleRate);
-    let frameOffset = 0;
-    for (const decoded of decodedBuffers) {
-      for (let c = 0; c < targetChannels; c++) {
-        const sourceChannel = decoded.getChannelData(Math.min(c, decoded.numberOfChannels - 1));
-        mergedBuffer.getChannelData(c).set(sourceChannel, frameOffset);
-      }
-      frameOffset += decoded.length;
-    }
-
-    return arrayBufferToBase64(encodeAudioBufferToWav(mergedBuffer));
-  } catch (_) {
-    return null;
-  } finally {
-    if (decodeContext) {
-      try { await decodeContext.close(); } catch (_) {}
-    }
-  }
-}
-
 /**
  * Create a chunk from the current buffer
  */
@@ -962,13 +803,14 @@ async function bufferToChunk() {
   // Return intervals overlapping this chunk
   const relevantIntervals = userSpeechIntervals.filter(i => i.endMs >= startMs && i.startMs <= endMs);
   
-  return { 
+  const chunk = { 
     base64Data: base64, 
     mimeType, 
     startMs, 
     endMs,
     speechIntervals: relevantIntervals
   };
+  return chunk;
 }
 
 /**
@@ -1020,7 +862,8 @@ async function normalizeAudioChunksForCycle(audioChunksInput, recordingIntervals
 
       return {
         index,
-        bytes,
+        base64Data: rawBase64,
+        byteLength: bytes.length,
         mimeType: (chunk?.mimeType || '').split(';')[0] || 'audio/webm',
         startMs: Number(chunk?.startMs),
         endMs: Number(chunk?.endMs),
@@ -1035,36 +878,8 @@ async function normalizeAudioChunksForCycle(audioChunksInput, recordingIntervals
     });
 
   if (prepared.length === 0) return null;
-
-  let payloadSegments = prepared;
-  const hasMultipleSegments = prepared.length > 1;
-  let payloadBase64 = null;
-  let payloadMimeType = prepared[0].mimeType;
-
-  if (hasMultipleSegments) {
-    const wavBase64 = await mergePreparedChunksToWavBase64(prepared);
-    if (wavBase64) {
-      payloadBase64 = wavBase64;
-      payloadMimeType = 'audio/wav';
-    } else {
-      // Do not byte-concatenate container formats (e.g. webm segments) because that can produce invalid media.
-      // Fall back to one valid segment (latest) to keep payload decodable.
-      payloadSegments = [prepared[prepared.length - 1]];
-      payloadMimeType = payloadSegments[0].mimeType;
-      payloadBase64 = arrayBufferToBase64(uint8ArrayToArrayBuffer(payloadSegments[0].bytes));
-    }
-  }
-
-  if (!payloadBase64) {
-    const mergedBytes = concatUint8Arrays(payloadSegments.map((chunk) => chunk.bytes));
-    if (!mergedBytes || mergedBytes.length === 0) {
-      return null;
-    }
-    payloadBase64 = arrayBufferToBase64(mergedBytes.buffer);
-  }
-
-  const cycleStartMs = Math.min(...payloadSegments.map((chunk) => chunk.startMs));
-  const cycleEndMs = Math.max(...payloadSegments.map((chunk) => chunk.endMs));
+  const cycleStartMs = Math.min(...prepared.map((chunk) => chunk.startMs));
+  const cycleEndMs = Math.max(...prepared.map((chunk) => chunk.endMs));
   if (!Number.isFinite(cycleStartMs) || !Number.isFinite(cycleEndMs) || cycleEndMs <= cycleStartMs) {
     return null;
   }
@@ -1072,20 +887,26 @@ async function normalizeAudioChunksForCycle(audioChunksInput, recordingIntervals
   const payloadSpeechIntervals = filterIntervalsToWindow(
     (speechIntervalsInput && speechIntervalsInput.length > 0)
       ? speechIntervalsInput
-      : payloadSegments.flatMap((chunk) => chunk.speechIntervals),
+      : prepared.flatMap((chunk) => chunk.speechIntervals),
     cycleStartMs,
     cycleEndMs
   );
   const payloadRecordingIntervals = filterIntervalsToWindow(recordingIntervals, cycleStartMs, cycleEndMs);
 
   return {
-    base64Data: payloadBase64,
-    mimeType: payloadMimeType,
+    mimeType: prepared[0].mimeType,
     cycleStartMs,
     cycleEndMs,
     recordingIntervals: payloadRecordingIntervals,
     speechIntervals: payloadSpeechIntervals,
-    segmentCount: payloadSegments.length,
+    segmentCount: prepared.length,
+    segments: prepared.map((segment) => ({
+      base64Data: segment.base64Data,
+      mimeType: segment.mimeType,
+      startMs: segment.startMs,
+      endMs: segment.endMs,
+      byteLength: segment.byteLength
+    })),
     source: 'mixed',
     systemAudioEnabled: !!systemAudioEnabled
   };
@@ -1098,6 +919,7 @@ async function normalizeAudioChunksForCycle(audioChunksInput, recordingIntervals
  */
 window.getAudioCycleWithMetadata = async function(resetBuffers = false, includeOpenAIWav = false) {
   try {
+    void includeOpenAIWav;
     const snapshotAt = Date.now();
     const recordingIntervalsSnapshot = getRecordingIntervalsSnapshot(snapshotAt);
     const speechIntervalsSnapshot = getSpeechIntervalsSnapshot();
@@ -1108,20 +930,6 @@ window.getAudioCycleWithMetadata = async function(resetBuffers = false, includeO
       speechIntervalsSnapshot,
       lastStartOptions.systemAudio
     );
-
-    if (audioCycle && includeOpenAIWav) {
-      const alreadyWav = (audioCycle.mimeType || '').split(';')[0] === 'audio/wav';
-      const wavBase64 = alreadyWav
-        ? audioCycle.base64Data
-        : await convertAudioBase64ToWavBase64(audioCycle.base64Data);
-      if (wavBase64) {
-        audioCycle.openai = {
-          base64Data: wavBase64,
-          mimeType: 'audio/wav',
-          format: 'wav'
-        };
-      }
-    }
 
     if (resetBuffers) {
       const isActivelyRecording = !!(isRecording && mediaRecorder && mediaRecorder.state === 'recording');
@@ -1223,7 +1031,9 @@ window.shutdownAudioRecording = async function(options = {}) {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       const chunk = await bufferToChunk();
-      if (chunk) accumulatedChunks.push(chunk);
+      if (chunk) {
+        accumulatedChunks.push(chunk);
+      }
     }
     
     // Stop raw input streams and close context
@@ -1249,6 +1059,7 @@ window.shutdownAudioRecording = async function(options = {}) {
   }
 
   if (clearCycleState) {
+    accumulatedChunks = [];
     accumulatedRecordingIntervals = [];
     accumulatedSpeechIntervals = [];
     cycleRecordingIntervals = [];

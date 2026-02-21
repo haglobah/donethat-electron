@@ -1,7 +1,19 @@
 const log = require('electron-log')
 const { ipcMain, systemPreferences } = require('electron')
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
+const { promisify } = require('util')
+const { execFile } = require('child_process')
 const audioSessionDetector = require('./audioSessionDetector')
 const { recordAudioRestart, recordLog } = require('./telemetry')
+const execFileAsync = promisify(execFile)
+let ffmpegPath = null
+try {
+  ffmpegPath = require('ffmpeg-static')
+} catch (_) {
+  ffmpegPath = null
+}
 
 // Variables to track audio capture
 let isRecording = false
@@ -15,6 +27,213 @@ let hasMicrophonePermission = null
 // Configuration state
 let currentConfig = {
   systemAudio: false
+}
+
+function getAudioConversionLogLevel(action) {
+  return String(action || '').includes('failed') ? 'warn' : 'info'
+}
+
+function recordAudioConversion(action, meta = {}) {
+  recordLog(getAudioConversionLogLevel(action), 'audio-conversion', `audio-conversion-${action}`, {
+    sampleRate: meta.sampleRate,
+    channels: meta.channels,
+    length: meta.length,
+    segmentCount: meta.segmentCount,
+    byteLength: meta.byteLength,
+    error: meta.error,
+    stage: meta.stage
+  })
+}
+
+function normalizeBase64Audio(value) {
+  if (typeof value !== 'string' || value.length === 0) return null
+  return value.includes(',') ? value.split(',')[1] : value
+}
+
+function escapeForFfmpegConcat(filePath) {
+  return String(filePath).replace(/\\/g, '/').replace(/'/g, "'\\''")
+}
+
+function filterIntervalsToWindow(intervals, windowStartMs, windowEndMs) {
+  if (!Number.isFinite(windowStartMs) || !Number.isFinite(windowEndMs) || windowEndMs <= windowStartMs) {
+    return []
+  }
+  return (Array.isArray(intervals) ? intervals : [])
+    .map((interval) => {
+      const startMs = Number(interval?.startMs)
+      const endMs = Number(interval?.endMs)
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+        return null
+      }
+      const clippedStart = Math.max(startMs, windowStartMs)
+      const clippedEnd = Math.min(endMs, windowEndMs)
+      if (clippedEnd <= clippedStart) return null
+      return { startMs: clippedStart, endMs: clippedEnd }
+    })
+    .filter(Boolean)
+}
+
+async function runFfmpeg(args) {
+  if (!ffmpegPath) {
+    throw new Error('ffmpeg-static binary not available')
+  }
+  return execFileAsync(ffmpegPath, args, {
+    windowsHide: true,
+    maxBuffer: 10 * 1024 * 1024
+  })
+}
+
+async function buildCycleAudioPayload(rawAudioCycle, options = {}) {
+  if (!rawAudioCycle || typeof rawAudioCycle !== 'object') {
+    return null
+  }
+
+  const includeOpenAIWav = options.includeOpenAIWav === true
+  const sourceSegments = Array.isArray(rawAudioCycle.segments) ? rawAudioCycle.segments : []
+  const normalizedSegments = sourceSegments
+    .map((segment, index) => {
+      const base64Data = normalizeBase64Audio(segment?.base64Data)
+      if (!base64Data) return null
+      return {
+        index,
+        base64Data,
+        mimeType: (segment?.mimeType || 'audio/webm').split(';')[0] || 'audio/webm',
+        startMs: Number(segment?.startMs),
+        endMs: Number(segment?.endMs)
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const aStart = Number.isFinite(a.startMs) ? a.startMs : Number.MAX_SAFE_INTEGER
+      const bStart = Number.isFinite(b.startMs) ? b.startMs : Number.MAX_SAFE_INTEGER
+      return aStart - bStart || a.index - b.index
+    })
+  if (normalizedSegments.length === 0) {
+    return null
+  }
+
+  let payloadBase64 = normalizedSegments[normalizedSegments.length - 1].base64Data
+  let payloadMimeType = 'audio/webm'
+  let mergedSegmentCount = normalizedSegments.length
+  let effectiveStartMs = Number(rawAudioCycle.cycleStartMs)
+  let effectiveEndMs = Number(rawAudioCycle.cycleEndMs)
+
+  if (normalizedSegments.length === 1) {
+    payloadBase64 = normalizedSegments[0].base64Data
+    payloadMimeType = normalizedSegments[0].mimeType || 'audio/webm'
+    effectiveStartMs = normalizedSegments[0].startMs
+    effectiveEndMs = normalizedSegments[0].endMs
+    recordAudioConversion('webm-merge-success', {
+      segmentCount: 1,
+      byteLength: Buffer.byteLength(payloadBase64, 'base64')
+    })
+  } else {
+    let tempDir
+    try {
+      tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'donethat-audio-merge-'))
+      const manifestPath = path.join(tempDir, 'concat.txt')
+      const outputPath = path.join(tempDir, 'merged.webm')
+      const manifestLines = []
+
+      for (let i = 0; i < normalizedSegments.length; i += 1) {
+        const segmentPath = path.join(tempDir, `segment-${i}.webm`)
+        const buffer = Buffer.from(normalizedSegments[i].base64Data, 'base64')
+        if (!buffer || buffer.length === 0) {
+          continue
+        }
+        await fs.promises.writeFile(segmentPath, buffer)
+        manifestLines.push(`file '${escapeForFfmpegConcat(segmentPath)}'`)
+      }
+
+      if (manifestLines.length === 0) {
+        throw new Error('No valid WebM segments available for merge')
+      }
+
+      await fs.promises.writeFile(manifestPath, `${manifestLines.join('\n')}\n`, 'utf8')
+      try {
+        await runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', manifestPath, '-c', 'copy', outputPath])
+      } catch (_) {
+        await runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', manifestPath, '-c:a', 'libopus', '-b:a', '128k', outputPath])
+      }
+      const mergedBuffer = await fs.promises.readFile(outputPath)
+      if (!mergedBuffer || mergedBuffer.length === 0) {
+        throw new Error('Merged WebM output is empty')
+      }
+      payloadBase64 = mergedBuffer.toString('base64')
+      payloadMimeType = 'audio/webm'
+      mergedSegmentCount = normalizedSegments.length
+      effectiveStartMs = normalizedSegments[0].startMs
+      effectiveEndMs = normalizedSegments[normalizedSegments.length - 1].endMs
+      recordAudioConversion('webm-merge-success', {
+        segmentCount: normalizedSegments.length,
+        byteLength: mergedBuffer.length
+      })
+    } catch (error) {
+      const fallback = normalizedSegments[normalizedSegments.length - 1]
+      payloadBase64 = fallback.base64Data
+      payloadMimeType = fallback.mimeType || 'audio/webm'
+      mergedSegmentCount = 1
+      effectiveStartMs = fallback.startMs
+      effectiveEndMs = fallback.endMs
+      recordAudioConversion('webm-merge-failed', {
+        segmentCount: normalizedSegments.length,
+        error: error?.message || String(error),
+        stage: 'merge'
+      })
+    } finally {
+      if (tempDir) {
+        await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+      }
+    }
+  }
+
+  const audioCycle = {
+    base64Data: payloadBase64,
+    mimeType: payloadMimeType,
+    cycleStartMs: effectiveStartMs,
+    cycleEndMs: effectiveEndMs,
+    recordingIntervals: filterIntervalsToWindow(rawAudioCycle.recordingIntervals, effectiveStartMs, effectiveEndMs),
+    speechIntervals: filterIntervalsToWindow(rawAudioCycle.speechIntervals, effectiveStartMs, effectiveEndMs),
+    segmentCount: mergedSegmentCount,
+    source: rawAudioCycle.source || 'mixed',
+    systemAudioEnabled: !!rawAudioCycle.systemAudioEnabled
+  }
+
+  if (includeOpenAIWav) {
+    let tempDir
+    try {
+      tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'donethat-audio-wav-'))
+      const webmPath = path.join(tempDir, 'input.webm')
+      const wavPath = path.join(tempDir, 'output.wav')
+      await fs.promises.writeFile(webmPath, Buffer.from(payloadBase64, 'base64'))
+      await runFfmpeg(['-y', '-i', webmPath, '-acodec', 'pcm_s16le', wavPath])
+
+      const wavBuffer = await fs.promises.readFile(wavPath)
+      if (!wavBuffer || wavBuffer.length === 0) {
+        throw new Error('WAV conversion produced empty output')
+      }
+
+      audioCycle.openai = {
+        base64Data: wavBuffer.toString('base64'),
+        mimeType: 'audio/wav',
+        format: 'wav'
+      }
+      recordAudioConversion('wav-conversion-success', {
+        byteLength: wavBuffer.length
+      })
+    } catch (error) {
+      recordAudioConversion('wav-conversion-failed', {
+        error: error?.message || String(error),
+        stage: 'transcode'
+      })
+    } finally {
+      if (tempDir) {
+        await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+      }
+    }
+  }
+
+  return audioCycle
 }
 
 /**
@@ -60,11 +279,13 @@ function initialize(window, config = {}) {
     }
     if (info?.event === 'audio-conversion-metric') {
       const action = typeof info.action === 'string' ? info.action : 'unknown'
-      const level = action === 'failed' ? 'warn' : 'info'
-      recordLog(level, 'audio-conversion', `wav-conversion-${action}`, {
+      recordAudioConversion(action, {
         sampleRate: info.sampleRate,
-        channels: info.numberOfChannels,
+        channels: info.numberOfChannels || info.channels,
         length: info.length,
+        segmentCount: info.segmentCount,
+        byteLength: info.byteLength,
+        stage: info.stage,
         error: info.error
       })
       return
@@ -595,9 +816,10 @@ async function stopRecording(resetBuffers = false, options = {}) {
   try {
     const includeOpenAIWav = options.includeOpenAIWav === true
     if (mainWindow && !mainWindow.isDestroyed()) {
-      const audioCycle = await mainWindow.webContents.executeJavaScript(
+      const rawAudioCycle = await mainWindow.webContents.executeJavaScript(
         `window.getAudioCycleWithMetadata && window.getAudioCycleWithMetadata(${resetBuffers}, ${includeOpenAIWav})`
       )
+      const audioCycle = await buildCycleAudioPayload(rawAudioCycle, { includeOpenAIWav })
       if (audioCycle && typeof audioCycle === 'object' && audioCycle.base64Data) {
         return { audioCycle }
       }

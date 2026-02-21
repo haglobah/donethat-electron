@@ -134,8 +134,12 @@ function updateTopbarReloadVisibility(viewName) {
     if (!reloadBtn) return;
     if (viewName === 'dashboard') {
       reloadBtn.classList.remove('hidden');
+      reloadBtn.style.display = '';
+      reloadBtn.setAttribute('aria-hidden', 'false');
     } else {
       reloadBtn.classList.add('hidden');
+      reloadBtn.style.display = 'none';
+      reloadBtn.setAttribute('aria-hidden', 'true');
     }
   } catch (_) {}
 }
