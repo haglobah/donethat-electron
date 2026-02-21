@@ -782,7 +782,7 @@ app.whenReady().then(async () => {
         { types: ['screen'] },
         {
           wait: true,
-          timeoutMs: 10000,
+          timeoutMs: 30000,
           caller: 'display_media'
         }
       )
