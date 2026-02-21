@@ -788,6 +788,69 @@ function base64ToUint8Array(base64) {
   return new Uint8Array(base64ToArrayBuffer(base64));
 }
 
+function arrayBufferToBase64(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+let audioBufferToWavModulePromise = null;
+let decodeContext = null;
+
+async function getAudioBufferToWav() {
+  if (!audioBufferToWavModulePromise) {
+    audioBufferToWavModulePromise = import('audiobuffer-to-wav')
+      .then((mod) => mod?.default || mod);
+  }
+  return audioBufferToWavModulePromise;
+}
+
+function getDecodeContext() {
+  if (!decodeContext) {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) {
+      return null;
+    }
+    decodeContext = new AudioContextCtor();
+  }
+  return decodeContext;
+}
+
+async function decodeWebmToAudioBuffer(webmBuffer) {
+  const context = getDecodeContext();
+  if (!context) return null;
+  try {
+    if (context.state === 'suspended') {
+      await context.resume();
+    }
+  } catch (_) {}
+  return context.decodeAudioData(webmBuffer.slice(0));
+}
+
+window.convertWebmBase64ToWavBase64 = async function(base64Webm) {
+  try {
+    if (!base64Webm || typeof base64Webm !== 'string') {
+      return null;
+    }
+
+    const audioBufferToWav = await getAudioBufferToWav();
+    const webmBuffer = base64ToArrayBuffer(base64Webm).slice(0);
+    const audioBuffer = await decodeWebmToAudioBuffer(webmBuffer);
+    if (!audioBuffer) {
+      return null;
+    }
+
+    const wavBuffer = audioBufferToWav(audioBuffer);
+    return arrayBufferToBase64(wavBuffer);
+  } catch (error) {
+    console.error('Error converting WebM base64 to WAV base64:', error);
+    return null;
+  }
+};
+
 /**
  * Create a chunk from the current buffer
  */
@@ -835,7 +898,6 @@ window.getAudioChunksWithTimestamps = async function(resetBuffers = false) {
     if (resetBuffers && isRecording && mediaRecorder) {
       await cycleMediaRecorder();
     }
-    
     return result;
   } catch (error) {
     console.error('Error getting audio chunks with timestamps:', error);
@@ -930,7 +992,6 @@ window.getAudioCycleWithMetadata = async function(resetBuffers = false, includeO
       speechIntervalsSnapshot,
       lastStartOptions.systemAudio
     );
-
     if (resetBuffers) {
       const isActivelyRecording = !!(isRecording && mediaRecorder && mediaRecorder.state === 'recording');
       resetCycleRecordingIntervals(isActivelyRecording, Date.now());
@@ -997,20 +1058,6 @@ window.stopAudioRecording = async function() {
  */
 window.shutdownAudioRecording = async function(options = {}) {
   const clearCycleState = options && options.clearCycleState === true;
-  const preState = mediaRecorder ? mediaRecorder.state : 'none';
-  const preTracks = (mediaRecorder && mediaRecorder.stream) ? mediaRecorder.stream.getAudioTracks().map(t => ({
-    id: t.id,
-    readyState: t.readyState,
-    enabled: t.enabled,
-    muted: t.muted
-  })) : [];
-
-  const preMicTracks = micInputStream ? micInputStream.getAudioTracks().map(t => ({
-    id: t.id,
-    readyState: t.readyState,
-    enabled: t.enabled,
-    muted: t.muted
-  })) : [];
   if (mediaRecorder && isRecording) {
     endRecordingInterval(Date.now());
     if (cycleRecordingIntervals.length > 0) {
@@ -1066,14 +1113,6 @@ window.shutdownAudioRecording = async function(options = {}) {
     userSpeechIntervals = [];
     currentRecordingIntervalStartMs = null;
   }
-
-  const postActive = (() => {
-    try {
-      return !!(window.isRecorderActive && window.isRecorderActive());
-    } catch (_) {
-      return false;
-    }
-  })();
 };
 
 module.exports = {

@@ -1,19 +1,8 @@
 const log = require('electron-log')
 const { ipcMain, systemPreferences } = require('electron')
-const fs = require('fs')
-const os = require('os')
-const path = require('path')
-const { promisify } = require('util')
-const { execFile } = require('child_process')
 const audioSessionDetector = require('./audioSessionDetector')
 const { recordAudioRestart, recordLog } = require('./telemetry')
-const execFileAsync = promisify(execFile)
-let ffmpegPath = null
-try {
-  ffmpegPath = require('ffmpeg-static')
-} catch (_) {
-  ffmpegPath = null
-}
+let mediabunnyPromise = null
 
 // Variables to track audio capture
 let isRecording = false
@@ -50,10 +39,6 @@ function normalizeBase64Audio(value) {
   return value.includes(',') ? value.split(',')[1] : value
 }
 
-function escapeForFfmpegConcat(filePath) {
-  return String(filePath).replace(/\\/g, '/').replace(/'/g, "'\\''")
-}
-
 function filterIntervalsToWindow(intervals, windowStartMs, windowEndMs) {
   if (!Number.isFinite(windowStartMs) || !Number.isFinite(windowEndMs) || windowEndMs <= windowStartMs) {
     return []
@@ -73,14 +58,154 @@ function filterIntervalsToWindow(intervals, windowStartMs, windowEndMs) {
     .filter(Boolean)
 }
 
-async function runFfmpeg(args) {
-  if (!ffmpegPath) {
-    throw new Error('ffmpeg-static binary not available')
+async function getMediaBunny() {
+  if (!mediabunnyPromise) {
+    mediabunnyPromise = import('mediabunny')
   }
-  return execFileAsync(ffmpegPath, args, {
-    windowsHide: true,
-    maxBuffer: 10 * 1024 * 1024
-  })
+  return mediabunnyPromise
+}
+
+function arrayBufferToBase64(arrayBuffer) {
+  return Buffer.from(arrayBuffer).toString('base64')
+}
+
+function toOptionalString(value) {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+async function mergeWebmSegmentsToBase64(segments) {
+  const {
+    Input,
+    Output,
+    BufferSource,
+    BufferTarget,
+    WebMOutputFormat,
+    WEBM,
+    EncodedPacketSink,
+    EncodedAudioPacketSource,
+    EncodedVideoPacketSource
+  } = await getMediaBunny()
+
+  const inputs = segments.map((segment) => new Input({
+    source: new BufferSource(Buffer.from(segment.base64Data, 'base64')),
+    formats: [WEBM]
+  }))
+
+  try {
+    const baseTracks = await inputs[0].getTracks()
+    if (!baseTracks || baseTracks.length === 0) {
+      throw new Error('No tracks found in first segment')
+    }
+
+    const output = new Output({
+      format: new WebMOutputFormat(),
+      target: new BufferTarget()
+    })
+
+    const trackContexts = []
+    for (const track of baseTracks) {
+      if (track.isAudioTrack()) {
+        if (!track.codec) throw new Error('Missing audio codec for merge')
+        const source = new EncodedAudioPacketSource(track.codec)
+        const audioTrackMetadata = {
+          languageCode: toOptionalString(track.languageCode),
+          name: toOptionalString(track.name)
+        }
+        output.addAudioTrack(source, audioTrackMetadata)
+        trackContexts.push({
+          type: 'audio',
+          number: track.number,
+          source,
+          metaSent: false,
+          offset: 0,
+          sequence: 0
+        })
+      } else if (track.isVideoTrack()) {
+        if (!track.codec) throw new Error('Missing video codec for merge')
+        const source = new EncodedVideoPacketSource(track.codec)
+        const videoTrackMetadata = {
+          languageCode: toOptionalString(track.languageCode),
+          name: toOptionalString(track.name),
+          rotation: track.rotation,
+          frameRate: track.frameRate
+        }
+        output.addVideoTrack(source, videoTrackMetadata)
+        trackContexts.push({
+          type: 'video',
+          number: track.number,
+          source,
+          metaSent: false,
+          offset: 0,
+          sequence: 0
+        })
+      }
+    }
+
+    await output.start()
+
+    for (const input of inputs) {
+      const tracks = await input.getTracks()
+      for (const ctx of trackContexts) {
+        const track = tracks.find((candidate) => {
+          if (ctx.type === 'audio' && !candidate.isAudioTrack()) return false
+          if (ctx.type === 'video' && !candidate.isVideoTrack()) return false
+          return candidate.number === ctx.number
+        })
+        if (!track) continue
+
+        const sink = new EncodedPacketSink(track)
+        const decoderConfig = (!ctx.metaSent && typeof track.getDecoderConfig === 'function')
+          ? await track.getDecoderConfig()
+          : null
+
+        let segmentStartTs = null
+        let segmentEndTs = null
+        for await (const packet of sink.packets()) {
+          if (segmentStartTs == null) segmentStartTs = packet.timestamp
+          const normalizedTimestamp = (packet.timestamp - segmentStartTs) + ctx.offset
+          const normalizedPacket = packet.clone({
+            timestamp: normalizedTimestamp,
+            sequenceNumber: ctx.sequence
+          })
+          ctx.sequence += 1
+
+          const maybeMeta = (!ctx.metaSent && decoderConfig)
+            ? { decoderConfig }
+            : undefined
+          await ctx.source.add(normalizedPacket, maybeMeta)
+          if (!ctx.metaSent) ctx.metaSent = true
+          segmentEndTs = normalizedTimestamp + packet.duration
+        }
+
+        if (segmentEndTs != null) {
+          ctx.offset = segmentEndTs
+        }
+      }
+    }
+
+    await output.finalize()
+    const finalBuffer = output.target.buffer
+    if (!finalBuffer) {
+      throw new Error('Merged output buffer is empty')
+    }
+    return arrayBufferToBase64(finalBuffer)
+  } finally {
+    for (const input of inputs) {
+      try {
+        if (typeof input.dispose === 'function') {
+          input.dispose()
+        }
+      } catch (_) {}
+    }
+  }
+}
+
+async function convertWebmToWavInRenderer(base64Webm) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return null
+  }
+  const script = `window.convertWebmBase64ToWavBase64 && window.convertWebmBase64ToWavBase64(${JSON.stringify(base64Webm)})`
+  return mainWindow.webContents.executeJavaScript(script)
 }
 
 async function buildCycleAudioPayload(rawAudioCycle, options = {}) {
@@ -128,45 +253,15 @@ async function buildCycleAudioPayload(rawAudioCycle, options = {}) {
       byteLength: Buffer.byteLength(payloadBase64, 'base64')
     })
   } else {
-    let tempDir
     try {
-      tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'donethat-audio-merge-'))
-      const manifestPath = path.join(tempDir, 'concat.txt')
-      const outputPath = path.join(tempDir, 'merged.webm')
-      const manifestLines = []
-
-      for (let i = 0; i < normalizedSegments.length; i += 1) {
-        const segmentPath = path.join(tempDir, `segment-${i}.webm`)
-        const buffer = Buffer.from(normalizedSegments[i].base64Data, 'base64')
-        if (!buffer || buffer.length === 0) {
-          continue
-        }
-        await fs.promises.writeFile(segmentPath, buffer)
-        manifestLines.push(`file '${escapeForFfmpegConcat(segmentPath)}'`)
-      }
-
-      if (manifestLines.length === 0) {
-        throw new Error('No valid WebM segments available for merge')
-      }
-
-      await fs.promises.writeFile(manifestPath, `${manifestLines.join('\n')}\n`, 'utf8')
-      try {
-        await runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', manifestPath, '-c', 'copy', outputPath])
-      } catch (_) {
-        await runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', manifestPath, '-c:a', 'libopus', '-b:a', '128k', outputPath])
-      }
-      const mergedBuffer = await fs.promises.readFile(outputPath)
-      if (!mergedBuffer || mergedBuffer.length === 0) {
-        throw new Error('Merged WebM output is empty')
-      }
-      payloadBase64 = mergedBuffer.toString('base64')
+      payloadBase64 = await mergeWebmSegmentsToBase64(normalizedSegments)
       payloadMimeType = 'audio/webm'
       mergedSegmentCount = normalizedSegments.length
       effectiveStartMs = normalizedSegments[0].startMs
       effectiveEndMs = normalizedSegments[normalizedSegments.length - 1].endMs
       recordAudioConversion('webm-merge-success', {
         segmentCount: normalizedSegments.length,
-        byteLength: mergedBuffer.length
+        byteLength: Buffer.byteLength(payloadBase64, 'base64')
       })
     } catch (error) {
       const fallback = normalizedSegments[normalizedSegments.length - 1]
@@ -180,10 +275,6 @@ async function buildCycleAudioPayload(rawAudioCycle, options = {}) {
         error: error?.message || String(error),
         stage: 'merge'
       })
-    } finally {
-      if (tempDir) {
-        await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {})
-      }
     }
   }
 
@@ -200,36 +291,25 @@ async function buildCycleAudioPayload(rawAudioCycle, options = {}) {
   }
 
   if (includeOpenAIWav) {
-    let tempDir
     try {
-      tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'donethat-audio-wav-'))
-      const webmPath = path.join(tempDir, 'input.webm')
-      const wavPath = path.join(tempDir, 'output.wav')
-      await fs.promises.writeFile(webmPath, Buffer.from(payloadBase64, 'base64'))
-      await runFfmpeg(['-y', '-i', webmPath, '-acodec', 'pcm_s16le', wavPath])
-
-      const wavBuffer = await fs.promises.readFile(wavPath)
-      if (!wavBuffer || wavBuffer.length === 0) {
-        throw new Error('WAV conversion produced empty output')
+      const wavBase64 = await convertWebmToWavInRenderer(payloadBase64)
+      if (!wavBase64 || typeof wavBase64 !== 'string') {
+        throw new Error('Renderer WAV conversion returned empty result')
       }
 
       audioCycle.openai = {
-        base64Data: wavBuffer.toString('base64'),
+        base64Data: wavBase64,
         mimeType: 'audio/wav',
         format: 'wav'
       }
       recordAudioConversion('wav-conversion-success', {
-        byteLength: wavBuffer.length
+        byteLength: Buffer.byteLength(wavBase64, 'base64')
       })
     } catch (error) {
       recordAudioConversion('wav-conversion-failed', {
         error: error?.message || String(error),
         stage: 'transcode'
       })
-    } finally {
-      if (tempDir) {
-        await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {})
-      }
     }
   }
 
