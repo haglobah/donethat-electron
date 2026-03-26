@@ -120,7 +120,7 @@ Findings:
 - No private key blocks found in git history (`BEGIN RSA/EC/OPENSSH PRIVATE KEY` patterns).
 - No obvious live-token patterns found in git history beyond placeholder-like examples.
 - Author email metadata contains:
-  - `christoph@donethat.ai`
+  - `support@donethat.ai`
   - `[redacted personal email]` (appears on many commits, including Codex snapshot commits)
 
 Actions to consider:

@@ -1,27 +1,30 @@
-# ✓ DoneThat
+# DoneThat Desktop
 
-Remembering your work for you.
+Open-source desktop client for DoneThat work capture and summaries.
 
 ## Development
 
-### Signing and notarizing
+- `npm install`
+- `npm run dev`
 
-MACOS:
-* Set all the variables in the .env-template file as .env
-* See https://kilianvalkhof.com/2019/electron/notarizing-your-electron-application/
-* Download xcode, sign in with dev account, go to settings>accounts, manage certificates, add all certificates
+## Build
 
-WINDOWS:
-* TODO
-* Download [java](https://www.java.com/en/download/) and [jsign](https://github.com/jpackage-dev/jsign)
-* Run `npm run release`
+- `npm run build`
+- Platform builds: use `build:*` scripts in `package.json`
 
-### Releases
+## Open vs Closed
 
-* Generate a release token on GitHub
-* Set it with `export GH_TOKEN=your_generated_token`
-* Run `npm run release`
+This repository contains the desktop client only. Hosted backend services and APIs remain proprietary. Client behavior that depends on remote services is limited to published endpoints and API compatibility.
 
-### Development
+Primary backend dependencies:
+- `https://*.cloudfunctions.net`
+- `https://app.donethat.ai`
+- `https://identitytoolkit.googleapis.com`
+- `https://securetoken.googleapis.com`
 
-* Run `npm run start` to start the development server
+## Project Docs
+
+- [Security](SECURITY.md)
+- [Support](SUPPORT.md)
+- [Third-Party Notices](THIRD_PARTY_NOTICES.md)
+- [Changelog](CHANGELOG.md)

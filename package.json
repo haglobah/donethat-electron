@@ -37,17 +37,17 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/donethatai/donethat-releases.git"
+    "url": "git+https://github.com/donethatai/donethat-desktop.git"
   },
   "author": {
     "name": "DoneThat",
-    "email": "christoph@donethat.ai"
+    "email": "support@donethat.ai"
   },
-  "license": "UNLICENSED",
+  "license": "GPL-3.0-only",
   "bugs": {
-    "url": "https://github.com/donethatai/donethat-releases/issues"
+    "url": "https://github.com/donethatai/donethat-desktop/issues"
   },
-  "homepage": "https://donethat.ai",
+  "homepage": "https://github.com/donethatai/donethat-desktop",
   "devDependencies": {
     "@babel/preset-env": "^7.29.0",
     "@tailwindcss/postcss": "^4.1.18",

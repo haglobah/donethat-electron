@@ -89,7 +89,8 @@ async function getConfig(idToken) {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${idToken}`
-      }
+      },
+      signal: AbortSignal.timeout(15_000)
     });
 
     if (!response.ok) {
@@ -130,7 +131,7 @@ async function getConfig(idToken) {
 /**
  * Initialize LLM models with structured output
  */
-async function initializeLLM(idToken, testMode = false) {
+async function initializeLLM(idToken) {
   try {
     const config = await getConfig(idToken);
 
@@ -170,7 +171,7 @@ async function initializeLLM(idToken, testMode = false) {
         apiKey: openaiCompat.config.apiKey || '',
         model: openaiCompat.config.model,
         maxTokens: MAX_OUTPUT_TOKENS,
-        maxRetries: testMode ? 0 : undefined,
+        maxRetries: 0,
         temperature: 0.2, // some randomness so the retries make sense
         response_format: { type: 'json_object' },
         configuration: { baseURL }
@@ -199,7 +200,7 @@ async function invokeWithFallback(messages, testMode = false) {
     let attempt = 0;
     while (attempt < maxAttemptsPerModel) {
       try {
-        const response = await llm.invoke(messages);
+        const response = await llm.invoke(messages, { signal: AbortSignal.timeout(90_000) });
         return response;
       } catch (error) {
         if (testMode) {
@@ -523,7 +524,8 @@ async function submitResults(idToken, timestamp, structured, parameters, clientT
     const response = await fetch(FIREBASE_PROCESS_URL, {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30_000)
     });
 
     if (!response.ok) {

@@ -829,7 +829,8 @@ async function _sendToServer(idToken, screenshots, inputData = {}, previousScree
       const response = await fetch(FIREBASE_CAPTURE_URL, {
         method: 'POST',
         headers,
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60_000)
       });
 
       if (!response.ok) {
