@@ -1,7 +1,7 @@
 const { ipcMain, app, dialog, BrowserWindow } = require('electron');
 const log = require('electron-log');
 const path = require('path');
-const { encryptData, decryptData } = require('./encryption');
+const { encryptData, decryptData, decryptDataWithRetry, isLegacyEncryptedData } = require('./encryption');
 const { default: Store } = require('electron-store');
 const linuxAutostart = require('./linuxAutostart');
 
@@ -575,40 +575,48 @@ function applyManagedAppSettings(rawSettings = null) {
       cachedOpenAICompatibleConfig = null;
     } else if (openAiEnabled === true || hasManagedField) {
       const storedConfig = safeStoreOperation(() => store?.get('openaiCompatibleConfig') || {}, 'read OpenAI-compatible config for managed merge') || {};
+      const storedApiKeyBlob = storedConfig.apiKey || null;
       const existingKeySource = safeStoreOperation(() => store?.get(OPENAI_KEY_SOURCE_STORE_KEY), 'read OpenAI-compatible API key source');
-      let existingApiKey = cachedOpenAICompatibleConfig?.apiKey || null;
-      if (!existingApiKey && storedConfig.apiKey) {
-        try {
-          existingApiKey = decryptData(storedConfig.apiKey);
-        } catch (_) {
-          existingApiKey = null;
-        }
-      }
-      const effectiveExistingApiKey = (!hasManagedApiKey && existingKeySource === API_KEY_SOURCE_MANAGED)
-        ? null
-        : existingApiKey;
       const nextConfig = {
         endpoint: hasManagedEndpoint ? (openAiConfig.endpoint || null) : (cachedOpenAICompatibleConfig?.endpoint || storedConfig.endpoint || null),
-        model: hasManagedModel ? (openAiConfig.model || null) : (cachedOpenAICompatibleConfig?.model || storedConfig.model || null),
-        apiKey: hasManagedApiKey ? (openAiConfig.apiKey || null) : effectiveExistingApiKey
+        model: hasManagedModel ? (openAiConfig.model || null) : (cachedOpenAICompatibleConfig?.model || storedConfig.model || null)
       };
       safeStoreOperation(() => {
         if (store) {
+          let nextStoredApiKey = null;
+          if (hasManagedApiKey) {
+            nextStoredApiKey = openAiConfig.apiKey ? encryptData(openAiConfig.apiKey) : null;
+          } else if (existingKeySource !== API_KEY_SOURCE_MANAGED) {
+            nextStoredApiKey = storedApiKeyBlob;
+          }
+
           store.set('openaiCompatibleConfig', {
             endpoint: nextConfig.endpoint,
             model: nextConfig.model,
-            apiKey: nextConfig.apiKey ? encryptData(nextConfig.apiKey) : null
+            apiKey: nextStoredApiKey
           });
           if (hasManagedApiKey && openAiConfig.apiKey) {
             store.set(OPENAI_KEY_SOURCE_STORE_KEY, API_KEY_SOURCE_MANAGED);
           } else if (hasManagedApiKey && !openAiConfig.apiKey) {
             store.delete(OPENAI_KEY_SOURCE_STORE_KEY);
-          } else if (!nextConfig.apiKey) {
+          } else if (!nextStoredApiKey) {
             store.delete(OPENAI_KEY_SOURCE_STORE_KEY);
           }
         }
       }, 'apply managed OpenAI-compatible config');
-      cachedOpenAICompatibleConfig = nextConfig;
+      if (hasManagedApiKey) {
+        cachedOpenAICompatibleConfig = {
+          ...nextConfig,
+          apiKey: openAiConfig.apiKey || null
+        };
+      } else if (storedApiKeyBlob) {
+        cachedOpenAICompatibleConfig = null;
+      } else {
+        cachedOpenAICompatibleConfig = {
+          ...nextConfig,
+          apiKey: null
+        };
+      }
     }
   } else {
     safeStoreOperation(() => {
@@ -2426,7 +2434,20 @@ async function getGeminiApiKey() {
     }
 
     // Decrypt the API key
-    const decryptedKey = decryptData(encryptedKey);
+    const decryptedKey = await decryptDataWithRetry(encryptedKey);
+
+    if (isLegacyEncryptedData(encryptedKey)) {
+      try {
+        const migratedKey = encryptData(decryptedKey);
+        safeStoreOperation(() => {
+          if (store) {
+            store.set('geminiApiKey', migratedKey);
+          }
+        }, 'migrate Gemini API key to safe storage');
+      } catch (migrationError) {
+        log.warn('Failed to migrate Gemini API key to safeStorage:', migrationError);
+      }
+    }
 
     // Cache the decrypted key
     cachedGeminiApiKey = decryptedKey;
@@ -2434,35 +2455,20 @@ async function getGeminiApiKey() {
     return { success: true, apiKey: decryptedKey };
   } catch (error) {
     log.error('Error retrieving Gemini API key:', error);
-    // If decryption failed, clear the key and notify the user to re-enter
     if (error && typeof error.message === 'string' && error.message.includes('Failed to decrypt data')) {
+      cachedGeminiApiKey = null;
       try {
-        // Clear the stored key
-        safeStoreOperation(() => {
-          if (store) {
-            store.delete('geminiApiKey');
-            store.delete(GEMINI_KEY_SOURCE_STORE_KEY);
-          }
-        }, 'delete corrupted Gemini API key');
-        // Clear cached key
-        cachedGeminiApiKey = null;
-      } catch (e) {
-        log.warn('Failed to clear corrupted Gemini API key:', e);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('request-notification', {
+            id: 'gemini-key-decrypt-failed',
+            title: 'Settings',
+            message: "We couldn't read your Gemini API key right now. We'll use cloud processing for now and keep your saved key unchanged.",
+            sticky: true
+          });
+        }
+      } catch (notifyErr) {
+        log.warn('Failed to send in-app notification for Gemini key read failure:', notifyErr);
       }
-      // Send a sticky in-app notification to prompt user
-    try {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('request-notification', {
-          id: 'gemini-key-decrypt-failed',
-          title: 'Settings',
-          message: "We couldn't read your Gemini API key. Please set it again in Permissions. For now we'll use cloud processing.",
-          sticky: true
-        });
-      }
-    } catch (notifyErr) {
-        log.warn('Failed to send in-app notification for Gemini key reset:', notifyErr);
-      }
-      // Return success with null apiKey to fall back to cloud processing
       return { success: true, apiKey: null };
     }
     return { success: false, error: error.message };
@@ -2498,38 +2504,38 @@ async function getOpenAICompatibleConfig() {
     let apiKey = null;
     if (storedConfig.apiKey) {
       try {
-        apiKey = decryptData(storedConfig.apiKey);
-      } catch (error) {
-        log.error('Error decrypting OpenAI-compatible API key:', error);
-        // If decryption failed, clear the config and notify the user to re-enter
-        if (error && typeof error.message === 'string' && error.message.includes('Failed to decrypt data')) {
+        apiKey = await decryptDataWithRetry(storedConfig.apiKey);
+        if (isLegacyEncryptedData(storedConfig.apiKey)) {
           try {
-            // Clear the stored config
+            const migratedApiKey = encryptData(apiKey);
             safeStoreOperation(() => {
               if (store) {
-                store.delete('openaiCompatibleConfig');
-                store.delete(OPENAI_KEY_SOURCE_STORE_KEY);
+                store.set('openaiCompatibleConfig', {
+                  ...storedConfig,
+                  apiKey: migratedApiKey
+                });
               }
-            }, 'delete corrupted OpenAI-compatible config');
-            // Clear cached config
-            cachedOpenAICompatibleConfig = null;
-          } catch (e) {
-            log.warn('Failed to clear corrupted OpenAI-compatible config:', e);
+            }, 'migrate OpenAI-compatible API key to safe storage');
+          } catch (migrationError) {
+            log.warn('Failed to migrate OpenAI-compatible API key to safeStorage:', migrationError);
           }
-          // Send a sticky in-app notification to prompt user
+        }
+      } catch (error) {
+        log.error('Error decrypting OpenAI-compatible API key:', error);
+        if (error && typeof error.message === 'string' && error.message.includes('Failed to decrypt data')) {
+          cachedOpenAICompatibleConfig = null;
           try {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('request-notification', {
                 id: 'openai-key-decrypt-failed',
                 title: 'Settings',
-                message: "We couldn't read your OpenAI-compatible API key. Please set it again in Permissions. For now we'll use cloud processing.",
+                message: "We couldn't read your OpenAI-compatible API key right now. We'll use cloud processing for now and keep your saved key unchanged.",
                 sticky: true
               });
             }
           } catch (notifyErr) {
-            log.warn('Failed to send in-app notification for OpenAI-compatible key reset:', notifyErr);
+            log.warn('Failed to send in-app notification for OpenAI-compatible key read failure:', notifyErr);
           }
-          // Return success with null config to fall back to cloud processing
           return { success: true, config: null };
         }
         return { success: false, error: error.message };
