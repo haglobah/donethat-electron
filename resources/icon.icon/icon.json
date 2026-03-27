@@ -16,13 +16,14 @@
     {
       "layers" : [
         {
-          "image-name" : "icon_orange_only.svg",
-          "name" : "icon_orange_only",
+          "glass" : false,
+          "image-name" : "icon_thick_fill_1024.svg",
+          "name" : "icon_thick_fill_1024",
           "position" : {
-            "scale" : 1.38,
+            "scale" : 0.79,
             "translation-in-points" : [
-              22.757513195110164,
-              7.632922562887757
+              0,
+              0
             ]
           }
         }

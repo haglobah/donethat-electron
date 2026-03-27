@@ -213,9 +213,13 @@ if (!app.isPackaged) {
 // Set interval in the capture module
 setCaptureInterval(SCREENSHOT_INTERVAL_MINUTES);
 
-let iconRecordingPath = path.join(__dirname, 'resources', 'icon_recording.png')
-let iconPausedPath = path.join(__dirname, 'resources', 'icon_paused.png')
-let iconErrorPath = path.join(__dirname, 'resources', 'icon_error.png')
+let trayIconRecordingPath = path.join(__dirname, 'resources', process.platform === 'darwin' ? 'icon_recording.svg' : process.platform === 'win32' ? 'icon_recording.ico' : 'icon_recording.png')
+let trayIconPausedPath = path.join(__dirname, 'resources', process.platform === 'darwin' ? 'icon_paused.svg' : process.platform === 'win32' ? 'icon_paused.ico' : 'icon_paused.png')
+let notificationIconPath = path.join(
+  __dirname,
+  'resources',
+  process.platform === 'darwin' ? 'icon.svg' : process.platform === 'win32' ? 'icon-launcher.ico' : 'icon-launcher.png'
+)
 // State module and variables
 let stateManager = null
 let tray = null
@@ -937,7 +941,7 @@ app.whenReady().then(async () => {
       const notification = new Notification({
         title: title || 'DoneThat',
         body: message || '',
-        icon: iconRecordingPath
+        icon: notificationIconPath
       });
 
       if (action && action.channel) {
@@ -967,8 +971,8 @@ app.whenReady().then(async () => {
     }
   });
 
-  // Create tray with initial error icon
-  let trayIcon = nativeImage.createFromPath(iconErrorPath)
+  // Create tray with the default paused icon
+  let trayIcon = nativeImage.createFromPath(trayIconPausedPath)
 
   // Apply platform-specific resizing for initial icon
   if (process.platform === 'darwin') {
@@ -1280,30 +1284,30 @@ function updateTrayIcon(isActuallyRecording) {
   const isSystemIdle = stateManager?.isSystemIdle() ?? false;
 
   if (isActuallyRecording && !isSystemIdle) {
-    iconPath = iconRecordingPath;
+    iconPath = trayIconRecordingPath;
     tooltip = 'DoneThat - Recording';
   } else if (isSystemIdle && loggedIn && hasValidAccess) {
     // Show idle state when screen locked or system suspended (but still recording in background)
-    iconPath = iconPausedPath;
+    iconPath = trayIconPausedPath;
     tooltip = 'DoneThat - System Idle';
   } else if (!hasScreenPermission) {
-    iconPath = iconErrorPath;
+    iconPath = trayIconPausedPath;
     tooltip = 'DoneThat - No Screen Capture Permission';
   } else if (!hasWindowsPermission) {
-    iconPath = iconErrorPath;
+    iconPath = trayIconPausedPath;
     tooltip = 'DoneThat - No Windows Permission';
   } else if (!loggedIn) {
-    iconPath = iconErrorPath;
+    iconPath = trayIconPausedPath;
     tooltip = 'DoneThat - Not Logged In';
   } else if (!hasValidAccess) {
-    iconPath = iconErrorPath;
+    iconPath = trayIconPausedPath;
     tooltip = 'DoneThat - Account Inactive';
   } else if (isPaused) {
-    iconPath = iconPausedPath;
+    iconPath = trayIconPausedPath;
     tooltip = 'DoneThat - Paused';
   } else {
     // Default fallback
-    iconPath = iconErrorPath;
+    iconPath = trayIconPausedPath;
     tooltip = 'DoneThat - Error';
   }
 

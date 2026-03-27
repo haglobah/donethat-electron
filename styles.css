@@ -1343,18 +1343,22 @@ body {
 
 .auth-header {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
   margin-bottom: 24px;
 }
 
 .auth-logo {
-  width: 40px;
+  width: auto;
   height: 40px;
+  max-width: 180px;
+  display: block;
 }
 
 .auth-title {
-  margin-left: 12px;
+  margin: 0;
   font-size: 24px;
   font-weight: 700;
   color: #111827;
