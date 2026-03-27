@@ -1045,23 +1045,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Add event listener for app settings link
-  const appSettingsLink = document.querySelector('.app-settings-link');
-  if (appSettingsLink) {
-    appSettingsLink.addEventListener('click', (e) => {
-      e.preventDefault();
-      routeLink('https://app.donethat.ai/settings', { source: 'index' });
-    });
-  }
+  document.addEventListener('click', (e) => {
+    const link = e.target.closest('a[href]');
+    if (!link) return;
 
-  // Add event listener for support link
-  const supportLink = document.querySelector('.support-link');
-  if (supportLink) {
-    supportLink.addEventListener('click', (e) => {
+    const href = link.getAttribute('href');
+    if (!href || href.startsWith('#')) return;
+
+    try {
+      const url = new URL(link.href);
+      const protocol = url.protocol.toLowerCase();
+      if (protocol !== 'http:' && protocol !== 'https:' && protocol !== 'mailto:') return;
+
       e.preventDefault();
-      routeLink('https://donethat.ai/support', { source: 'index' });
-    });
-  }
+      routeLink(url.toString(), { source: 'index' });
+    } catch (_) {}
+  });
 
   // In-app notification logic moved to notify.js
 

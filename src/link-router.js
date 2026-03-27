@@ -1,4 +1,12 @@
-const shell = { openExternal: window.electronAPI.openExternal };
+function openExternal(url) {
+  try {
+    window.electronAPI?.invoke?.('open-external', url).catch((error) => {
+      console.error('[routeLink] failed to open external URL', error);
+    });
+  } catch (error) {
+    console.error('[routeLink] failed to dispatch external URL', error);
+  }
+}
 
 function parseInternalView(url) {
   try {
@@ -48,7 +56,7 @@ function routeLink(url, opts = {}) {
       return { ok: false, reason: 'unsupported-protocol' };
     }
 
-    shell.openExternal(parsed.toString());
+    openExternal(parsed.toString());
     return { ok: true, type: 'external' };
   } catch (e) {
     console.error('[routeLink] error', source, e);
@@ -62,4 +70,3 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
   window.routeLink = routeLink;
 }
-
