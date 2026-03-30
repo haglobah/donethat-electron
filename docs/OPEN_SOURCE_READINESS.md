@@ -95,23 +95,10 @@ Goal: Publish the desktop client source while keeping hosted backend services pr
 
 ## Git History Hygiene
 
-Findings from local history inspection:
+Completed on 2026-03-30:
 
-- Author metadata still includes both organization and personal email identities in public history.
-- No obvious private-key blocks were identified in the latest history scan.
-- Current tracked-file review found no committed `.env` file.
-- Remaining public-history concerns are author metadata and secret-like placeholders in historical templates.
-
-Remaining actions:
-
-- [ ] Rewrite public history before announcement to normalize author metadata and sanitize historical secret-like placeholders.
-- [ ] If history is rewritten, rescan rewritten history and rotate anything if a real secret is later discovered.
-
-### History Rewrite Plan
-
-1. Create a mirror backup of the repository before any rewrite.
-2. Rewrite public history to normalize author metadata to the canonical public organization identity.
-3. Rewrite historical secret-like placeholders in committed templates so they no longer match token scanners.
-4. Verify the rewritten history by rescanning author metadata and token/private-key patterns.
-5. Force-push rewritten branches and tags only after verification succeeds.
-6. Reconcile release/source linkage after the rewrite, since tags and commit SHAs will change.
+- [x] Rewrote public history to normalize all author/committer metadata to `christoph@donethat.ai`.
+- [x] Scrubbed `christophartmann@gmail.com` from historical file content (was present in old versions of this file).
+- [x] Replaced scanner-triggering fake token placeholder (`github_pat_123...`) in historical `.env-template` commits with `YOUR_GITHUB_TOKEN`.
+- [x] Verified: no sensitive strings remain in any historical blob, stash, or commit metadata.
+- [x] Force-pushed rewritten history and all tags to origin.
