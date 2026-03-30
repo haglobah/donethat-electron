@@ -2,11 +2,9 @@ name: 'Build and Release'
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version number (leave empty to use package.json version)'
-        required: false
-        default: ''
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -30,6 +28,21 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure release runs from main
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" != "branch" ] || [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "Releases must be run from the main branch. Current ref: ${GITHUB_REF_TYPE}/${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+      - name: Configure git for release tagging
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -53,7 +66,7 @@ jobs:
           pip install macholib
           
       - name: Install dependencies
-        run: npm install --include=optional
+        run: npm ci --include=optional
 
       - name: Set Apple environment variables
         if: matrix.platform == 'mac'
