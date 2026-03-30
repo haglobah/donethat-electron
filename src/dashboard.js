@@ -261,12 +261,10 @@ if (summarySubmitBtn) {
       summaryLoadingSpinner.classList.remove('hidden');
       const finishDayMessage = document.getElementById('finishDayMessage');
       if (finishDayMessage) finishDayMessage.classList.remove('hidden');
-      let pausedByFinishDay = false;
       // Immediately pause until tomorrow when finishing the day, if not already paused
       try {
         if (!getIsPaused()) {
           ipcRenderer.send("pauseUntilTomorrow");
-          pausedByFinishDay = true;
         }
       } catch (e) {
         // No-op if IPC is unavailable
@@ -285,15 +283,6 @@ if (summarySubmitBtn) {
           currentSummaryId = result.data.summaryId;
           const period = result.data.period;
           currentPeriodEndTime = period?.end;
-
-          // If the summary is not recent and we actively paused, resume now
-          try {
-            const now = new Date();
-            const isRecentSummary = currentPeriodEndTime && (now.getTime() - currentPeriodEndTime < (60 * 60 * 1000));
-            if (!isRecentSummary && pausedByFinishDay) {
-              ipcRenderer.send('resumeRecording');
-            }
-          } catch (_) {}
           
           // Convert to BulletPoint objects with time data
           bulletPoints = bulletPointsData.map((text, index) => ({
