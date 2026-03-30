@@ -700,6 +700,7 @@ async function initState(options = {}) {
       isAuthenticated: () => Boolean(idToken),
       hasValidAccess: () => userStatus === 'active',
       isManualPauseAllowed,
+      getClientTelemetryEnabled,
       getIdToken: () => {
         return idToken;
       },
@@ -715,6 +716,16 @@ async function initState(options = {}) {
     log.error('Failed to initialize state:', error);
     return null;
   }
+}
+
+function getClientTelemetryEnabled() {
+  const enabled = safeStoreOperation(() => {
+    if (!store) return true;
+    const storedValue = store.get('clientTelemetryEnabled');
+    return typeof storedValue === 'boolean' ? storedValue : true;
+  }, 'get clientTelemetryEnabled');
+
+  return typeof enabled === 'boolean' ? enabled : true;
 }
 
 /**
@@ -1479,6 +1490,25 @@ function setupIPCHandlers() {
     } else {
       log.error('Received invalid autoSubmit value:', value);
     }
+  });
+
+  ipcMain.handle('get-client-telemetry', async () => {
+    return { enabled: getClientTelemetryEnabled() };
+  });
+
+  ipcMain.on('updateClientTelemetry', (_event, enabled) => {
+    if (typeof enabled !== 'boolean') {
+      log.error('Received invalid clientTelemetryEnabled value:', enabled);
+      return;
+    }
+
+    safeStoreOperation(() => {
+      if (store) {
+        store.set('clientTelemetryEnabled', enabled);
+      } else {
+        log.warn('Store not initialized, cannot save clientTelemetryEnabled.');
+      }
+    }, 'save clientTelemetryEnabled');
   });
 
   ipcMain.on('apply-managed-app-settings', (_event, payload) => {
@@ -2586,6 +2616,7 @@ module.exports = {
   isSystemIdle,
   clearSystemIdleFlags,
   isManualPauseAllowed,
+  getClientTelemetryEnabled,
   getGeminiApiKey,
   getOpenAICompatibleConfig,
   getAutoSubmit: () => autoSubmit

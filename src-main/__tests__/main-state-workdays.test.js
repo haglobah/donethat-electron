@@ -70,6 +70,16 @@ function setWorkhoursViaIPC(start, end) {
   }
 }
 
+function getIpcHandleHandler(channel) {
+  const registration = mockIpcMain.handle.mock.calls.find((call) => call[0] === channel);
+  return registration ? registration[1] : null;
+}
+
+function getIpcOnHandler(channel) {
+  const registration = mockIpcMain.on.mock.calls.find((call) => call[0] === channel);
+  return registration ? registration[1] : null;
+}
+
 beforeAll(() => {
   // Setup mocks before requiring the module
   resetMocks();
@@ -1767,6 +1777,34 @@ describe('Hibernation/Suspend Edge Cases', () => {
       // State should remain consistent
       expect(typeof isPaused()).toBe('boolean');
     }
+  });
+});
+
+describe('client telemetry setting', () => {
+  test('defaults to enabled when store key is unset', async () => {
+    const getClientTelemetryHandler = getIpcHandleHandler('get-client-telemetry');
+
+    expect(getClientTelemetryHandler).toBeTruthy();
+    await expect(getClientTelemetryHandler()).resolves.toEqual({ enabled: true });
+    expect(state.getClientTelemetryEnabled()).toBe(true);
+  });
+
+  test('persists false and true through IPC updates', async () => {
+    const updateClientTelemetryHandler = getIpcOnHandler('updateClientTelemetry');
+    const getClientTelemetryHandler = getIpcHandleHandler('get-client-telemetry');
+
+    expect(updateClientTelemetryHandler).toBeTruthy();
+    expect(getClientTelemetryHandler).toBeTruthy();
+
+    updateClientTelemetryHandler({}, false);
+    expect(mockStore.set).toHaveBeenCalledWith('clientTelemetryEnabled', false);
+    await expect(getClientTelemetryHandler()).resolves.toEqual({ enabled: false });
+    expect(state.getClientTelemetryEnabled()).toBe(false);
+
+    updateClientTelemetryHandler({}, true);
+    expect(mockStore.set).toHaveBeenCalledWith('clientTelemetryEnabled', true);
+    await expect(getClientTelemetryHandler()).resolves.toEqual({ enabled: true });
+    expect(state.getClientTelemetryEnabled()).toBe(true);
   });
 });
 

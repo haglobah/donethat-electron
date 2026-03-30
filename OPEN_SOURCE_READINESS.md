@@ -1,163 +1,111 @@
-# Open-Source Readiness Assessment: DoneThat Desktop
+# Open-Source Readiness Checklist: DoneThat Desktop
 
-Date: 2026-03-06
+Date: 2026-03-30
 Scope: Entire repository at `/Users/christoph/repos/donethat-electron`
-Goal: Publish desktop client source while keeping server proprietary ("Proton-style" trust model)
+Goal: Publish the desktop client source while keeping hosted backend services proprietary.
 
-## License Decision
+## Current State Snapshot
 
-Use **GPLv3** for the desktop client.
+- Desktop client source is in this repository; backend services remain proprietary.
+- Legal and baseline OSS docs are now present: `LICENSE`, `README.md`, `SECURITY.md`, `SUPPORT.md`, `THIRD_PARTY_NOTICES.md`, and `CHANGELOG.md`.
+- `package.json` metadata now points at `donethatai/donethat-desktop` and uses `GPL-3.0-only`.
+- Firebase client config is committed, so docs/tests do not depend on CI-injected client config.
+- Capture diagnostics telemetry is still sent to backend requests unless the new client telemetry setting is turned off.
+- Local source tags still stop at `v1.4.5` while `package.json` is `1.5.0`.
+- Test coverage is still shallow; only a small number of main-process tests exist today.
+- CI is still release-oriented. There is no visible PR safety workflow, CodeQL, or Dependabot config.
+- Git history still contains both org and personal author email addresses.
 
-## Current State Snapshot (what I found)
+## P0 Before Public Launch
 
-- No project license file exists (`LICENSE`, `COPYING`, etc. missing).
-- `package.json` is currently `"license": "UNLICENSED"`.
-- Minimal docs only (`README.md` + 2 operational docs).
-- `README.md` says to run `npm run start`, but there is no `start` script.
-- Build/runtime depends on private backend endpoints (`*.cloudfunctions.net`, `app.donethat.ai`), but Firebase client config is now committed and no longer CI-injected.
-- Only one real test suite exists (`src-main/__tests__/main-state-workdays.test.js`).
-- Test coverage is very low overall (~8.45% statements from `npm test -- --coverage --runInBand`).
-- `npm audit --json` reports 12 vulnerabilities (10 high, 2 moderate).
-- A strangely named tracked binary file exists at repo root: `%b` (PNG).
-- No contributor governance/security docs (`CONTRIBUTING`, `CODE_OF_CONDUCT`, `SECURITY`, etc.).
-- No third-party notices/SBOM currently present.
-- Git history contains two author emails; one is a personal Gmail address.
-- Local release tags appear incomplete: tags exist through `v1.4.5`, while `package.json` is currently `1.5.0`.
+- [x] **Add license files and legal metadata**
+  - `LICENSE` added.
+  - `package.json` license updated to `GPL-3.0-only`.
+- [x] **Clarify the open vs closed boundary in the public README**
+  - README states that the desktop client is open source and hosted backend services remain proprietary.
+- [ ] **Document backend compatibility and remote behavior**
+  - Add a public API or compatibility note for the proprietary backend dependency surface.
+  - Document what data each remote endpoint receives.
+- [x] **Replace the broken public dev command docs**
+  - README now points to `npm run dev` and `npm run build`.
+- [ ] **Expand local developer bootstrap guidance**
+  - Clarify what can be developed or tested without proprietary backend access.
+  - Document any expected limitations for local-only workflows.
+- [x] **Add third-party license compliance artifacts**
+  - `THIRD_PARTY_NOTICES.md` exists.
+- [x] **Add a basic security disclosure path**
+  - `SECURITY.md` exists with a private reporting channel and response expectation.
+- [ ] **Add privacy and trust docs for capture behavior**
+  - Add `PRIVACY_CLIENT.md` describing screenshot, window, microphone, and system-audio capture behavior.
+  - Add a concise public threat-model or trust summary for the desktop client.
+- [x] **Expose client telemetry control in settings**
+  - Add a user-facing setting to disable remote `clientTelemetry` uploads from the desktop app.
+- [ ] **Document telemetry behavior precisely**
+  - Explain what the client telemetry toggle disables and what capture data is still uploaded when it is off.
+- [x] **Align repository metadata to the source repo**
+  - `repository`, `bugs`, and `homepage` now point to `donethatai/donethat-desktop`.
+- [ ] **Align source and release topology**
+  - Keep this repository as the canonical source repository.
+  - Keep `donethat-releases` as the binary/update repository.
+  - For every shipped version, publish from an exact source tag in this repository and link that tag from the matching release.
+- [x] **Audit and clean repository artifacts**
+  - The unexplained `%b` root artifact is no longer present.
 
-## What Is Missing Before Best-Practice Open Source Release
+## P1 Strongly Recommended
 
-## P0 (must-have before going public)
+- [x] **Add a minimal maintainer/support policy**
+  - `SUPPORT.md` exists.
+- [ ] **Add release integrity and reproducibility docs**
+  - Document checksums, signing, and source-to-binary mapping.
+  - Explain how users verify published binaries against source.
+  - Standardize source tagging so every shipped binary version has a matching source tag.
+- [ ] **Improve dependency and security hygiene**
+  - Re-run `npm audit`, triage current findings, and remediate what is practical before launch.
+  - Add automated dependency or security scanning.
+- [ ] **Add CI quality gates**
+  - Add PR CI for tests and build smoke checks.
+  - Keep the manual release workflow, but do not rely on it as the only workflow.
+- [x] **Add a changelog**
+  - `CHANGELOG.md` exists.
 
-- [ ] **Add license files and legal metadata**
-  - Add `LICENSE` (GPLv3 text), `COPYING` if desired, SPDX headers strategy.
-  - Update `package.json` license from `UNLICENSED`.
-- [ ] **Clarify client/server boundary in writing**
-  - Add explicit statement: client is open-source; server/API is proprietary.
-  - Add backend compatibility/API contract doc for public understanding.
-- [ ] **Replace/clean secret-coupled setup**
-  - Document the committed Firebase client config pattern clearly.
-  - Ensure no private credentials are required to build docs/tests locally.
-- [ ] **Add third-party license compliance artifacts**
-  - Add `THIRD_PARTY_NOTICES.md` (or generated `THIRD_PARTY_LICENSES.txt`).
-  - Include dependency license review and obligations (including MPL-2.0 dependency handling).
-- [ ] **Security disclosure and trust docs**
-  - Add `SECURITY.md` (reporting channel, SLA, supported versions).
-  - Add threat model/privacy summary for screenshot/audio/window capture behavior.
-- [ ] **Expose telemetry opt-out in settings**
-  - Add a user-facing setting to disable telemetry from the desktop app.
-  - Document exactly what is still sent when opt-out is enabled (if anything).
-- [ ] **Fix public README correctness**
-  - Correct run/build commands.
-  - Add complete developer bootstrap steps.
-  - Document what works without proprietary backend.
-- [ ] **Align repository + release topology**
-  - Open-source this existing repository as the canonical source repository; do not create or migrate to a separate `donethat-desktop` source repo.
-  - Keep `donethat-releases` as the binary/update repository used by `electron-builder` and `electron-updater`.
-  - For every shipped version, publish from an exact source tag in this repository and link that tag from the corresponding release in `donethat-releases`.
-  - Verify repository metadata (`package.json` `repository`, `bugs`, `homepage`) and release docs describe this split clearly: source lives here, binaries/updates live in `donethat-releases`.
-- [ ] **Audit and clean repository artifacts**
-  - Remove unexplained tracked file `%b` if accidental.
-  - Ensure only intended assets remain.
+## P2 Maturity Follow-Ups
 
-## P1 (strongly recommended)
+- [ ] **Increase test depth and coverage**
+  - Add tests beyond work-hours logic, especially around capture flows, IPC, auth, and permissions.
+- [ ] **Add developer standards**
+  - Add linting or contribution guidance if the repo is expected to accept outside changes.
+- [ ] **Add public architecture documentation**
+  - Add `ARCHITECTURE.md` covering main/renderer boundaries, capture flow, and local-vs-cloud processing.
+- [ ] **Add trademark or brand usage guidance**
+  - Protect product branding while allowing source reuse.
 
-- [ ] **Minimal maintainer policy (trimmed for low-contrib model)**
-  - Keep this to one lightweight doc (recommended: `SUPPORT.md`) that states support boundaries and contact path.
-- [ ] **Release integrity and reproducibility**
-  - Public release process doc with signed artifacts, checksums, and source/binary mapping.
-  - Explain how users verify binaries match published source.
-  - Standardize release tagging so every shipped binary version has a matching source tag (current local tags do not appear to cover `1.5.0`).
-- [ ] **Dependency/security hygiene**
-  - Triage and remediate current audit findings.
-  - Add CI security scanning (`npm audit`, CodeQL/Dependabot/Snyk equivalent).
-- [ ] **CI for quality gates**
-  - Add PR CI (tests, lint, build smoke checks).
-  - Current workflow is manual release-oriented (`workflow_dispatch`) rather than PR safety.
-- [ ] **Repo metadata corrections**
-  - Update `repository`, `bugs`, and homepage metadata to the actual source repository strategy.
-
-## P2 (best-practice maturity)
-
-- [ ] **Testing depth and coverage targets**
-  - Add tests beyond work-hours logic (capture pipeline, IPC contract, auth/permissions).
-  - Define minimum coverage thresholds in CI.
-- [ ] **Developer standards**
-  - Add lint/format config and contribution expectations.
-- [ ] **Change transparency**
-  - Add `CHANGELOG.md` and stable release notes process.
-- [ ] **Trademark/brand usage policy**
-  - Permit source reuse while protecting product branding and official service identity.
-- [ ] **Public architecture docs**
-  - Expand docs around data flow, telemetry, and local vs cloud processing fallback.
-
-## Proton-Style Trust Model Requirements (important for your stated intent)
-
-If the purpose is "users can inspect client code even with closed backend", add these explicit guarantees:
+## Source-Available Trust Model Requirements
 
 - [ ] Client source for every shipped binary version is published and tagged in this repository.
 - [ ] Every release in `donethat-releases` links to the exact matching source tag in this repository.
-- [ ] Deterministic or well-documented reproducible build path is available.
-- [ ] Signed release artifacts and checksums are published.
-- [ ] Remote behavior dependencies are documented (all backend endpoints, what they do, and what data they receive).
-- [ ] Telemetry/data collection defaults and opt-out behavior are documented precisely.
+- [ ] A deterministic or well-documented build path is available.
+- [ ] Signed artifacts and checksums are published.
+- [ ] Remote dependencies and payload categories are documented.
+- [ ] Telemetry defaults and opt-out behavior are documented precisely.
 
-## Minimum File Set To Add
+## Minimum File Set Before Announcement
 
-At minimum, add these files before announcing OSS:
+- [x] `LICENSE`
+- [x] `SUPPORT.md`
+- [x] `SECURITY.md`
+- [x] `THIRD_PARTY_NOTICES.md`
+- [ ] `PRIVACY_CLIENT.md`
+- [ ] `ARCHITECTURE.md`
+- [x] `CHANGELOG.md`
 
-- `LICENSE`
-- `SUPPORT.md` (minimal maintainer/support policy)
-- `SECURITY.md`
-- `THIRD_PARTY_NOTICES.md` (or equivalent generated file)
-- `ARCHITECTURE.md` (public version)
-- `PRIVACY_CLIENT.md` (what desktop captures/sends)
-- `OPEN_SOURCE_SCOPE.md` (what is open vs closed)
-- `CHANGELOG.md`
+## Git History Hygiene
 
-## Git History Hygiene Scan (completed in this assessment)
+Findings from local history inspection:
 
-Scan scope: all reachable commits (`git rev-list --all`, 587 commits), blob content + commit author emails.
+- Author email metadata still includes both `christoph@donethat.ai` and `christoph@donethat.ai`.
+- No obvious private-key blocks were identified in the earlier scan that produced this checklist.
 
-Findings:
+Remaining actions:
 
-- Potential credential patterns in history were mostly expected placeholders (notably in `.env-template`), plus secret-variable names in workflow files.
-- No private key blocks found in git history (`BEGIN RSA/EC/OPENSSH PRIVATE KEY` patterns).
-- No obvious live-token patterns found in git history beyond placeholder-like examples.
-- Author email metadata contains:
-  - `support@donethat.ai`
-  - `[redacted personal email]` (appears on many commits, including Codex snapshot commits)
-
-Actions to consider:
-
-- [ ] If you do not want personal email disclosure, rewrite git history before public launch.
-- [ ] After any history rewrite, rotate tokens as precaution and rescan (e.g., with gitleaks/trufflehog + custom patterns).
-
-### Email rewrite commands (post-hoc)
-
-Set future commits to org email:
-
-```bash
-git config user.email "new@donethat.ai"
-```
-
-Rewrite historical commit email metadata:
-
-```bash
-cat > .mailmap <<'EOF'
-Your Name <old@example.com> Your Name <new@donethat.ai>
-EOF
-
-git filter-repo --force --mailmap .mailmap
-git push --force --all
-git push --force --tags
-```
-
-Notes:
-
-- This rewrites commit SHAs.
-- Everyone using the repo must re-clone or hard-reset to the rewritten history.
-- Old SHAs may still exist in forks/clones.
-
-## Practical Recommendation
-
-Use **GPLv3** for the desktop client. Publish clear boundary docs so there is no ambiguity that the hosted backend remains proprietary.
+- [ ] Decide whether the personal email address should remain public in git history.
+- [ ] If history is rewritten, rescan and rotate sensitive tokens as a precaution.

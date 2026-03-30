@@ -37,6 +37,7 @@ let captureIntervalMinutes; // Set in main
 let reauthenticateCallback = null; // Store reauthenticate callback function
 let mainWindowRef = null; // Store mainWindow reference
 let getIdTokenFunction = null; // Store the getIdToken function reference
+let getClientTelemetryEnabledFunction = null;
 let captureCycleInFlight = false;
 let microphonePermissionFocusListener = null;
 let systemAudioPermissionFocusListener = null;
@@ -62,6 +63,20 @@ function isValidImageDataUrl(dataUrl) {
   const commaIndex = dataUrl.indexOf(',');
   if (commaIndex < 0) return false;
   return dataUrl.slice(commaIndex + 1).trim().length > 0;
+}
+
+function isClientTelemetryEnabled() {
+  if (typeof getClientTelemetryEnabledFunction !== 'function') {
+    return true;
+  }
+
+  try {
+    const enabled = getClientTelemetryEnabledFunction();
+    return typeof enabled === 'boolean' ? enabled : true;
+  } catch (error) {
+    log.warn('Failed to read client telemetry setting, defaulting to enabled:', error?.message || error);
+    return true;
+  }
 }
 
 
@@ -420,9 +435,10 @@ function updateInputDataSettings(settings) {
  *                               Called with either {authError: true} for general auth failures
  *                               or {tokenExpired: true} for token expiration
  * @param {Function} getIdToken Function to get the current ID token
+ * @param {Function} getClientTelemetryEnabled Function to get the current telemetry preference
  * @throws {Error} If mainWindow is not provided or capture interval is not set
  */
-function initCapture(mainWindow, onAuthError, getIdToken) {
+function initCapture(mainWindow, onAuthError, getIdToken, getClientTelemetryEnabled = () => true) {
   if (!mainWindow) {
     throw new Error('Main window must be provided to initialize capture');
   }
@@ -438,6 +454,10 @@ function initCapture(mainWindow, onAuthError, getIdToken) {
       throw new Error('getIdToken function must be provided to initialize capture');
   }
   getIdTokenFunction = getIdToken;
+  if (typeof getClientTelemetryEnabled !== 'function') {
+    throw new Error('getClientTelemetryEnabled function must be provided to initialize capture');
+  }
+  getClientTelemetryEnabledFunction = getClientTelemetryEnabled;
 
   // Store mainWindow reference
   mainWindowRef = mainWindow;
@@ -1005,7 +1025,8 @@ async function captureAndSend(idToken) {
       log.warn('[capture] Capture dump save failed:', e?.message)
     }
 
-    const clientTelemetry = consumeCompletedCycleTelemetry();
+    const completedTelemetry = consumeCompletedCycleTelemetry();
+    const clientTelemetry = isClientTelemetryEnabled() ? completedTelemetry : null;
     const sendStartedAt = Date.now();
     const sendResult = await _sendToServer(idToken, screenshots, inputData, previousForUpload, clientTelemetry)
     recordCyclePhaseDuration('send', Date.now() - sendStartedAt);

@@ -453,6 +453,7 @@ function initializeSettings(onSettingsUpdate, showBlockingSpinner, hideBlockingS
   // Set up context capture (experimental) listeners
   setupContextCaptureListeners();
   setupSaveCaptureDataListeners();
+  setupClientTelemetryListeners();
 
   // Set up Wayland detection
   setupWaylandDetection();
@@ -2187,6 +2188,28 @@ function setupSaveCaptureDataListeners() {
     } catch (e) {
       console.error('Error choosing capture dump folder:', e);
     }
+  });
+}
+
+function setupClientTelemetryListeners() {
+  const checkbox = document.getElementById('clientTelemetryCheckbox');
+
+  if (!checkbox) return;
+
+  async function loadClientTelemetryFromStore() {
+    try {
+      const { enabled } = await ipcRenderer.invoke('get-client-telemetry');
+      checkbox.checked = enabled !== false;
+    } catch (error) {
+      console.error('Error loading client telemetry setting:', error);
+      checkbox.checked = true;
+    }
+  }
+
+  loadClientTelemetryFromStore();
+
+  checkbox.addEventListener('change', () => {
+    ipcRenderer.send('updateClientTelemetry', checkbox.checked);
   });
 }
 

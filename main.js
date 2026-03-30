@@ -1783,7 +1783,12 @@ function createWindow() {
       });
       
       // Initialize capture with auth error handler
-      initCapture(mainWindow, handleCaptureAuthErrors, stateManager.getIdToken);
+      initCapture(
+        mainWindow,
+        handleCaptureAuthErrors,
+        stateManager.getIdToken,
+        stateManager.getClientTelemetryEnabled
+      );
       if (!startupInputDataListenerRegistered) {
         startupInputDataListenerRegistered = true;
         ipcMain.on('updateInputDataSettings', () => {

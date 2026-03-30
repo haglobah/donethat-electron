@@ -27,6 +27,7 @@ const validSendChannels = [
 
   'updateSaveCaptureData',
   'updateSaveCaptureDataPath',
+  'updateClientTelemetry',
   'update-context-capture-enabled',
   'apply-managed-app-settings',
   'updateWorkhours',
@@ -92,6 +93,7 @@ const validInvokeChannels = [
   'save-context-apps',
   'test-local-processing',
   'get-save-capture-data',
+  'get-client-telemetry',
   'choose-capture-dump-folder',
 
   // Chat / capture
