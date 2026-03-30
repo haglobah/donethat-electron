@@ -238,6 +238,7 @@ let savedOverlayPosition = null
 let saveOverlayPositionDebounce = null
 let overlayPositionUserSet = false
 let overlayDisplayMetricsListener = null
+const OVERLAY_COLLAPSED_HEIGHT = 52
 // Track update availability for Windows/Linux update button
 let updateAvailable = false
 const DESKTOP_NOTIFICATION_DEBOUNCE_MS = 8 * 60 * 60 * 1000
@@ -1232,7 +1233,7 @@ ipcMain.on('overlay:resize', (event, height) => {
     if (overlayWindow && typeof height === 'number' && isFinite(height)) {
       const bounds = overlayWindow.getBounds();
       const MAX_H = 600
-      const clamped = Math.max(40, Math.min(MAX_H, Math.floor(height)));
+      const clamped = Math.max(OVERLAY_COLLAPSED_HEIGHT, Math.min(MAX_H, Math.floor(height)));
       const heightDiff = clamped - bounds.height;
       
       // Set new size
@@ -1901,7 +1902,7 @@ function createOverlayWindow() {
     // Compute an initial position explicitly to avoid Electron's default centering
     const margin = 16;
     const defaultWidth = 390; // Increased from 260 to 390 (1.5x wider)
-    const defaultHeight = DEBUG ? 260 : 40; // Taller in debug so chat/debug output is visible
+    const defaultHeight = DEBUG ? 260 : OVERLAY_COLLAPSED_HEIGHT; // Taller in debug so chat/debug output is visible
     let initX;
     let initY;
     try {

@@ -50,6 +50,8 @@ const MIN_INPUT_HEIGHT = 28
 let typingTimer = null
 const TYPING_DELAY_MS = 300
 const INACTIVITY_RESET_MS = 10 * 60 * 1000
+const COLLAPSED_OVERLAY_HEIGHT = 52
+const MAX_OVERLAY_HEIGHT = 600
 
 // Simple UI state
 let pendingMessages = []
@@ -92,19 +94,36 @@ function computeDesiredHeight() {
   return chatH + inputH + chrome + recentChatsH + noticeH
 }
 
+function clampOverlayHeight(height) {
+  return Math.max(COLLAPSED_OVERLAY_HEIGHT, Math.min(MAX_OVERLAY_HEIGHT, Math.ceil(height)))
+}
+
 function applyScrollAndClamp(desired) {
   // Input box is COMPLETELY FIXED - always the same height
   const inputH = MIN_INPUT_HEIGHT
   const chrome = 16
-  const MAX_H = 600
   // Fixed height for recent chats container if visible (super short, 24px + 4px margin)
   const recentChatsH = (recentChatsContainer && recentChatsContainer.style.display !== 'none') ? 28 : 0
   // Fixed height for chat notice if visible
   const noticeH = (chatNotice && chatNotice.style.display !== 'none') ? (chatNotice.offsetHeight || 16) : 0
-  const maxChat = Math.max(0, Math.min(desired, MAX_H) - inputH - chrome - recentChatsH - noticeH)
+  const clamped = clampOverlayHeight(desired)
+  const maxChat = Math.max(0, clamped - inputH - chrome - recentChatsH - noticeH)
   chatContainer.style.maxHeight = maxChat + 'px'
-  chatContainer.style.overflowY = desired > MAX_H ? 'auto' : 'hidden'
+  chatContainer.style.overflowY = desired > MAX_OVERLAY_HEIGHT ? 'auto' : 'hidden'
   chatContainer.scrollTop = chatContainer.scrollHeight
+}
+
+function sendOverlayHeight(height) {
+  const clamped = clampOverlayHeight(height)
+  if (clamped === lastSentHeight) return
+  lastSentHeight = clamped
+  ipcRenderer.send('overlay:resize', clamped)
+}
+
+function collapseOverlay() {
+  chatVisible = false
+  applyScrollAndClamp(COLLAPSED_OVERLAY_HEIGHT)
+  sendOverlayHeight(COLLAPSED_OVERLAY_HEIGHT)
 }
 
 function escapeHtmlAttribute(text) {
@@ -564,21 +583,18 @@ function renderChat() {
   // Event delegation for chat links - handled once at container level
 
   requestAnimationFrame(() => {
-    const desired = computeDesiredHeight()
+    const desired = clampOverlayHeight(computeDesiredHeight())
     applyScrollAndClamp(desired)
-    if (desired !== lastSentHeight) {
-      lastSentHeight = desired
-      ipcRenderer.send('overlay:resize', desired)
-    }
+    sendOverlayHeight(desired)
   })
 }
 
 function animateResize(toHeight, opts = {}) {
   const { duration = 180, overshoot = false, onDone } = opts
   const from = lastSentHeight ?? computeDesiredHeight()
-  const target = Math.max(40, Math.min(600, toHeight))
+  const target = clampOverlayHeight(toHeight)
 
-  const firstTarget = overshoot && target > from ? Math.min(600, target + 8) : target
+  const firstTarget = overshoot && target > from ? Math.min(MAX_OVERLAY_HEIGHT, target + 8) : target
   const phases = overshoot && target > from ? [
     { to: firstTarget, dur: Math.round(duration * 0.65) },
     { to: target, dur: Math.round(duration * 0.35) }
@@ -595,8 +611,7 @@ function animateResize(toHeight, opts = {}) {
     const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
     const curFrom = phaseIdx === 0 ? startFrom : phases[phaseIdx - 1].to
     const current = Math.round(curFrom + (phase.to - curFrom) * ease)
-    lastSentHeight = current
-    ipcRenderer.send('overlay:resize', current)
+    sendOverlayHeight(current)
 
     if (elapsed < phase.dur) {
       requestAnimationFrame(step)
@@ -635,9 +650,7 @@ function resetChatForNewConversation() {
   recentChatsPage = 0
 
   renderChat()
-  lastSentHeight = 40
-  ipcRenderer.send('overlay:resize', 40)
-  chatVisible = false
+  collapseOverlay()
   ipcRenderer.invoke('chat:reset').catch(() => {})
 }
 
@@ -876,6 +889,10 @@ ipcRenderer.on('chat:message-update', (event, result) => {
   // On success, keep optimistic message until Firestore snapshot includes the new message
 })
 
+ipcRenderer.on('overlay:collapse', () => {
+  collapseOverlay()
+})
+
 // Handle recent chats list updates
 ipcRenderer.on('chat:recent-chats-updated', (event, newRecentChats) => {
   recentChats = Array.isArray(newRecentChats) ? newRecentChats : []
@@ -963,12 +980,9 @@ function renderRecentChatsList() {
     recentChatsContainer.style.display = 'none'
     // Trigger height recalculation after hiding
     requestAnimationFrame(() => {
-      const desired = computeDesiredHeight()
+      const desired = clampOverlayHeight(computeDesiredHeight())
       applyScrollAndClamp(desired)
-      if (desired !== lastSentHeight) {
-        lastSentHeight = desired
-        ipcRenderer.send('overlay:resize', desired)
-      }
+      sendOverlayHeight(desired)
     })
     return
   }
@@ -1088,12 +1102,9 @@ function renderRecentChatsList() {
 
   // Recalculate height after rendering to account for recent chats container
   requestAnimationFrame(() => {
-    const desired = computeDesiredHeight()
+    const desired = clampOverlayHeight(computeDesiredHeight())
     applyScrollAndClamp(desired)
-    if (desired !== lastSentHeight) {
-      lastSentHeight = desired
-      ipcRenderer.send('overlay:resize', desired)
-    }
+    sendOverlayHeight(desired)
   })
 }
 
@@ -1140,7 +1151,6 @@ async function loadChatById(chatId) {
 // Initialize
 updateIncludeScreenBtn()
 renderChat()
-
 
 
 
