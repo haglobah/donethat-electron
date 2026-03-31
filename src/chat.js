@@ -28,6 +28,11 @@ const clearBtn = document.getElementById('clearBtn')
 const chatContainer = document.getElementById('chatContainer')
 const recentChatsContainer = document.getElementById('recentChatsContainer')
 const chatNotice = document.getElementById('chatNotice')
+const overlayRoot = document.getElementById('overlayRoot')
+const overlayCard = document.querySelector('.overlay-card')
+const mascotWrap = document.getElementById('mascotWrap')
+const mascotCanvas = document.getElementById('mascotCanvas')
+const mascotFallback = document.getElementById('mascotFallback')
 
 // Event delegation for chat links - handle all link clicks at container level
 if (chatContainer) {
@@ -52,6 +57,21 @@ const TYPING_DELAY_MS = 300
 const INACTIVITY_RESET_MS = 10 * 60 * 1000
 const COLLAPSED_OVERLAY_HEIGHT = 52
 const MAX_OVERLAY_HEIGHT = 600
+const MASCOT_SOURCE = '../resources/rive/donethat_mascot.riv'
+const MASCOT_ARTBOARD_NAME = 'face'
+const MASCOT_STATE_MACHINE_NAME = 'face'
+const MASCOT_MOODS = Object.freeze({
+  IDLE: 0,
+  CHILLING: 1,
+  CELEBRATING: 2,
+  SLEEPING: 3,
+  DEEPFOCUS: 4,
+  PAUSED: 5,
+  JUDGING: 6,
+  PRODUCTIVE: 7,
+  UNHAPPY: 8,
+  ERROR: 10
+})
 
 // Simple UI state
 let pendingMessages = []
@@ -63,14 +83,160 @@ let recentChats = []
 let recentChatsPage = 0
 const CHATS_PER_PAGE = 3
 let isLoadingChat = false
+let mascotRive = null
+let mascotInputs = {
+  focusLevel: null,
+  lidsmove: null,
+  shake: null
+}
+let mascotMoodOverride = null
+let mascotMoodOverrideTimer = null
 
 function getMessageKey(message, index) {
   return message.id || message.ts || `idx-${index}`
 }
 
+function setMascotMoodOverride(mood, durationMs) {
+  mascotMoodOverride = mood
+  if (mascotMoodOverrideTimer) {
+    try { clearTimeout(mascotMoodOverrideTimer) } catch (_) {}
+  }
+  mascotMoodOverrideTimer = setTimeout(() => {
+    mascotMoodOverride = null
+    mascotMoodOverrideTimer = null
+    syncMascotState()
+  }, durationMs)
+  syncMascotState()
+}
+
+function setMascotFallbackVisible(isVisible) {
+  if (mascotFallback) mascotFallback.hidden = !isVisible
+  if (mascotCanvas) mascotCanvas.hidden = !!isVisible
+}
+
+function syncMascotPlacement() {
+  if (!mascotWrap || !chatContainer || !overlayCard) return
+  const rowCount = chatContainer.children.length
+  const chatHidden = chatContainer.style.display === 'none'
+  if (rowCount === 0 || chatHidden) {
+    mascotWrap.hidden = true
+    if (mascotWrap.parentElement !== overlayCard) {
+      overlayCard.insertBefore(mascotWrap, overlayCard.firstChild)
+    } else if (overlayCard.firstChild !== mascotWrap) {
+      overlayCard.insertBefore(mascotWrap, overlayCard.firstChild)
+    }
+    return
+  }
+  mascotWrap.hidden = false
+  const lastRow = chatContainer.lastElementChild
+  if (!lastRow) return
+  if (mascotWrap.parentElement !== lastRow || lastRow.firstElementChild !== mascotWrap) {
+    lastRow.insertBefore(mascotWrap, lastRow.firstChild)
+  }
+  if (mascotRive) setMascotFallbackVisible(false)
+  else setMascotFallbackVisible(true)
+}
+
+function getMascotInput(name) {
+  if (!mascotRive) return null
+  const inputs = mascotRive.stateMachineInputs(MASCOT_STATE_MACHINE_NAME)
+  return inputs.find((input) => input.name === name) || null
+}
+
+function resizeMascotCanvas() {
+  if (!mascotRive) return
+  mascotRive.resizeDrawingSurfaceToCanvas()
+  mascotRive.resizeToCanvas()
+}
+
+function setMascotMood(mood) {
+  if (mascotInputs.focusLevel) {
+    mascotInputs.focusLevel.value = mood
+  }
+}
+
+function setMascotLidsMove(value) {
+  if (!mascotInputs.lidsmove) return
+  const clamped = Math.max(-1, Math.min(1, Number(value) || 0))
+  mascotInputs.lidsmove.value = clamped
+}
+
+function triggerMascotShake() {
+  if (mascotInputs.shake && typeof mascotInputs.shake.fire === 'function') {
+    mascotInputs.shake.fire()
+  }
+}
+
+function computeMascotMood() {
+  if (!document.hasFocus() || document.visibilityState !== 'visible') return MASCOT_MOODS.SLEEPING
+  if (pendingMessages.some((message) => message && message.typing)) return MASCOT_MOODS.JUDGING
+  if ((input0.value || '').trim()) return MASCOT_MOODS.DEEPFOCUS
+  if (messages.length > 0 || pendingMessages.some((message) => message && message.role === 'user')) {
+    return MASCOT_MOODS.PRODUCTIVE
+  }
+  if (recentChats.length > 0 && recentChatsContainer && recentChatsContainer.style.display !== 'none') {
+    return MASCOT_MOODS.CHILLING
+  }
+  return MASCOT_MOODS.IDLE
+}
+
+function syncMascotState() {
+  const mood = mascotMoodOverride ?? computeMascotMood()
+  setMascotMood(mood)
+}
+
+function celebrateMascot() {
+  setMascotMoodOverride(MASCOT_MOODS.CELEBRATING, 1400)
+}
+
+function showMascotErrorState() {
+  triggerMascotShake()
+  setMascotMoodOverride(MASCOT_MOODS.ERROR, 2200)
+}
+
+function initMascot() {
+  const riveRuntime = window.rive
+  if (!mascotCanvas || !riveRuntime || typeof riveRuntime.Rive !== 'function') {
+    setMascotFallbackVisible(true)
+    return
+  }
+
+  setMascotFallbackVisible(true)
+  mascotRive = new riveRuntime.Rive({
+    src: MASCOT_SOURCE,
+    canvas: mascotCanvas,
+    artboard: MASCOT_ARTBOARD_NAME,
+    stateMachines: MASCOT_STATE_MACHINE_NAME,
+    autoplay: true,
+    layout: new riveRuntime.Layout({
+      fit: riveRuntime.Fit.Contain,
+      alignment: riveRuntime.Alignment.Center
+    }),
+    onLoad: () => {
+      mascotInputs = {
+        focusLevel: getMascotInput('focusLevel'),
+        lidsmove: getMascotInput('lidsmove'),
+        shake: getMascotInput('shake')
+      }
+      resizeMascotCanvas()
+      setMascotFallbackVisible(false)
+      syncMascotState()
+    },
+    onLoadError: () => {
+      mascotRive = null
+      mascotInputs = {
+        focusLevel: null,
+        lidsmove: null,
+        shake: null
+      }
+      setMascotFallbackVisible(true)
+    }
+  })
+}
+
 function createRowForMessage(message) {
   const row = document.createElement('div')
-  row.className = 'w-full flex ' + (message.role === 'user' ? 'justify-end' : 'justify-start')
+  row.className = 'w-full flex items-end gap-2 ' + (message.role === 'user' ? 'justify-end' : 'justify-start')
   const bubble = document.createElement('div')
   bubble.className = 'bubble no-drag ' + (message.role === 'user' ? 'bubble-user' : 'bubble-system')
   if (message.typing) {
@@ -124,6 +290,7 @@ function collapseOverlay() {
   chatVisible = false
   applyScrollAndClamp(COLLAPSED_OVERLAY_HEIGHT)
   sendOverlayHeight(COLLAPSED_OVERLAY_HEIGHT)
+  syncMascotState()
 }
 
 function escapeHtmlAttribute(text) {
@@ -538,7 +705,7 @@ function renderChat() {
       rowByKey.set(key, row)
     } else {
       // Update role class if necessary
-      const desiredRowClass = 'w-full flex ' + (msg.role === 'user' ? 'justify-end' : 'justify-start')
+      const desiredRowClass = 'w-full flex items-end gap-2 ' + (msg.role === 'user' ? 'justify-end' : 'justify-start')
       if (row.className !== desiredRowClass) row.className = desiredRowClass
       const bubble = row.querySelector('.bubble')
       const desiredBubbleClass = 'bubble no-drag ' + (msg.role === 'user' ? 'bubble-user' : 'bubble-system')
@@ -579,10 +746,13 @@ function renderChat() {
 
   // Update recent chats visibility based on active chat state
   updateRecentChatsVisibility()
+  syncMascotPlacement()
+  syncMascotState()
 
   // Event delegation for chat links - handled once at container level
 
   requestAnimationFrame(() => {
+    resizeMascotCanvas()
     const desired = clampOverlayHeight(computeDesiredHeight())
     applyScrollAndClamp(desired)
     sendOverlayHeight(desired)
@@ -676,9 +846,11 @@ async function addMessageFromInput() {
         images = screenshotResult.images
       } else {
         console.error('[CHAT] Screenshot capture failed:', screenshotResult.error)
+        showMascotErrorState()
       }
     } catch (error) {
       console.error('[CHAT] Error capturing screenshot:', error)
+      showMascotErrorState()
     }
   }
 
@@ -714,6 +886,7 @@ async function addMessageFromInput() {
         pendingMessages[pendingIndex].text = 'Failed to send: ' + (result.error || 'Unknown error')
         renderChat()
       }
+      showMascotErrorState()
     }
   })
 
@@ -788,10 +961,13 @@ input0.addEventListener('input', () => {
   if (recentChatsContainer && recentChatsContainer.style.display !== 'none') {
     updateRecentChatsVisibility()
   }
+  syncMascotState()
 })
 
 // IPC handlers for communication with main window
 ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
+  const previousMessageCount = messages.length
+  const previousTyping = pendingMessages.some((message) => message && message.typing)
   messages = newMessages
   
   // If we're receiving an empty array, also clear pending messages to fully clear the chat
@@ -860,6 +1036,9 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
   }
 
   renderChat()
+  if (newMessages.length > previousMessageCount && previousTyping) {
+    celebrateMascot()
+  }
   
   // Auto-show and expand if new messages arrive
   if (newMessages.length > 0) {
@@ -885,6 +1064,7 @@ ipcRenderer.on('chat:message-update', (event, result) => {
       pendingMessage.text = 'Failed to send: ' + (result.error || 'Unknown error')
       renderChat()
     }
+    showMascotErrorState()
   }
   // On success, keep optimistic message until Firestore snapshot includes the new message
 })
@@ -909,6 +1089,7 @@ ipcRenderer.on('chat:load-chat-result', (event, result) => {
     recentChatsPage = 0
   } else {
     console.error('[CHAT] Failed to load chat:', result.error)
+    showMascotErrorState()
     updateRecentChatsVisibility()
   }
 })
@@ -951,7 +1132,12 @@ window.addEventListener('focus', () => {
     if (messages.length === 0 && pendingMessages.length === 0) {
       ipcRenderer.invoke('chat:get-recent-chats').catch(() => {})
     }
+    syncMascotState()
   } catch (e) {}
+})
+
+window.addEventListener('blur', () => {
+  syncMascotState()
 })
 
 // Handle ESC key to close overlay
@@ -1143,20 +1329,29 @@ async function loadChatById(chatId) {
     // Success will be handled by chat:load-chat-result IPC
   } catch (error) {
     console.error('[CHAT] Error loading chat:', error)
+    showMascotErrorState()
     isLoadingChat = false
     updateRecentChatsVisibility()
   }
 }
 
 // Initialize
+if (overlayRoot) {
+  overlayRoot.addEventListener('pointermove', (event) => {
+    const bounds = overlayRoot.getBoundingClientRect()
+    if (!bounds.width) return
+    const position = ((event.clientX - bounds.left) / bounds.width - 0.5) * 2
+    setMascotLidsMove(position)
+  })
+  overlayRoot.addEventListener('pointerleave', () => {
+    setMascotLidsMove(0)
+  })
+}
+
+window.addEventListener('resize', () => {
+  resizeMascotCanvas()
+})
+
+initMascot()
 updateIncludeScreenBtn()
 renderChat()
-
-
-
-
-
-
-
-
-

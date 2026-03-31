@@ -75,6 +75,7 @@
     "@langchain/core": "^1.1.38",
     "@langchain/google-genai": "^2.1.26",
     "@langchain/openai": "^1.4.1",
+    "@rive-app/canvas-single": "^2.36.0",
     "audiobuffer-to-wav": "^1.0.0",
     "electron-log": "^5.4.3",
     "electron-store": "^11.0.2",
