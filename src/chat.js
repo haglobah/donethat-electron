@@ -105,6 +105,18 @@ let mascotMoodOverrideTimer = null
 let isIdleSleeping = false
 let idleSleepTimer = null
 const IDLE_SLEEP_MS = 60 * 1000
+/**
+ * Whether the user is engaged with this overlay. Window focus/blur is unreliable in Electron
+ * (focus often does not fire again after the first time), so we also set this true on
+ * pointerdown / focusin inside the overlay.
+ */
+let overlayWindowActive = true
+
+function markOverlayEngaged() {
+  const prev = overlayWindowActive
+  overlayWindowActive = true
+  if (!prev) syncMascotState()
+}
 
 function getMessageKey(message, index) {
   return message.id || message.ts || `idx-${index}`
@@ -153,9 +165,20 @@ function syncMascotPlacement() {
     }
     return
   }
-  mascotWrap.hidden = false
   const lastRow = chatContainer.lastElementChild
   if (!lastRow) return
+  const lastBubble = lastRow.querySelector('.bubble')
+  const isAssistantTail = lastBubble && lastBubble.classList.contains('bubble-system')
+  if (!isAssistantTail) {
+    mascotWrap.hidden = true
+    if (mascotWrap.parentElement !== overlayCard) {
+      overlayCard.insertBefore(mascotWrap, overlayCard.firstChild)
+    } else if (overlayCard.firstChild !== mascotWrap) {
+      overlayCard.insertBefore(mascotWrap, overlayCard.firstChild)
+    }
+    return
+  }
+  mascotWrap.hidden = false
   if (mascotWrap.parentElement !== lastRow || lastRow.firstElementChild !== mascotWrap) {
     lastRow.insertBefore(mascotWrap, lastRow.firstChild)
   }
@@ -194,7 +217,7 @@ function triggerMascotShake() {
 }
 
 function computeMascotMood() {
-  if (!document.hasFocus() || document.visibilityState !== 'visible') return MASCOT_MOODS.SLEEPING
+  if (document.visibilityState !== 'visible' || !overlayWindowActive) return MASCOT_MOODS.SLEEPING
   if (isIdleSleeping) return MASCOT_MOODS.SLEEPING
   if (pendingMessages.some((message) => message && message.typing)) return MASCOT_MOODS.PRODUCTIVE
   if ((input0.value || '').trim()) return MASCOT_MOODS.DEEPFOCUS
@@ -210,10 +233,6 @@ function computeMascotMood() {
 function syncMascotState() {
   const mood = mascotMoodOverride ?? computeMascotMood()
   setMascotMood(mood)
-}
-
-function celebrateMascot() {
-  setMascotMoodOverride(MASCOT_MOODS.CELEBRATING, 1400)
 }
 
 function showMascotErrorState() {
@@ -302,7 +321,9 @@ function applyScrollAndClamp(desired) {
   const clamped = clampOverlayHeight(desired)
   const maxChat = Math.max(0, clamped - inputH - chrome - recentChatsH - noticeH)
   chatContainer.style.maxHeight = maxChat + 'px'
-  chatContainer.style.overflowY = desired > MAX_OVERLAY_HEIGHT ? 'auto' : 'hidden'
+  // Allow scrolling whenever content is taller than the allocated region — not only when
+  // the full window hits MAX_OVERLAY_HEIGHT (otherwise overflow stayed hidden with clipped content).
+  chatContainer.style.overflowY = 'auto'
   chatContainer.scrollTop = chatContainer.scrollHeight
 }
 
@@ -1068,12 +1089,12 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
   renderChat()
   if (newMessages.length > previousMessageCount && previousTyping) {
     const lastAssistant = [...newMessages].reverse().find(m => m && m.role === 'assistant')
-    const emotionMood = lastAssistant && lastAssistant.emotion ? EMOTION_TO_MOOD[lastAssistant.emotion] : undefined
-    if (emotionMood !== undefined) {
-      setMascotMoodOverride(emotionMood, 2500)
-    } else {
-      celebrateMascot()
+    let replyMood = MASCOT_MOODS.PRODUCTIVE
+    if (lastAssistant && typeof lastAssistant.emotion === 'string') {
+      const mapped = EMOTION_TO_MOOD[lastAssistant.emotion]
+      if (mapped !== undefined) replyMood = mapped
     }
+    setMascotMoodOverride(replyMood, 2500)
   }
   
   // Auto-show and expand if new messages arrive
@@ -1151,6 +1172,7 @@ if (clearBtn) {
 
 // Focus input when window gains focus
 window.addEventListener('focus', () => {
+  markOverlayEngaged()
   try {
     // Run inactivity reset and focus input on window focus
     maybeResetChatOnOverlayShow()
@@ -1169,14 +1191,11 @@ window.addEventListener('focus', () => {
       ipcRenderer.invoke('chat:get-recent-chats').catch(() => {})
     }
     resetIdleTimer()
-    // Greeting when overlay opens (skip if a reply emotion override is already active)
-    if (!mascotMoodOverride) {
-      setMascotMoodOverride(MASCOT_MOODS.DEEPFOCUS, 1200)
-    }
   } catch (e) {}
 })
 
 window.addEventListener('blur', () => {
+  overlayWindowActive = false
   syncMascotState()
 })
 
@@ -1377,6 +1396,22 @@ async function loadChatById(chatId) {
 
 // Initialize
 if (overlayRoot) {
+  overlayRoot.addEventListener(
+    'pointerdown',
+    () => {
+      markOverlayEngaged()
+      resetIdleTimer()
+      syncMascotState()
+    },
+    true
+  )
+  overlayRoot.addEventListener(
+    'focusin',
+    () => {
+      markOverlayEngaged()
+    },
+    true
+  )
   overlayRoot.addEventListener('pointermove', (event) => {
     const bounds = overlayRoot.getBoundingClientRect()
     if (!bounds.width) return

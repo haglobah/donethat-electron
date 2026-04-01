@@ -51,7 +51,9 @@
       /* Robust centering using flex */
       .input-row { display: flex; align-items: center; gap: 6px; }
       .input-wrap { position: relative; flex: 1 1 auto; }
-      .input-wrap textarea { padding-right: 28px !important; padding-top: 5px !important; padding-bottom: 5px !important; background: rgba(255,255,255,0.88) !important; border: 1px solid rgba(0,0,0,0.08) !important; min-height: 28px; height: 28px; max-height: 28px; line-height: 18px; display: block; resize: none; overflow-y: auto; outline: none !important; }
+      .input-wrap textarea { padding-right: 28px !important; padding-top: 5px !important; padding-bottom: 5px !important; background: rgba(255,255,255,0.88) !important; border: 1px solid rgba(0,0,0,0.08) !important; min-height: 28px; height: 28px; max-height: 28px; line-height: 18px; display: block; resize: none; overflow-y: auto; outline: none !important; text-align: left; }
+      .input-wrap textarea::placeholder,
+      .input-wrap textarea::-webkit-input-placeholder { text-align: right; }
       .input-wrap textarea:focus { outline: none !important; box-shadow: none !important; background: rgba(255,255,255,0.92) !important; border-color: rgba(0,0,0,0.08) !important; }
       .icon-btn svg { width: 16px; height: 16px; display: block; }
       .tiny-text { font-size: 12px; }
@@ -81,6 +83,8 @@
       .bubble h3 { font-size: 12px; }
       .bubble h4 { font-size: 12px; font-weight: 600; opacity: 0.95; }
       .bubble h5, .bubble h6 { font-size: 12px; font-weight: 600; opacity: 0.9; }
+      /* Flex child must shrink so maxHeight + overflow can scroll (default min-height:auto prevents it). */
+      #chatContainer { min-height: 0; }
       .z-chat { position: relative; z-index: 1; }
       .z-input { position: relative; z-index: 2; }
       /* Fallback visuals for non-mac non-liquid-glass overlay */
@@ -101,7 +105,7 @@
             <canvas id="mascotCanvas" class="mascot-canvas" hidden></canvas>
           </div>
           <div id="recentChatsContainer" class="recent-chats-container no-drag"></div>
-          <div id="chatContainer" class="z-chat space-y-2 overflow-y-auto pb-2 flex-1"></div>
+          <div id="chatContainer" class="z-chat no-drag space-y-2 overflow-y-auto pb-2 flex-1"></div>
           <div id="chatNotice" class="chat-notice no-drag">Don can make mistakes. Please report issues.</div>
           <div class="z-input">
             <div class="w-full flex justify-center input-row">
@@ -112,7 +116,7 @@
                     <rect x="9" y="19" width="6" height="2" rx="1" fill="currentColor"/>
                   </svg>
                 </button>
-                <textarea id="chatInput" rows="1" class="tiny-text leading-tight py-2 px-2 w-full resize-none chat-input" placeholder="Ask anything. Include screenshot here →" style="border-radius: 6px; -webkit-user-select: text; user-select: text;"></textarea>
+                <textarea id="chatInput" rows="1" class="tiny-text leading-tight py-2 px-2 w-full resize-none chat-input" placeholder="Click to add screenshot ->" style="border-radius: 6px; -webkit-user-select: text; user-select: text;"></textarea>
               </div>
               <div class="flex items-center gap-1">
                 <button id="clearBtn" class="no-drag icon-btn" title="New chat" aria-label="New chat">

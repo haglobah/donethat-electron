@@ -214,30 +214,34 @@ function subscribeToMessages(chatId) {
   function normalizeAssistantPayload(messageData) {
     const rawContent = typeof messageData.content === 'string' ? messageData.content : ''
     const explicitRequestScreen = typeof messageData.requestScreen === 'boolean' ? messageData.requestScreen : undefined
+    const docEmotion = typeof messageData.emotion === 'string' ? messageData.emotion : undefined
     const trimmed = rawContent.trim()
 
     if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
-      return { text: rawContent, requestScreen: explicitRequestScreen }
+      return { text: rawContent, requestScreen: explicitRequestScreen, emotion: docEmotion }
     }
 
     try {
       const parsed = JSON.parse(trimmed)
       if (!parsed || typeof parsed !== 'object') {
-        return { text: rawContent, requestScreen: explicitRequestScreen }
+        return { text: rawContent, requestScreen: explicitRequestScreen, emotion: docEmotion }
       }
 
       const keys = Object.keys(parsed)
-      const hasExactKeys = keys.length === 2 && keys.includes('answer') && keys.includes('requestScreen')
-      if (!hasExactKeys || typeof parsed.answer !== 'string' || typeof parsed.requestScreen !== 'boolean') {
-        return { text: rawContent, requestScreen: explicitRequestScreen }
+      const hasAnswerScreen = typeof parsed.answer === 'string' && typeof parsed.requestScreen === 'boolean'
+      const keysOk = keys.every((k) => k === 'answer' || k === 'requestScreen' || k === 'emotion')
+      if (!hasAnswerScreen || !keysOk || !keys.includes('answer') || !keys.includes('requestScreen')) {
+        return { text: rawContent, requestScreen: explicitRequestScreen, emotion: docEmotion }
       }
 
+      const parsedEmotion = typeof parsed.emotion === 'string' ? parsed.emotion : undefined
       return {
         text: parsed.answer,
-        requestScreen: explicitRequestScreen ?? (typeof parsed.requestScreen === 'boolean' ? parsed.requestScreen : undefined)
+        requestScreen: explicitRequestScreen ?? (typeof parsed.requestScreen === 'boolean' ? parsed.requestScreen : undefined),
+        emotion: docEmotion ?? parsedEmotion
       }
     } catch (_) {
-      return { text: rawContent, requestScreen: explicitRequestScreen }
+      return { text: rawContent, requestScreen: explicitRequestScreen, emotion: docEmotion }
     }
   }
 
@@ -256,7 +260,8 @@ function subscribeToMessages(chatId) {
         // Pass through a numeric timestamp for inactivity checks (with logging)
         ts,
         // Pass through assistant request for next-user screenshot if present
-        requestScreen: isAssistant ? assistantPayload.requestScreen : undefined
+        requestScreen: isAssistant ? assistantPayload.requestScreen : undefined,
+        emotion: isAssistant ? assistantPayload.emotion : undefined
       };
     });
     try { ipcRenderer.send('chat:set-messages', messages); } catch (_) {}
