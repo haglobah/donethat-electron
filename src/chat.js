@@ -73,6 +73,17 @@ const MASCOT_MOODS = Object.freeze({
   ERROR: 10
 })
 
+const EMOTION_TO_MOOD = Object.freeze({
+  neutral:     MASCOT_MOODS.IDLE,
+  greeting:    MASCOT_MOODS.IDLE, // TODO: map to a dedicated greeting animation once available in Rive
+  celebrating: MASCOT_MOODS.CELEBRATING,
+  sad:         MASCOT_MOODS.UNHAPPY,
+  relaxed:     MASCOT_MOODS.CHILLING,
+  focused:     MASCOT_MOODS.DEEPFOCUS,
+  judging:     MASCOT_MOODS.JUDGING,
+  productive:  MASCOT_MOODS.PRODUCTIVE,
+})
+
 // Simple UI state
 let pendingMessages = []
 // Keep a stable mapping from message keys to DOM rows to minimize reflows/flicker
@@ -91,6 +102,9 @@ let mascotInputs = {
 }
 let mascotMoodOverride = null
 let mascotMoodOverrideTimer = null
+let isIdleSleeping = false
+let idleSleepTimer = null
+const IDLE_SLEEP_MS = 60 * 1000
 
 function getMessageKey(message, index) {
   return message.id || message.ts || `idx-${index}`
@@ -107,6 +121,18 @@ function setMascotMoodOverride(mood, durationMs) {
     syncMascotState()
   }, durationMs)
   syncMascotState()
+}
+
+function resetIdleTimer() {
+  if (isIdleSleeping) {
+    isIdleSleeping = false
+    syncMascotState()
+  }
+  if (idleSleepTimer) clearTimeout(idleSleepTimer)
+  idleSleepTimer = setTimeout(() => {
+    isIdleSleeping = true
+    syncMascotState()
+  }, IDLE_SLEEP_MS)
 }
 
 function setMascotFallbackVisible(isVisible) {
@@ -169,7 +195,8 @@ function triggerMascotShake() {
 
 function computeMascotMood() {
   if (!document.hasFocus() || document.visibilityState !== 'visible') return MASCOT_MOODS.SLEEPING
-  if (pendingMessages.some((message) => message && message.typing)) return MASCOT_MOODS.JUDGING
+  if (isIdleSleeping) return MASCOT_MOODS.SLEEPING
+  if (pendingMessages.some((message) => message && message.typing)) return MASCOT_MOODS.PRODUCTIVE
   if ((input0.value || '').trim()) return MASCOT_MOODS.DEEPFOCUS
   if (messages.length > 0 || pendingMessages.some((message) => message && message.role === 'user')) {
     return MASCOT_MOODS.PRODUCTIVE
@@ -913,11 +940,14 @@ async function addMessageFromInput() {
 
 // Event listeners
 input0.addEventListener('keydown', (e) => {
+  resetIdleTimer()
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     addMessageFromInput()
   }
 })
+
+input0.addEventListener('input', () => { resetIdleTimer() })
 
 // Screenshot button functionality
 if (includeScreenBtn) {
@@ -1037,7 +1067,13 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
 
   renderChat()
   if (newMessages.length > previousMessageCount && previousTyping) {
-    celebrateMascot()
+    const lastAssistant = [...newMessages].reverse().find(m => m && m.role === 'assistant')
+    const emotionMood = lastAssistant && lastAssistant.emotion ? EMOTION_TO_MOOD[lastAssistant.emotion] : undefined
+    if (emotionMood !== undefined) {
+      setMascotMoodOverride(emotionMood, 2500)
+    } else {
+      celebrateMascot()
+    }
   }
   
   // Auto-show and expand if new messages arrive
@@ -1132,7 +1168,11 @@ window.addEventListener('focus', () => {
     if (messages.length === 0 && pendingMessages.length === 0) {
       ipcRenderer.invoke('chat:get-recent-chats').catch(() => {})
     }
-    syncMascotState()
+    resetIdleTimer()
+    // Greeting when overlay opens (skip if a reply emotion override is already active)
+    if (!mascotMoodOverride) {
+      setMascotMoodOverride(MASCOT_MOODS.DEEPFOCUS, 1200)
+    }
   } catch (e) {}
 })
 
