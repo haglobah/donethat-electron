@@ -23,6 +23,12 @@ let localProvider = null;
 const CAPTION_TOKENS = 200; // Target tokens for description truncation
 const MAX_OUTPUT_TOKENS = 1000; // Max tokens allowed for model output
 const MAX_SCREENSHOT_SIZE = 2000000; // 2MB per screenshot
+const TRANSIENT_LOCAL_PROCESSING_CODES = new Set([
+  'EAI_AGAIN',
+  'ENETDOWN',
+  'ENETRESET',
+  'ENETUNREACH',
+]);
 
 
 /**
@@ -38,36 +44,68 @@ function truncateToTokens(text, maxTokens) {
   return lastSpace > maxChars * 0.8 ? truncated.substring(0, lastSpace) : truncated;
 }
 
+function getLocalProcessingErrorContext(err) {
+  const messages = [];
+  const codes = [];
+  let status;
+  const seen = new Set();
+  let current = err;
+
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+
+    const currentStatus = current.status ?? current.statusCode;
+    if (typeof currentStatus === 'number' && !status) {
+      status = currentStatus;
+    }
+
+    if (typeof current.code === 'string' && current.code.trim()) {
+      codes.push(current.code.trim());
+    }
+
+    if (typeof current.message === 'string' && current.message.trim()) {
+      messages.push(current.message.trim());
+    }
+
+    current = current.cause;
+  }
+
+  if (messages.length === 0 && err != null) {
+    messages.push(String(err));
+  }
+
+  return {
+    status,
+    codes,
+    text: messages.join(' | ')
+  };
+}
+
+function isTransientLocalProcessingError(err) {
+  const { status, codes, text } = getLocalProcessingErrorContext(err);
+
+  if (status === 408) {
+    return true;
+  }
+
+  if (typeof status === 'number') {
+    return false;
+  }
+
+  if (codes.some((code) => TRANSIENT_LOCAL_PROCESSING_CODES.has(code))) {
+    return true;
+  }
+
+  return /(network error|offline|getaddrinfo|\bEAI_AGAIN\b|\bENETDOWN\b|\bENETRESET\b|\bENETUNREACH\b)/i.test(text);
+}
+
 /**
  * Short summary for banners when the OpenAI client puts full HTML bodies in error.message (e.g. 404 pages).
  */
 function formatLocalProcessingErrorForUser(err) {
   if (!err) return 'Unknown error';
 
-  const readStatus = (e) => {
-    if (!e || typeof e !== 'object') return;
-    const s = e.status ?? e.statusCode;
-    if (typeof s === 'number') return s;
-  };
-
-  const readMessage = (e) => {
-    if (!e) return '';
-    if (typeof e.message === 'string') return e.message;
-    return String(e);
-  };
-
-  let status = readStatus(err);
-  let text = readMessage(err);
-
-  const cause = err.cause;
-  if (cause && typeof cause === 'object') {
-    const cs = readStatus(cause);
-    const cm = readMessage(cause);
-    if (!status && cs) status = cs;
-    if (cm && (text === 'Local Processing' || !text || text.length < 8)) {
-      text = cm;
-    }
-  }
+  let { status, text } = getLocalProcessingErrorContext(err);
 
   const looksLikeHtml = /<!DOCTYPE/i.test(text) || /<html[\s>]/i.test(text) || /<head[\s>]/i.test(text);
   const leadingStatusMatch = text.trim().match(/^(\d{3})\s/);
@@ -99,6 +137,27 @@ function formatLocalProcessingErrorForUser(err) {
     return text.slice(0, maxLen - 1) + '…';
   }
   return text;
+}
+
+function buildLocalProcessingNotification(err) {
+  if (isTransientLocalProcessingError(err)) {
+    return {
+      id: 'local-processing-connection-issue',
+      title: 'Connection issue',
+      message: 'Could not reach the local AI provider. DoneThat will try again on the next capture.',
+      sticky: false,
+      noFocus: true,
+      alsoNative: false
+    };
+  }
+
+  return {
+    id: 'local-processing-error',
+    title: 'Local processing error',
+    message: formatLocalProcessingErrorForUser(err),
+    sticky: true,
+    alsoNative: true
+  };
 }
 
 /**
@@ -672,13 +731,7 @@ async function processDataLocally(idToken, screenshots, inputData, testMode = fa
       try {
         const win = getMainWindow();
         if (win) {
-          win.webContents.send('request-notification', {
-            id: 'local-processing-error',
-            title: 'Local processing error',
-            message: formatLocalProcessingErrorForUser(err),
-            sticky: true,
-            alsoNative: true
-          });
+          win.webContents.send('request-notification', buildLocalProcessingNotification(err));
         } else {
           log.warn('Local processing error: main window unavailable for in-app notification');
         }
@@ -729,6 +782,8 @@ module.exports = {
   isLocalProcessingAvailable,
   getLocalProvider,
   processDataLocally,
+  isTransientLocalProcessingError,
+  buildLocalProcessingNotification,
   formatLocalProcessingErrorForUser,
   // Allow main process to reset cached config and models when FE updates settings
   resetLLMModels: () => { 
