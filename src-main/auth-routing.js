@@ -11,6 +11,20 @@ function clearPortalReauthPending() {
   pendingPortalReauth = false;
 }
 
+// Tracks whether the next auth callback came from a portal-initiated sign-in (e.g. calendar linking)
+let pendingPortalSignin = false;
+let pendingPortalSigninRequestCalendar = false;
+
+function markPortalSigninPending(requestCalendar) {
+  pendingPortalSignin = true;
+  pendingPortalSigninRequestCalendar = !!requestCalendar;
+}
+
+function clearPortalSigninPending() {
+  pendingPortalSignin = false;
+  pendingPortalSigninRequestCalendar = false;
+}
+
 /**
  * Route donethat:// callbacks (login, calendar, reauth) to the right target.
  * - login / calendar: custom token to portal or shell
@@ -90,9 +104,11 @@ function handleDonethatUrl(urlString, mainWindow, enqueueDeepLinkToken) {
  * - token-only -> shell
  */
 function handleAuthServerToken(token, googleTokens, mainWindow, enqueueDeepLinkToken) {
+  log.info('[handleAuthServerToken] token:', !!token, 'hasGoogleTokens:', !!(googleTokens && googleTokens.idToken), 'pendingPortalReauth:', pendingPortalReauth, 'pendingPortalSignin:', pendingPortalSignin, 'requestCalendar:', pendingPortalSigninRequestCalendar);
   const hasGoogleTokens = googleTokens && googleTokens.idToken;
   if (hasGoogleTokens && pendingPortalReauth && mainWindow && !mainWindow.isDestroyed()) {
     clearPortalReauthPending();
+    clearPortalSigninPending();
     try {
       mainWindow.webContents.send('auth:reauth-result-for-portal', {
         idToken: googleTokens.idToken,
@@ -105,11 +121,29 @@ function handleAuthServerToken(token, googleTokens, mainWindow, enqueueDeepLinkT
   }
 
   if (pendingPortalReauth) clearPortalReauthPending();
+
+  // Portal-initiated sign-in (e.g. calendar linking): route token back to portal
+  if (pendingPortalSignin && token && mainWindow && !mainWindow.isDestroyed()) {
+    const requestCalendar = pendingPortalSigninRequestCalendar;
+    clearPortalSigninPending();
+    try {
+      mainWindow.webContents.send('auth:custom-token-for-portal', {
+        customToken: token,
+        requestCalendar,
+      });
+    } catch (e) {
+      log.warn('Failed to send auth:custom-token-for-portal (localhost) to renderer:', e);
+    }
+    return;
+  }
+
+  if (pendingPortalSignin) clearPortalSigninPending();
   enqueueDeepLinkToken(token);
 }
 
 module.exports = {
   markPortalReauthPending,
+  markPortalSigninPending,
   handleDonethatUrl,
   handleAuthServerToken,
 };

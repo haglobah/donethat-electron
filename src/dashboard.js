@@ -12,7 +12,7 @@ const saveFinalSummaryFunction = httpsCallable(functions, "saveFinalSummary");
 // Reference to permission-related elements 
 const generateSummaryBtn = document.getElementById("generateSummaryBtn");
 let currentSummaryId = null;
-const summaryLoadingSpinner = document.getElementById("summaryLoadingSpinner");
+const finishDayLoadingSpinner = document.getElementById("finishDayLoadingSpinner");
 
 // Summary overlay elements
 const summaryOverlay = document.getElementById("summaryOverlay");
@@ -112,7 +112,7 @@ function hideSummaryOverlay() {
 
   // Reset to initial state
   function resetSummaryState() {
-    document.getElementById('summaryLoadingSpinner').classList.add('hidden'); // Ensure spinner is hidden
+    if (finishDayLoadingSpinner) finishDayLoadingSpinner.classList.add('hidden');
     const finishDayMessage = document.getElementById('finishDayMessage');
     if (finishDayMessage) finishDayMessage.classList.add('hidden');
     currentSummaryId = null;
@@ -258,7 +258,7 @@ if (summarySubmitBtn) {
   // Update the event listener for the generate summary button
   if (generateSummaryBtn) {
     generateSummaryBtn.addEventListener('click', async () => {
-      summaryLoadingSpinner.classList.remove('hidden');
+      if (finishDayLoadingSpinner) finishDayLoadingSpinner.classList.remove('hidden');
       const finishDayMessage = document.getElementById('finishDayMessage');
       if (finishDayMessage) finishDayMessage.classList.remove('hidden');
       // Immediately pause until tomorrow when finishing the day, if not already paused
@@ -270,10 +270,9 @@ if (summarySubmitBtn) {
         // No-op if IPC is unavailable
       }
 
-      // Call the actual Cloud Function instead of using dummy data
       generateRawSummaryFunction()
         .then((result) => {
-          summaryLoadingSpinner.classList.add('hidden');
+          if (finishDayLoadingSpinner) finishDayLoadingSpinner.classList.add('hidden');
           const finishDayMessage = document.getElementById('finishDayMessage');
           if (finishDayMessage) finishDayMessage.classList.add('hidden');
 
@@ -408,7 +407,7 @@ if (summarySubmitBtn) {
           });
         })
         .catch((error) => {
-          summaryLoadingSpinner.classList.add('hidden');
+          if (finishDayLoadingSpinner) finishDayLoadingSpinner.classList.add('hidden');
           const finishDayMessage = document.getElementById('finishDayMessage');
           if (finishDayMessage) finishDayMessage.classList.add('hidden');
           console.error("Error generating summary:", error);

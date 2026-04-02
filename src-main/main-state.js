@@ -1771,8 +1771,8 @@ function setupIPCHandlers() {
 
   // Test local processing handler
   ipcMain.handle('test-local-processing', async (event) => {
+    const { processDataLocally, isLocalProcessingAvailable, formatLocalProcessingErrorForUser } = require('./processLocal');
     try {
-      const { processDataLocally } = require('./processLocal');
       const { getInputDataSettings } = require('./capture');
       const audioCapture = require('./captureAudio');
 
@@ -1785,7 +1785,6 @@ function setupIPCHandlers() {
       const screenshots = await require('./captureScreenshots').captureScreenshot({ caller: 'test-local-processing' });
 
       // Check if we have local processing available and determine which provider
-      const { isLocalProcessingAvailable } = require('./processLocal');
       if (!await isLocalProcessingAvailable()) {
         return { success: false, message: 'No local processing configuration found. Set up Gemini API key or OpenAI-compatible endpoint first.' };
       }
@@ -1874,7 +1873,7 @@ function setupIPCHandlers() {
       }
     } catch (error) {
       log.error('Error in local processing test:', error);
-      return { success: false, message: error.message };
+      return { success: false, message: formatLocalProcessingErrorForUser(error) };
     }
   });
 
@@ -2591,8 +2590,16 @@ async function getOpenAICompatibleConfig() {
   }
 }
 
+function getMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return mainWindow;
+  }
+  return null;
+}
+
 module.exports = {
   initState,
+  getMainWindow,
   resume,
   isPaused,
   isWorkday,

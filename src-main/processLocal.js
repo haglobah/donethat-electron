@@ -1,5 +1,5 @@
 const log = require('electron-log');
-const { getGeminiApiKey, getOpenAICompatibleConfig } = require('./main-state');
+const { getGeminiApiKey, getOpenAICompatibleConfig, getMainWindow } = require('./main-state');
 
 // Firebase URLs for config and processing
 const FIREBASE_CONFIG_URL = 'https://europe-west1-donethat.cloudfunctions.net/inputConfig';
@@ -36,6 +36,69 @@ function truncateToTokens(text, maxTokens) {
   const truncated = text.substring(0, maxChars);
   const lastSpace = truncated.lastIndexOf(' ');
   return lastSpace > maxChars * 0.8 ? truncated.substring(0, lastSpace) : truncated;
+}
+
+/**
+ * Short summary for banners when the OpenAI client puts full HTML bodies in error.message (e.g. 404 pages).
+ */
+function formatLocalProcessingErrorForUser(err) {
+  if (!err) return 'Unknown error';
+
+  const readStatus = (e) => {
+    if (!e || typeof e !== 'object') return;
+    const s = e.status ?? e.statusCode;
+    if (typeof s === 'number') return s;
+  };
+
+  const readMessage = (e) => {
+    if (!e) return '';
+    if (typeof e.message === 'string') return e.message;
+    return String(e);
+  };
+
+  let status = readStatus(err);
+  let text = readMessage(err);
+
+  const cause = err.cause;
+  if (cause && typeof cause === 'object') {
+    const cs = readStatus(cause);
+    const cm = readMessage(cause);
+    if (!status && cs) status = cs;
+    if (cm && (text === 'Local Processing' || !text || text.length < 8)) {
+      text = cm;
+    }
+  }
+
+  const looksLikeHtml = /<!DOCTYPE/i.test(text) || /<html[\s>]/i.test(text) || /<head[\s>]/i.test(text);
+  const leadingStatusMatch = text.trim().match(/^(\d{3})\s/);
+  if (!status && leadingStatusMatch) {
+    status = parseInt(leadingStatusMatch[1], 10);
+  }
+
+  if (looksLikeHtml || /^\d{3}\s*</.test(text.trim())) {
+    if (status === 404) {
+      return 'The API returned 404 (not found). Check your OpenAI-compatible base URL (often …/v1) and model id.';
+    }
+    if (status === 401 || status === 403) {
+      return 'The API rejected the request (authentication). Check your API key and account.';
+    }
+    if (status === 429) {
+      return 'Rate limited by the API. Try again in a moment.';
+    }
+    if (status >= 500) {
+      return `The API returned server error ${status}. Try again later or check your provider.`;
+    }
+    if (status) {
+      return `The API returned ${status} with a non-JSON response. Check the endpoint URL and model name.`;
+    }
+    return 'The API returned an HTML page instead of JSON. Check your base URL and model id.';
+  }
+
+  const maxLen = 400;
+  if (text.length > maxLen) {
+    return text.slice(0, maxLen - 1) + '…';
+  }
+  return text;
 }
 
 /**
@@ -605,19 +668,23 @@ async function processDataLocally(idToken, screenshots, inputData, testMode = fa
         throw err;
       }
 
-      // Notify user directly on local analysis errors
+      // Notify main window only — getAllWindows()[0] is not ordered; overlay (chat) has no listener.
       try {
-        const { BrowserWindow } = require('electron');
-        const win = BrowserWindow.getAllWindows()?.[0];
-        if (win && !win.isDestroyed()) {
+        const win = getMainWindow();
+        if (win) {
           win.webContents.send('request-notification', {
             id: 'local-processing-error',
             title: 'Local processing error',
-            message: (err && err.message) ? err.message : 'Unknown error',
-            sticky: false
+            message: formatLocalProcessingErrorForUser(err),
+            sticky: true,
+            alsoNative: true
           });
+        } else {
+          log.warn('Local processing error: main window unavailable for in-app notification');
         }
-      } catch (_) {}
+      } catch (e) {
+        log.warn('Local processing error: failed to send notification:', e?.message || e);
+      }
       // Throw canonical local-processing error marker for upstream
       throw new Error('Local Processing');
     }
@@ -662,6 +729,7 @@ module.exports = {
   isLocalProcessingAvailable,
   getLocalProvider,
   processDataLocally,
+  formatLocalProcessingErrorForUser,
   // Allow main process to reset cached config and models when FE updates settings
   resetLLMModels: () => { 
     llmModels = null; 

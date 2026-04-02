@@ -65,7 +65,7 @@ function showInappNotification(opts) {
   }
 }
 
-async function showBanner(message, { title = null, sticky = false, action = null, id = null, noFocus = false } = {}) {
+async function showBanner(message, { title = null, sticky = false, action = null, id = null, noFocus = false, alsoNative = false } = {}) {
   try {
     const payload = {
       id: id || ('banner-'+Date.now()),
@@ -75,6 +75,15 @@ async function showBanner(message, { title = null, sticky = false, action = null
       action,
       noFocus
     };
+
+    // In-app + OS notification (e.g. local processing errors: visible in window and when backgrounded)
+    if (alsoNative) {
+      showInappNotification(payload);
+      try {
+        ipcRenderer.send('background:notify', payload);
+      } catch (_) {}
+      return;
+    }
 
     // If noFocus is true, always use in-app notification (never background)
     if (noFocus) {

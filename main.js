@@ -31,6 +31,7 @@ const {
 } = require('./src-main/firebase-functions-main')
 const {
   markPortalReauthPending,
+  markPortalSigninPending,
   handleDonethatUrl,
   handleAuthServerToken,
 } = require('./src-main/auth-routing')
@@ -255,6 +256,8 @@ const OVERLAY_COLLAPSED_HEIGHT = 52
 let updateAvailable = false
 const DESKTOP_NOTIFICATION_DEBOUNCE_MS = 8 * 60 * 60 * 1000
 const desktopNotificationHistory = new Map()
+/** Keep Notification objects referenced until close; otherwise GC removes them and click never fires (Electron/macOS). */
+const activeDesktopNotifications = []
 
 // Deep-link auth flow coordination
 let pendingDeepLinkToken = null;
@@ -863,12 +866,13 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('auth:google-signin', async (_event, payload) => {
     try {
+      log.info('[auth:google-signin] invoked fromPortal:', !!(payload && payload.fromPortal), 'requestCalendar:', !!(payload && payload.requestCalendar));
       const port = await startAuthServer();
-      const data = await getGoogleSignInUrl({
-        port,
-        requestCalendar: !!(payload && payload.requestCalendar),
-      });
+      const requestCalendar = !!(payload && payload.requestCalendar);
+      const data = await getGoogleSignInUrl({ port, requestCalendar });
       const url = data && (data.authUrl || data.url || (data.data && data.data.url));
+      if (url && payload && payload.fromPortal) markPortalSigninPending(requestCalendar);
+      log.info('[auth:google-signin] url obtained:', !!url, 'marked portal pending:', !!(url && payload && payload.fromPortal));
       return url ? { success: true, url } : { success: false, error: 'No URL in response' };
     } catch (error) {
       log.error('Failed to get desktop Google Sign In URL from main:', error);
@@ -957,11 +961,45 @@ app.whenReady().then(async () => {
         icon: notificationIconPath
       });
 
-      if (action && action.channel) {
-        notification.on('click', () => {
-          try { dispatchNotificationAction(action); } catch (e) { log.error('Desktop notification action failed:', e); }
-        });
+      const releaseDesktopNotification = () => {
+        const i = activeDesktopNotifications.indexOf(notification)
+        if (i >= 0) activeDesktopNotifications.splice(i, 1)
       }
+
+      activeDesktopNotifications.push(notification)
+      notification.on('close', releaseDesktopNotification)
+
+      notification.on('click', () => {
+        try {
+          try {
+            if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
+              overlayWindow.hide();
+            }
+          } catch (e) {}
+          try {
+            if (process.platform === 'darwin') {
+              try { app.dock.show(); } catch (e) {}
+              try { app.focus({ steal: true }); } catch (e) {}
+            } else {
+              try { app.focus(); } catch (e) {}
+            }
+          } catch (e) {}
+          try {
+            restoreShowAndFocusMainWindow();
+          } catch (e) {
+            log.error('Desktop notification focus failed:', e);
+          }
+          if (action && action.channel) {
+            try {
+              dispatchNotificationAction(action);
+            } catch (e) {
+              log.error('Desktop notification action failed:', e);
+            }
+          }
+        } finally {
+          releaseDesktopNotification()
+        }
+      });
 
       notification.show();
     } catch (e) {

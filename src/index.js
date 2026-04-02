@@ -620,7 +620,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // Listen to connectivity changes
   window.addEventListener('offline', () => {
     showWebviewError();
-    try { const s = document.getElementById('summaryLoadingSpinner'); if (s) s.classList.add('hidden'); } catch (_) {}
+    try {
+      const s = document.getElementById('summaryLoadingSpinner');
+      if (s) s.classList.add('hidden');
+      const fd = document.getElementById('finishDayLoadingSpinner');
+      if (fd) fd.classList.add('hidden');
+      const fdMsg = document.getElementById('finishDayMessage');
+      if (fdMsg) fdMsg.classList.add('hidden');
+    } catch (_) {}
   });
   window.addEventListener('online', () => {
     hideWebviewError();
@@ -1023,12 +1030,16 @@ document.addEventListener('DOMContentLoaded', () => {
       } else if (event.channel === 'auth:google-signin') {
         const payload = event.args && event.args[0] || {};
         const requestCalendar = payload.requestCalendar === true;
+        console.log('[ipc-message] auth:google-signin from portal, requestCalendar:', requestCalendar);
         const openUrl = (url) => {
           if (url) window.electronAPI.invoke('open-external', url).catch(() => {});
         };
-        window.electronAPI.invoke('auth:google-signin', { requestCalendar })
-          .then((res) => { if (res && res.success && res.url) openUrl(res.url); })
-          .catch(() => {});
+        window.electronAPI.invoke('auth:google-signin', { requestCalendar, fromPortal: true })
+          .then((res) => {
+            console.log('[ipc-message] auth:google-signin result:', JSON.stringify(res));
+            if (res && res.success && res.url) openUrl(res.url);
+          })
+          .catch((err) => { console.error('[ipc-message] auth:google-signin error:', err); });
       } else if (event.channel === 'auth:google-reauth') {
         const payload = event.args && event.args[0] || {};
         window.electronAPI.invoke('auth:google-reauth', {
@@ -1072,7 +1083,8 @@ document.addEventListener('DOMContentLoaded', () => {
         sticky: payload.sticky || false,
         action: payload.action || null,
         id: payload.id || null,
-        noFocus: payload.noFocus || false
+        noFocus: payload.noFocus || false,
+        alsoNative: payload.alsoNative || false
       });
     }
   });
