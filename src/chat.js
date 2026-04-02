@@ -57,6 +57,8 @@ const TYPING_DELAY_MS = 300
 const INACTIVITY_RESET_MS = 10 * 60 * 1000
 const COLLAPSED_OVERLAY_HEIGHT = 52
 const MAX_OVERLAY_HEIGHT = 600
+const ASSISTANT_WRITING_HOLD_MS = 2500
+const ASSISTANT_EMOTION_DEBUG_LABEL = '[DEBUG] Emotion: '
 const MASCOT_SOURCE = '../resources/rive/donethat_mascot.riv'
 const MASCOT_ARTBOARD_NAME = 'face'
 const MASCOT_STATE_MACHINE_NAME = 'face'
@@ -104,6 +106,8 @@ let mascotMoodOverride = null
 let mascotMoodOverrideTimer = null
 let isIdleSleeping = false
 let idleSleepTimer = null
+let assistantWritingTimer = null
+let assistantWritingUntil = 0
 const IDLE_SLEEP_MS = 60 * 1000
 /**
  * Whether the user is engaged with this overlay. Window focus/blur is unreliable in Electron
@@ -145,6 +149,37 @@ function resetIdleTimer() {
     isIdleSleeping = true
     syncMascotState()
   }, IDLE_SLEEP_MS)
+}
+
+function getDisplayTextForMessage(message) {
+  const baseText = typeof message?.text === 'string' ? message.text : ''
+  if (!message || message.role !== 'assistant' || message.typing) return baseText
+
+  const emotion = typeof message.emotion === 'string' && message.emotion.trim()
+    ? message.emotion.trim()
+    : 'none'
+
+  return `${baseText}\n\n${ASSISTANT_EMOTION_DEBUG_LABEL}${emotion}`
+}
+
+function hasAssistantWritingState() {
+  if (pendingMessages.some((message) => message && message.typing)) return true
+  return Date.now() < assistantWritingUntil
+}
+
+function setAssistantWritingState(durationMs = ASSISTANT_WRITING_HOLD_MS) {
+  assistantWritingUntil = Date.now() + Math.max(0, Number(durationMs) || 0)
+  if (assistantWritingTimer) {
+    try { clearTimeout(assistantWritingTimer) } catch (_) {}
+  }
+  assistantWritingTimer = setTimeout(() => {
+    assistantWritingTimer = null
+    if (Date.now() >= assistantWritingUntil) {
+      assistantWritingUntil = 0
+      syncMascotState()
+    }
+  }, Math.max(0, assistantWritingUntil - Date.now()))
+  syncMascotState()
 }
 
 function setMascotFallbackVisible(isVisible) {
@@ -217,9 +252,9 @@ function triggerMascotShake() {
 }
 
 function computeMascotMood() {
+  if (hasAssistantWritingState()) return MASCOT_MOODS.PRODUCTIVE
   if (document.visibilityState !== 'visible' || !overlayWindowActive) return MASCOT_MOODS.SLEEPING
   if (isIdleSleeping) return MASCOT_MOODS.SLEEPING
-  if (pendingMessages.some((message) => message && message.typing)) return MASCOT_MOODS.PRODUCTIVE
   if ((input0.value || '').trim()) return MASCOT_MOODS.DEEPFOCUS
   if (messages.length > 0 || pendingMessages.some((message) => message && message.role === 'user')) {
     return MASCOT_MOODS.PRODUCTIVE
@@ -231,7 +266,9 @@ function computeMascotMood() {
 }
 
 function syncMascotState() {
-  const mood = mascotMoodOverride ?? computeMascotMood()
+  const mood = hasAssistantWritingState()
+    ? MASCOT_MOODS.PRODUCTIVE
+    : (mascotMoodOverride ?? computeMascotMood())
   setMascotMood(mood)
 }
 
@@ -288,7 +325,7 @@ function createRowForMessage(message) {
   if (message.typing) {
     bubble.replaceChildren(createTypingIndicator())
   } else {
-    renderMarkdownIntoBubble(bubble, message.text)
+    renderMarkdownIntoBubble(bubble, getDisplayTextForMessage(message))
   }
   row.appendChild(bubble)
   return row
@@ -761,7 +798,7 @@ function renderChat() {
       if (msg.typing) {
         bubble.replaceChildren(createTypingIndicator())
       } else {
-        renderMarkdownIntoBubble(bubble, msg.text)
+        renderMarkdownIntoBubble(bubble, getDisplayTextForMessage(msg))
       }
     }
 
@@ -1094,12 +1131,13 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
     resetIdleTimer()
     const lastMsg = newMessages[newMessages.length - 1]
     if (lastMsg && lastMsg.role === 'assistant') {
+      setAssistantWritingState(ASSISTANT_WRITING_HOLD_MS)
       let replyMood = MASCOT_MOODS.PRODUCTIVE
       if (typeof lastMsg.emotion === 'string') {
         const mapped = EMOTION_TO_MOOD[lastMsg.emotion]
         if (mapped !== undefined) replyMood = mapped
       }
-      setMascotMoodOverride(replyMood, 2500)
+      setMascotMoodOverride(replyMood, ASSISTANT_WRITING_HOLD_MS + 2500)
     }
   }
 

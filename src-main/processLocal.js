@@ -160,6 +160,24 @@ function buildLocalProcessingNotification(err) {
   };
 }
 
+function isLocalProcessingAuthError(err) {
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+
+  if (err.source !== 'FIREBASE') {
+    return false;
+  }
+
+  const code = err.code;
+  const status = err.status ?? err.statusCode;
+  return code === 'TOKEN_EXPIRED' || code === 'AUTH_ERROR' || status === 401 || status === 403;
+}
+
+function shouldRethrowLocalProcessingError(err, testMode = false) {
+  return testMode || isLocalProcessingAuthError(err);
+}
+
 /**
  * Determine which local provider is configured ('gemini' or 'openai')
  * @returns {Promise<string>} 'gemini' or 'openai'
@@ -722,8 +740,7 @@ async function processDataLocally(idToken, screenshots, inputData, testMode = fa
         testMode
       );
     } catch (err) {
-      // In test mode, pass through the real error
-      if (testMode) {
+      if (shouldRethrowLocalProcessingError(err, testMode)) {
         throw err;
       }
 
@@ -783,6 +800,8 @@ module.exports = {
   getLocalProvider,
   processDataLocally,
   isTransientLocalProcessingError,
+  isLocalProcessingAuthError,
+  shouldRethrowLocalProcessingError,
   buildLocalProcessingNotification,
   formatLocalProcessingErrorForUser,
   // Allow main process to reset cached config and models when FE updates settings

@@ -14,10 +14,16 @@ jest.mock('../main-state', () => ({
 const {
   buildLocalProcessingNotification,
   isTransientLocalProcessingError,
-  formatLocalProcessingErrorForUser
+  isLocalProcessingAuthError,
+  shouldRethrowLocalProcessingError,
+  formatLocalProcessingErrorForUser,
 } = require('../processLocal');
 
 describe('local processing notifications', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   test('downgrades transport failures to in-app-only connection banners', () => {
     const error = new Error('Network error while contacting provider.');
     error.cause = new TypeError('temporary DNS lookup issue');
@@ -59,5 +65,23 @@ describe('local processing notifications', () => {
 
     expect(isTransientLocalProcessingError(error)).toBe(false);
     expect(buildLocalProcessingNotification(error).alsoNative).toBe(true);
+  });
+
+  test('recognizes Firebase auth failures so they can propagate', () => {
+    expect(isLocalProcessingAuthError({ source: 'FIREBASE', code: 'AUTH_ERROR' })).toBe(true);
+    expect(isLocalProcessingAuthError({ source: 'FIREBASE', code: 'TOKEN_EXPIRED' })).toBe(true);
+    expect(isLocalProcessingAuthError({ source: 'FIREBASE', status: 401 })).toBe(true);
+    expect(isLocalProcessingAuthError({ source: 'FIREBASE', status: 403 })).toBe(true);
+    expect(isLocalProcessingAuthError({ code: 'AUTH_ERROR' })).toBe(false);
+    expect(isLocalProcessingAuthError({ status: 401 })).toBe(false);
+    expect(isLocalProcessingAuthError({ status: 500 })).toBe(false);
+  });
+
+  test('rethrows auth errors instead of converting them into local processing notifications', () => {
+    expect(shouldRethrowLocalProcessingError({ source: 'FIREBASE', code: 'AUTH_ERROR' }, false)).toBe(true);
+    expect(shouldRethrowLocalProcessingError({ source: 'FIREBASE', status: 401 }, false)).toBe(true);
+    expect(shouldRethrowLocalProcessingError({ status: 401 }, false)).toBe(false);
+    expect(shouldRethrowLocalProcessingError(new Error('Local provider offline'), false)).toBe(false);
+    expect(shouldRethrowLocalProcessingError(new Error('test mode'), true)).toBe(true);
   });
 });

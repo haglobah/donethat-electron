@@ -778,8 +778,9 @@ async function _sendToServer(idToken, screenshots, inputData = {}, previousScree
         return result;
       } catch (error) {
         // Handle local processing auth errors consistently with cloud path
-        const isTokenExpired = error && error.code === 'TOKEN_EXPIRED';
-        const isAuthError = error && (error.code === 'AUTH_ERROR' || error.status === 401 || error.status === 403);
+        const isFirebaseAuthError = error && error.source === 'FIREBASE';
+        const isTokenExpired = isFirebaseAuthError && error.code === 'TOKEN_EXPIRED';
+        const isAuthError = isFirebaseAuthError && (error.code === 'AUTH_ERROR' || error.status === 401 || error.status === 403);
         
         if (isTokenExpired) {
           if (reauthenticateCallback) {
