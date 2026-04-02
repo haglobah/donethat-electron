@@ -58,7 +58,8 @@ const INACTIVITY_RESET_MS = 10 * 60 * 1000
 const COLLAPSED_OVERLAY_HEIGHT = 52
 const MAX_OVERLAY_HEIGHT = 600
 const ASSISTANT_WRITING_HOLD_MS = 2500
-const ASSISTANT_EMOTION_DEBUG_LABEL = '[DEBUG] Emotion: '
+const ASSISTANT_REPLY_MOOD_MS = 2500
+const ASSISTANT_EMOTION_PLAYBACK_MS = 7000
 const MASCOT_SOURCE = '../resources/rive/donethat_mascot.riv'
 const MASCOT_ARTBOARD_NAME = 'face'
 const MASCOT_STATE_MACHINE_NAME = 'face'
@@ -139,6 +140,23 @@ function setMascotMoodOverride(mood, durationMs) {
   syncMascotState()
 }
 
+function resetAssistantAnimationState() {
+  assistantWritingUntil = 0
+  if (assistantWritingTimer) {
+    try { clearTimeout(assistantWritingTimer) } catch (_) {}
+    assistantWritingTimer = null
+  }
+  if (mascotMoodOverrideTimer) {
+    try { clearTimeout(mascotMoodOverrideTimer) } catch (_) {}
+    mascotMoodOverrideTimer = null
+  }
+  mascotMoodOverride = null
+  if (typingTimer) {
+    try { clearTimeout(typingTimer) } catch (_) {}
+    typingTimer = null
+  }
+}
+
 function resetIdleTimer() {
   if (isIdleSleeping) {
     isIdleSleeping = false
@@ -149,17 +167,6 @@ function resetIdleTimer() {
     isIdleSleeping = true
     syncMascotState()
   }, IDLE_SLEEP_MS)
-}
-
-function getDisplayTextForMessage(message) {
-  const baseText = typeof message?.text === 'string' ? message.text : ''
-  if (!message || message.role !== 'assistant' || message.typing) return baseText
-
-  const emotion = typeof message.emotion === 'string' && message.emotion.trim()
-    ? message.emotion.trim()
-    : 'none'
-
-  return `${baseText}\n\n${ASSISTANT_EMOTION_DEBUG_LABEL}${emotion}`
 }
 
 function hasAssistantWritingState() {
@@ -180,6 +187,28 @@ function setAssistantWritingState(durationMs = ASSISTANT_WRITING_HOLD_MS) {
     }
   }, Math.max(0, assistantWritingUntil - Date.now()))
   syncMascotState()
+}
+
+function getAssistantMoodForMessage(message) {
+  if (!message || message.role !== 'assistant' || typeof message.emotion !== 'string') return null
+  const emotion = message.emotion.trim()
+  if (!emotion) return null
+  const mappedMood = EMOTION_TO_MOOD[emotion]
+  return mappedMood === undefined ? null : mappedMood
+}
+
+function playAssistantEmotion(message, durationMs = ASSISTANT_EMOTION_PLAYBACK_MS) {
+  const mood = getAssistantMoodForMessage(message)
+  if (mood === null) return false
+  setMascotMoodOverride(mood, durationMs)
+  return true
+}
+
+function playLatestAssistantEmotion(durationMs = ASSISTANT_EMOTION_PLAYBACK_MS) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (playAssistantEmotion(messages[i], durationMs)) return true
+  }
+  return false
 }
 
 function setMascotFallbackVisible(isVisible) {
@@ -325,7 +354,7 @@ function createRowForMessage(message) {
   if (message.typing) {
     bubble.replaceChildren(createTypingIndicator())
   } else {
-    renderMarkdownIntoBubble(bubble, getDisplayTextForMessage(message))
+    renderMarkdownIntoBubble(bubble, message.text)
   }
   row.appendChild(bubble)
   return row
@@ -798,7 +827,7 @@ function renderChat() {
       if (msg.typing) {
         bubble.replaceChildren(createTypingIndicator())
       } else {
-        renderMarkdownIntoBubble(bubble, getDisplayTextForMessage(msg))
+        renderMarkdownIntoBubble(bubble, msg.text)
       }
     }
 
@@ -898,6 +927,7 @@ function resetChatForNewConversation() {
   if (wasEmpty) {
     return
   }
+  resetAssistantAnimationState()
   messages = []
   pendingMessages = []
   includeScreenOnNextMessage = true
@@ -1132,12 +1162,9 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
     const lastMsg = newMessages[newMessages.length - 1]
     if (lastMsg && lastMsg.role === 'assistant') {
       setAssistantWritingState(ASSISTANT_WRITING_HOLD_MS)
-      let replyMood = MASCOT_MOODS.PRODUCTIVE
-      if (typeof lastMsg.emotion === 'string') {
-        const mapped = EMOTION_TO_MOOD[lastMsg.emotion]
-        if (mapped !== undefined) replyMood = mapped
+      if (!playAssistantEmotion(lastMsg, ASSISTANT_WRITING_HOLD_MS + ASSISTANT_EMOTION_PLAYBACK_MS)) {
+        setMascotMoodOverride(MASCOT_MOODS.PRODUCTIVE, ASSISTANT_WRITING_HOLD_MS + ASSISTANT_REPLY_MOOD_MS)
       }
-      setMascotMoodOverride(replyMood, ASSISTANT_WRITING_HOLD_MS + 2500)
     }
   }
 
@@ -1235,6 +1262,7 @@ window.addEventListener('focus', () => {
       ipcRenderer.invoke('chat:get-recent-chats').catch(() => {})
     }
     resetIdleTimer()
+    playLatestAssistantEmotion()
   } catch (e) {}
 })
 
