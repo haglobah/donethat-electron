@@ -127,6 +127,27 @@ function getMessageKey(message, index) {
   return message.id || message.ts || `idx-${index}`
 }
 
+function hasNewAssistantMessage(previousMessages, nextMessages) {
+  const knownAssistantKeys = new Set()
+
+  for (let i = 0; i < previousMessages.length; i++) {
+    const message = previousMessages[i]
+    if (message && message.role === 'assistant') {
+      knownAssistantKeys.add(getMessageKey(message, i))
+    }
+  }
+
+  for (let i = 0; i < nextMessages.length; i++) {
+    const message = nextMessages[i]
+    if (!message || message.role !== 'assistant') continue
+    if (!knownAssistantKeys.has(getMessageKey(message, i))) {
+      return true
+    }
+  }
+
+  return false
+}
+
 function setMascotMoodOverride(mood, durationMs) {
   mascotMoodOverride = mood
   if (mascotMoodOverrideTimer) {
@@ -1082,7 +1103,8 @@ input0.addEventListener('input', () => {
 
 // IPC handlers for communication with main window
 ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
-  const previousMessageCount = messages.length
+  const previousMessages = messages
+  const hasNewAssistant = hasNewAssistantMessage(previousMessages, newMessages)
   messages = newMessages
   
   // If we're receiving an empty array, also clear pending messages to fully clear the chat
@@ -1152,9 +1174,9 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
 
   renderChat()
 
-  // Incoming messages (user reply flow or proactive push): treat as user-visible even if the
-  // overlay window never received focus — wake engagement + idle, and show emotion for new coach text.
-  if (newMessages.length > previousMessageCount) {
+  // Incoming assistant replies or proactive pushes are user-visible even if the overlay window
+  // never received focus — wake engagement + idle, and show emotion for new coach text.
+  if (hasNewAssistant) {
     markOverlayEngaged()
     resetIdleTimer()
     const lastMsg = newMessages[newMessages.length - 1]
@@ -1166,8 +1188,8 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
     }
   }
 
-  // Auto-show and expand only when genuinely new messages arrive (not on DB updates to existing ones)
-  if (newMessages.length > previousMessageCount) {
+  // Auto-show and expand only when a new assistant message arrives.
+  if (hasNewAssistant) {
     // Always ensure the overlay window is visible first, but don't steal focus
     ipcRenderer.send('overlay:show-if-hidden', { noFocus: true })
 
