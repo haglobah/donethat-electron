@@ -1168,8 +1168,8 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
     }
   }
 
-  // Auto-show and expand if new messages arrive
-  if (newMessages.length > 0) {
+  // Auto-show and expand only when genuinely new messages arrive (not on DB updates to existing ones)
+  if (newMessages.length > previousMessageCount) {
     // Always ensure the overlay window is visible first, but don't steal focus
     ipcRenderer.send('overlay:show-if-hidden', { noFocus: true })
     
