@@ -1,6 +1,6 @@
 const log = require('electron-log');
 const {
-  captureScreenshot,
+  captureScreenshotDetailed,
   getPreviousScreenshots,
   saveCurrentScreenshot,
   scaleScreenshotToPreviousSize,
@@ -10,7 +10,7 @@ const {
 const { ipcMain, powerMonitor } = require('electron');
 const { default: Store } = require('electron-store');
 const { isLocalProcessingAvailable, getLocalProvider, processDataLocally } = require('./processLocal');
-const { applyAppExclusions } = require('./appExclusionMasking');
+const { applyAppExclusionsToDetailedScreenshots } = require('./appExclusionMasking');
 const { applyImageDiffBoundingBoxes } = require('./imageDiff');
 const { saveCaptureDump, appendCaptureDump } = require('./captureDump');
 const {
@@ -926,21 +926,25 @@ async function captureAndSend(idToken) {
 
     // Capture screenshots only if enabled
     let screenshots = [];
+    let detailedScreenshots = []
     const screenshotPhaseStartedAt = Date.now();
     if (inputDataSettings.screen !== false) {
       try {
-        screenshots = await captureScreenshot({ caller: 'periodic' });
+        detailedScreenshots = await captureScreenshotDetailed({ caller: 'periodic' });
+        screenshots = detailedScreenshots.map((entry) => entry.imageDataUrl)
         resetFailureStreak('screen');
       } catch (error) {
         captureErrors.screen = true;
         log.error('Error capturing screenshots:', error);
         screenshots = [];
+        detailedScreenshots = []
       }
     }
     
     // Apply app exclusions if configured
     try {
-      screenshots = await applyAppExclusions(screenshots);
+      detailedScreenshots = await applyAppExclusionsToDetailedScreenshots(detailedScreenshots)
+      screenshots = detailedScreenshots.map((entry) => entry.imageDataUrl)
     } catch (error) {
       // Non-critical: if masking fails, continue with unmasked screenshots
       log.warn('Error applying app exclusions to screenshots:', error);

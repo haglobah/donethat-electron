@@ -9,6 +9,12 @@ function normalizeAppName(appName) {
   return appName.toLowerCase().replace(/\.(app|exe)$/i, '').trim()
 }
 
+function normalizeDisplayId(displayId) {
+  if (displayId === undefined || displayId === null) return null
+  const normalized = String(displayId).trim()
+  return normalized ? normalized : null
+}
+
 // Helper to create a unique window identifier for z-order tracking
 function getWindowId(window) {
   if (!window) return null
@@ -89,24 +95,31 @@ function convertBoundsToDIP(bounds, display) {
 
 // Helper to get display index for window bounds
 // Bounds from get-windows are in physical pixels, but screen.getDisplayMatching expects DIP
-function getDisplayIndexForBounds(bounds) {
-  if (!bounds) return 0
-  try {
-    // Convert physical pixels to DIP first
-    const dipBounds = convertBoundsToDIP(bounds)
-    
-    // Now match using DIP coordinates
-    const matchingDisplay = screen.getDisplayMatching(dipBounds)
-    if (matchingDisplay) {
-      const displays = screen.getAllDisplays()
-      const displayIndex = displays.findIndex(display => display.id === matchingDisplay.id)
-      return displayIndex >= 0 ? displayIndex : 0
-    }
-    return 0
-  } catch (error) {
-    log.error('Error getting display index for bounds:', error)
-    return 0
+function getDisplayMatchForBounds(bounds) {
+  if (!bounds) {
+    return { displayId: null, screenIndex: null }
   }
+  try {
+    const dipBounds = convertBoundsToDIP(bounds)
+    const matchingDisplay = screen.getDisplayMatching(dipBounds)
+    if (!matchingDisplay) {
+      return { displayId: null, screenIndex: null }
+    }
+
+    const displays = screen.getAllDisplays()
+    const displayIndex = displays.findIndex(display => display.id === matchingDisplay.id)
+    return {
+      displayId: normalizeDisplayId(matchingDisplay.id),
+      screenIndex: displayIndex >= 0 ? displayIndex : null
+    }
+  } catch (error) {
+    log.error('Error getting display match for bounds:', error)
+    return { displayId: null, screenIndex: null }
+  }
+}
+
+function getDisplayIndexForBounds(bounds) {
+  return getDisplayMatchForBounds(bounds).screenIndex
 }
 
 /**
@@ -366,7 +379,8 @@ function reconstructWindowsFromCache() {
         // Try to find matching entry in timeline for executable and bounds
         let executable = 'unknown'
         let bounds = null
-        let screenIndex = 0
+        let screenIndex = null
+        let displayId = null
         
         if (windowTimeline.length > 0) {
           const matchingEntry = windowTimeline.find(entry => {
@@ -380,7 +394,9 @@ function reconstructWindowsFromCache() {
             }
             if (matchingEntry.bounds) {
               bounds = matchingEntry.bounds
-              screenIndex = matchingEntry.screen !== undefined ? matchingEntry.screen : getDisplayIndexForBounds(bounds)
+              const displayMatch = getDisplayMatchForBounds(bounds)
+              screenIndex = matchingEntry.screen !== undefined ? matchingEntry.screen : displayMatch.screenIndex
+              displayId = matchingEntry.displayId !== undefined ? normalizeDisplayId(matchingEntry.displayId) : displayMatch.displayId
             }
           }
         }
@@ -392,6 +408,7 @@ function reconstructWindowsFromCache() {
             title: title,
             executable: executable,
             bounds: bounds,
+            displayId,
             screen: screenIndex,
             minimized: false,
             hidden: false
@@ -425,8 +442,7 @@ function processWindows(windows) {
         continue
       }
       
-      // Get screen index using Electron's getDisplayMatching
-      const screenIndex = getDisplayIndexForBounds(bounds)
+      const displayMatch = getDisplayMatchForBounds(bounds)
       
       const appName = window.owner?.name || window.owner?.processName || 'Unknown'
       const title = window.title || 'Unknown'
@@ -438,7 +454,8 @@ function processWindows(windows) {
         title,
         executable,
         bounds,
-        screen: screenIndex,
+        displayId: displayMatch.displayId,
+        screen: displayMatch.screenIndex,
         minimized: false,
         hidden: false
       })
@@ -532,7 +549,7 @@ async function recordCurrentWindow() {
     
     // Record window information with bounds if available
     const bounds = activeWindowInfo.bounds
-    const screenIndex = bounds ? getDisplayIndexForBounds(bounds) : null
+    const displayMatch = bounds ? getDisplayMatchForBounds(bounds) : { displayId: null, screenIndex: null }
     
     const appName = activeWindowInfo.owner?.name || activeWindowInfo.owner?.processName || 'Unknown'
     
@@ -543,7 +560,8 @@ async function recordCurrentWindow() {
       app: appName,
       executable: activeWindowInfo.owner?.path || 'unknown',
       bounds: bounds,
-      screen: screenIndex
+      displayId: displayMatch.displayId,
+      screen: displayMatch.screenIndex
     })
     
     // Update z-order cache with this specific window (never cleared, just updated with latest activity)
@@ -625,7 +643,7 @@ function getTimelineBuffer(timeWindowMs = 5 * 60 * 1000, resetAfterCollection = 
   
   // Remove bounds and screen from timeline entries before returning
   const result = filtered.map(entry => {
-    const { bounds, screen, ...rest } = entry
+    const { bounds, screen, displayId, ...rest } = entry
     return rest
   })
   
@@ -1058,5 +1076,18 @@ module.exports = {
   shouldExcludeWindow,
   shouldIncludeForContext,
   convertBoundsToDIP,
-  getActiveWindowSafe: (ms = 300) => safeActiveWindow(ms)
+  getActiveWindowSafe: (ms = 300) => safeActiveWindow(ms),
+  __test__: {
+    setWindowTimeline(entries = []) {
+      windowTimeline = Array.isArray(entries) ? [...entries] : []
+    },
+    setTrackingState(active) {
+      isTracking = !!active
+    },
+    resetState() {
+      isTracking = false
+      windowTimeline = []
+      zOrderCache = new Map()
+    }
+  }
 } 

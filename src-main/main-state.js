@@ -1924,9 +1924,9 @@ function setupIPCHandlers() {
 
   ipcMain.handle('test-app-exclusions', async (event) => {
     try {
-      const { applyAppExclusions } = require('./appExclusionMasking');
+      const { applyAppExclusionsToDetailedScreenshots } = require('./appExclusionMasking');
       const windowsCapture = require('./captureWindows');
-      const { captureScreenshot } = require('./captureScreenshots');
+      const { captureScreenshotDetailed } = require('./captureScreenshots');
 
       // Check if exclusions are configured
       const exclusions = safeStoreOperation(() => {
@@ -1942,7 +1942,7 @@ function setupIPCHandlers() {
       }
 
       // Capture fresh screenshots
-      const screenshots = await captureScreenshot({ caller: 'test-app-exclusions' });
+      const screenshots = await captureScreenshotDetailed({ caller: 'test-app-exclusions' });
       if (!screenshots || screenshots.length === 0) {
         return { success: false, message: 'Failed to capture screenshots' };
       }
@@ -1954,7 +1954,8 @@ function setupIPCHandlers() {
       }
 
       // Apply masking (this will load exclusions from store and gather all needed data, including window enumeration)
-      const maskedScreenshots = await applyAppExclusions(screenshots);
+      const maskedEntries = await applyAppExclusionsToDetailedScreenshots(screenshots);
+      const maskedScreenshots = maskedEntries.map((entry) => entry.imageDataUrl);
 
       // Scale down to thumbnails (max 200px width)
       const { Jimp } = require('jimp');

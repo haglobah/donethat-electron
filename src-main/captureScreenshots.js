@@ -53,6 +53,30 @@ function getSourceLogContext(source, index, caller) {
   }
 }
 
+function normalizeDisplayId(displayId) {
+  if (displayId === undefined || displayId === null) return null
+  const normalized = String(displayId).trim()
+  if (!normalized || normalized.toLowerCase() === 'unknown') return null
+  return normalized
+}
+
+function createScreenshotEntry(imageDataUrl, displayId = null, merged = false) {
+  return {
+    imageDataUrl,
+    displayId: normalizeDisplayId(displayId),
+    merged: !!merged
+  }
+}
+
+function filterValidScreenshotEntries(entries, source = 'unknown') {
+  if (!Array.isArray(entries) || entries.length === 0) return []
+  const valid = entries.filter((entry) => isValidImageDataUrl(entry?.imageDataUrl))
+  if (valid.length !== entries.length) {
+    log.warn(`Dropped ${entries.length - valid.length} invalid screenshot entr${entries.length - valid.length === 1 ? 'y' : 'ies'} from ${source}`)
+  }
+  return valid.map((entry) => createScreenshotEntry(entry.imageDataUrl, entry.displayId, entry.merged))
+}
+
 function markPermissionFocusOnNextLaunch(reason = 'screen-permission') {
   try {
     const store = new Store({ name: 'donethat-config' })
@@ -250,14 +274,14 @@ async function checkLinuxScreenCapturePermission() {
 ///// MAIN /////
 
 // Use a single unified method for all platforms - only captures screenshots
-async function captureScreenshot(options = {}) {
+async function captureScreenshotDetailed(options = {}) {
   try {
     const { caller = 'unknown' } = options
-    let screenshots = [];
+    let screenshotEntries = []
     
     // Use Linux-specific method on Linux platforms
     if (process.platform === 'linux') {
-      screenshots = await captureScreenshotsLinux();
+      screenshotEntries = await captureScreenshotsLinux()
     } else {
       const sources = await getScreenSources(
         {
@@ -281,7 +305,7 @@ async function captureScreenshot(options = {}) {
         return [];
       }
       // Process each source
-      screenshots = await Promise.all(
+      screenshotEntries = await Promise.all(
         sources.map(async (source, index) => {
           const context = getSourceLogContext(source, index, caller)
           let rawDataUrl = null
@@ -305,23 +329,33 @@ async function captureScreenshot(options = {}) {
             })
           }
 
-          return await processScreenshotForUpload(rawDataUrl, context);
+          const processedImage = await processScreenshotForUpload(rawDataUrl, context)
+          if (!processedImage) {
+            return null
+          }
+
+          return createScreenshotEntry(processedImage, source?.display_id, false)
         })
-      );
+      )
     }
 
-    screenshots = filterValidScreenshots(screenshots, 'capture')
+    screenshotEntries = filterValidScreenshotEntries(screenshotEntries, 'capture')
     
-    if (screenshots.length === 0) {
-      log.warn('No screenshots captured');
-      return [];
+    if (screenshotEntries.length === 0) {
+      log.warn('No screenshots captured')
+      return []
     }
 
-    return screenshots;
+    return screenshotEntries
   } catch (error) {
-    log.error('Screenshot capture error:', error.message, error.stack);
-    return [];
+    log.error('Screenshot capture error:', error.message, error.stack)
+    return []
   }
+}
+
+async function captureScreenshot(options = {}) {
+  const screenshotEntries = await captureScreenshotDetailed(options)
+  return screenshotEntries.map((entry) => entry.imageDataUrl)
 }
 
 // Simplified Linux screenshot function - only uses custom command
@@ -358,7 +392,10 @@ async function captureScreenshotsLinux() {
       
       // Process the merged screenshot (all monitors in one image)
       const processedImage = await processScreenshotForUpload(base64Data)
-      return [processedImage]
+      if (!processedImage) {
+        return []
+      }
+      return [createScreenshotEntry(processedImage, null, true)]
     } else {
       log.error('Screenshot file was not created or is empty')
       return []
@@ -618,6 +655,7 @@ function initScreenCapturePermissionHandling(mainWindow, stateManager, checkAndA
 
 module.exports = {
   captureScreenshot,
+  captureScreenshotDetailed,
   checkScreenCapturePermission,
   getPreviousScreenshots,
   saveCurrentScreenshot,

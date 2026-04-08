@@ -1,7 +1,7 @@
 const { screen } = require('electron')
-const { captureScreenshot } = require('./captureScreenshots')
+const { captureScreenshotDetailed } = require('./captureScreenshots')
 const windowsCapture = require('./captureWindows')
-const { shouldIncludeForContext, getActiveWindowSafe, normalizeAppName } = windowsCapture
+const { shouldIncludeForContext, getActiveWindowSafe, normalizeAppName, convertBoundsToDIP } = windowsCapture
 const { calculateVisibleRegion, cropRegionFromImage } = require('./windowRegionUtils')
 const { getBasePath, getStore } = require('./captureDump')
 const path = require('path')
@@ -25,6 +25,31 @@ function sanitizeAppSlug(name) {
   return name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64)
 }
 
+function normalizeDisplayId(displayId) {
+  if (displayId === undefined || displayId === null) return null
+  const normalized = String(displayId).trim()
+  return normalized ? normalized : null
+}
+
+function findDisplayById(displays, displayId) {
+  const normalizedDisplayId = normalizeDisplayId(displayId)
+  if (!normalizedDisplayId) return null
+  return displays.find((display) => normalizeDisplayId(display?.id) === normalizedDisplayId) || null
+}
+
+function getDisplayForWindowBounds(windowBounds, displays) {
+  if (!windowBounds || !Array.isArray(displays) || displays.length === 0) return null
+  try {
+    const dipBounds = convertBoundsToDIP(windowBounds)
+    const matchingDisplay = screen.getDisplayMatching(dipBounds)
+    if (matchingDisplay?.id !== undefined && matchingDisplay?.id !== null) {
+      return findDisplayById(displays, matchingDisplay.id) || matchingDisplay
+    }
+  } catch (_) {
+  }
+  return null
+}
+
 async function getContextConfig() {
   const store = await getStore()
   const enabled = store.get('contextCaptureEnabled')
@@ -34,8 +59,8 @@ async function getContextConfig() {
 
 async function captureContextForActiveWindow(activeWin) {
   try {
-    const screenshots = await captureScreenshot({ caller: 'context' })
-    if (!screenshots || screenshots.length === 0) {
+    const screenshotEntries = await captureScreenshotDetailed({ caller: 'context' })
+    if (!screenshotEntries || screenshotEntries.length === 0) {
       return null
     }
     
@@ -58,12 +83,13 @@ async function captureContextForActiveWindow(activeWin) {
     // Verify this window should be captured
     if (!shouldIncludeForContext(targetWindow, contextApps)) return null
 
-    const isMerged = screenshots.length === 1 && displayBounds.length > 1
+    const isMerged = screenshotEntries.length === 1 &&
+      (screenshotEntries[0]?.merged || displayBounds.length > 1)
     const primaryDisplay = displayBounds.find(d => d.id === screen.getPrimaryDisplay().id) || displayBounds[0]
 
     let screenshot, screenBounds, display
     if (isMerged) {
-      screenshot = screenshots[0]
+      screenshot = screenshotEntries[0]?.imageDataUrl
       const minX = Math.min(...displayBounds.map(d => d.bounds.x))
       const minY = Math.min(...displayBounds.map(d => d.bounds.y))
       const maxX = Math.max(...displayBounds.map(d => d.bounds.x + d.bounds.width))
@@ -71,22 +97,12 @@ async function captureContextForActiveWindow(activeWin) {
       screenBounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
       display = primaryDisplay
     } else {
-      // Determine which screen the window is on
-      const windowBounds = targetWindow.bounds
-      let screenIndex = 0
-      if (windowBounds) {
-        for (let i = 0; i < displayBounds.length; i++) {
-          const db = displayBounds[i].bounds
-          if (windowBounds.x >= db.x && windowBounds.x < db.x + db.width &&
-              windowBounds.y >= db.y && windowBounds.y < db.y + db.height) {
-            screenIndex = i
-            break
-          }
-        }
-      }
-      targetWindow.screen = screenIndex
-      screenshot = screenshots[screenIndex] || screenshots[0]
-      display = displayBounds[screenIndex] || displayBounds[0]
+      display = getDisplayForWindowBounds(targetWindow.bounds, displayBounds) || primaryDisplay
+      const screenIndex = displayBounds.findIndex(d => d.id === display?.id)
+      targetWindow.screen = screenIndex >= 0 ? screenIndex : 0
+      const targetDisplayId = normalizeDisplayId(display?.id)
+      const matchingScreenshot = screenshotEntries.find((entry) => normalizeDisplayId(entry?.displayId) === targetDisplayId)
+      screenshot = matchingScreenshot?.imageDataUrl || screenshotEntries[0]?.imageDataUrl
       screenBounds = display?.bounds || { width: 1920, height: 1080 }
     }
 
@@ -228,4 +244,13 @@ function stopContextCapture() {
   contextCaptureInFlight = false
 }
 
-module.exports = { startContextCapture, stopContextCapture, onActiveWindowTracked }
+module.exports = {
+  startContextCapture,
+  stopContextCapture,
+  onActiveWindowTracked,
+  __test__: {
+    captureContextForActiveWindow,
+    normalizeDisplayId,
+    getDisplayForWindowBounds
+  }
+}

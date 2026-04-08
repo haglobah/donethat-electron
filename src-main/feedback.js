@@ -2,6 +2,12 @@ const { nativeImage, screen, BrowserWindow } = require('electron');
 const log = require('electron-log');
 const { getScreenSources } = require('./screenCaptureSemaphore')
 
+function normalizeDisplayId(displayId) {
+  if (displayId === undefined || displayId === null) return null;
+  const normalized = String(displayId).trim();
+  return normalized || null;
+}
+
 /**
  * Captures a screenshot of the display containing the focused window
  * @param {BrowserWindow} mainWindow - The main application window (used as fallback)
@@ -52,11 +58,10 @@ async function captureFeedbackScreenshot(mainWindow) {
       });
       
       if (activeDisplay) {
-        // Try to match the display with a source
-        // Sources are typically in the same order as displays, but we'll try to match by index
-        const displayIndex = displays.indexOf(activeDisplay);
-        if (displayIndex >= 0 && displayIndex < sources.length) {
-          targetSource = sources[displayIndex];
+        const activeDisplayId = normalizeDisplayId(activeDisplay.id);
+        const matchingSource = sources.find((source) => normalizeDisplayId(source?.display_id) === activeDisplayId);
+        if (matchingSource) {
+          targetSource = matchingSource;
         }
       }
     }
