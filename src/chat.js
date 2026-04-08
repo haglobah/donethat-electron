@@ -1084,6 +1084,7 @@ async function addMessageFromInput() {
   const text = input0.value.trim()
   if (!text) return
   breakMascotIdleOverride()
+  activeWaitingMood = null
 
   // Capture screenshot if enabled (check BEFORE disabling)
   let images = []
@@ -1225,6 +1226,17 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
   const previousMessages = messages
   const hasNewAssistant = hasNewAssistantMessage(previousMessages, newMessages)
   messages = newMessages
+
+  const serverUserKeys = new Set(
+    newMessages
+      .filter((message) => message && message.role === 'user')
+      .map((message) => `${message.role}|${message.text}`)
+  )
+  pendingMessages = pendingMessages.filter((message) => {
+    if (!message || message.status === 'error' || message.typing) return true
+    if (message.role !== 'user' || message.status !== 'pending') return true
+    return !serverUserKeys.has(`${message.role}|${message.text}`)
+  })
   
   // If we're receiving an empty array, also clear pending messages to fully clear the chat
   // BUT avoid doing this if we currently have an optimistic user message pending,
@@ -1572,6 +1584,7 @@ async function loadChatById(chatId) {
   if (isLoadingChat || !chatId) return
   
   breakMascotIdleOverride()
+  activeWaitingMood = null
   isLoadingChat = true
   updateRecentChatsVisibility()
   syncMascotState()
