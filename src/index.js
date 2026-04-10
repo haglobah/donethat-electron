@@ -347,6 +347,7 @@ function navigateToView(viewName) {
       if (shouldHideTopbar) appTopbar.classList.add('hidden');
       else appTopbar.classList.remove('hidden');
     }
+    if (document.activeElement) document.activeElement.blur();
     // If opening dashboard, proactively attempt login message to portal
     if (viewName === 'dashboard') {
       resumePortalFromTrayIfNeeded();
