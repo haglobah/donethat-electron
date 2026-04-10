@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="resources/logomark.svg" width="400" alt="DoneThat" />
+  <img src="resources/logomark.svg" width="300" alt="DoneThat" />
 </p>
 
 <h1 align="center">Double your productivity, without more work.</h1>
@@ -109,4 +109,4 @@ Found a vulnerability? Please report it responsibly via [SECURITY.md](SECURITY.m
 - [Dependency Security](docs/DEPENDENCY_SECURITY.md)
 - [Release Integrity](docs/RELEASE_INTEGRITY.md)
 - [Security](SECURITY.md)
-- [Third-Party Notices](THIRD_PARTY_NOTICES.md)
+- [Third-Party Notices](docs/THIRD_PARTY_NOTICES.md)

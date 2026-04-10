@@ -6,7 +6,7 @@
   "scripts": {
     "predev": "node scripts/build-os-helpers.js",
     "generate:icons": "node scripts/generate-icons.js",
-    "build:css": "postcss styles.css -o ./build/output.css --verbose",
+    "build:css": "postcss src/styles.css -o ./build/output.css --verbose",
     "build:webpack": "webpack --config webpack.config.js",
     "prebuild:prepare": "node scripts/build-os-helpers.js",
     "build:prepare": "npm run build:css && npm run build:webpack",
