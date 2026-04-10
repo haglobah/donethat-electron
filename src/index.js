@@ -50,7 +50,6 @@ const PORTAL_BLANK_URL = 'about:blank';
 const PORTAL_DEFAULT_URL = 'https://app.donethat.ai';
 let portalSuspendedForTray = false;
 let portalSuspendInFlight = false;
-let portalResumePendingAfterSuspend = false;
 
 // Inform main that renderer is ready to receive auth tokens as early as possible
 try { ipcRenderer.send('renderer:ready-for-auth'); } catch (_) {}
@@ -211,7 +210,6 @@ function suspendPortalForTray() {
   try { hidePortalSpinner(); } catch (_) {}
   portalDomReady = false;
   portalSuspendInFlight = true;
-  portalResumePendingAfterSuspend = false;
   const currentSrc = portalView.getAttribute('src') || '';
   if (currentSrc && currentSrc !== PORTAL_BLANK_URL) {
     portalView.setAttribute('data-last-src', currentSrc);
@@ -226,13 +224,12 @@ function suspendPortalForTray() {
 
 function resumePortalFromTrayIfNeeded() {
   if (!portalView || !portalSuspendedForTray) return;
-  if (portalSuspendInFlight) {
-    portalResumePendingAfterSuspend = true;
-    return;
-  }
   if (!(getCurrentView && getCurrentView() === 'dashboard')) {
     return;
   }
+  // Force-clear the in-flight flag — on Windows, hidden renderers may never
+  // fire did-stop-loading for the about:blank navigation, leaving this stuck.
+  portalSuspendInFlight = false;
   const targetSrc = portalView.getAttribute('data-last-src') || PORTAL_DEFAULT_URL;
   try { portalView.setAttribute('src', targetSrc); } catch (_) {}
   try { portalView.classList.remove('hidden'); } catch (_) {}
@@ -595,24 +592,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (reloadSuspendedPortalBtn) {
     reloadSuspendedPortalBtn.addEventListener('click', () => {
-      portalSuspendedForTray = true;
-      resumePortalFromTrayIfNeeded();
-      if (portalSuspendInFlight) return;
-      const currentSrc = portalView ? (portalView.getAttribute('src') || '') : '';
-      if (!portalView || currentSrc === PORTAL_BLANK_URL) return;
-      if (portalView && navigator.onLine) {
-        try {
-          hideWebviewError();
-          if (typeof portalView.reloadIgnoringCache === 'function') {
-            portalView.reloadIgnoringCache();
-          } else {
-            portalView.reload();
-          }
-          startPortalLoadWatchdog('manual-suspended-reload');
-          sendPortalLoginIfPossible();
-        } catch (e) {
-          console.error('[Webview] Error reloading from suspended placeholder:', e);
+      if (!portalView || !navigator.onLine) {
+        showWebviewError();
+        return;
+      }
+      try {
+        // Force-clear all suspend state
+        portalSuspendInFlight = false;
+        portalSuspendedForTray = false;
+        setPortalSuspendedPlaceholderVisible(false);
+        hideWebviewError();
+        const currentSrc = portalView.getAttribute('src') || '';
+        if (currentSrc === PORTAL_BLANK_URL) {
+          const targetSrc = portalView.getAttribute('data-last-src') || PORTAL_DEFAULT_URL;
+          portalView.setAttribute('src', targetSrc);
+        } else if (typeof portalView.reloadIgnoringCache === 'function') {
+          portalView.reloadIgnoringCache();
+        } else {
+          portalView.reload();
         }
+        try { portalView.classList.remove('hidden'); } catch (_) {}
+        startPortalLoadWatchdog('manual-suspended-reload');
+        sendPortalLoginIfPossible();
+      } catch (e) {
+        console.error('[Webview] Error reloading from suspended placeholder:', e);
       }
     });
   }
@@ -702,26 +705,28 @@ document.addEventListener('DOMContentLoaded', () => {
     reloadIframeBtn.addEventListener('click', () => {
       if (getCurrentView && getCurrentView() === 'dashboard' && portalView) {
         try {
-          // Always perform a full reload of the portal webview,
-          // ignoring any internal cooldowns/throttling.
           if (!navigator.onLine) {
             showWebviewError();
             return;
           }
+          // Force-clear any stuck suspend state so the reload can proceed
           if (portalSuspendedForTray) {
-            resumePortalFromTrayIfNeeded();
-            if (portalSuspendInFlight) return;
+            portalSuspendInFlight = false;
+            portalSuspendedForTray = false;
           }
-          const currentSrc = portalView.getAttribute('src') || '';
-          if (currentSrc === PORTAL_BLANK_URL) return;
+          setPortalSuspendedPlaceholderVisible(false);
           hideWebviewError();
-          if (typeof portalView.reloadIgnoringCache === 'function') {
+          const currentSrc = portalView.getAttribute('src') || '';
+          if (currentSrc === PORTAL_BLANK_URL) {
+            const targetSrc = portalView.getAttribute('data-last-src') || PORTAL_DEFAULT_URL;
+            portalView.setAttribute('src', targetSrc);
+          } else if (typeof portalView.reloadIgnoringCache === 'function') {
             portalView.reloadIgnoringCache();
           } else {
             portalView.reload();
           }
+          try { portalView.classList.remove('hidden'); } catch (_) {}
           startPortalLoadWatchdog('manual-hard-reload');
-          // Re-send token after reload (allowed to be no-op)
           sendPortalLoginIfPossible();
         } catch (e) {
           console.error('[Webview] Error in manual hard reload:', e);
@@ -920,32 +925,23 @@ document.addEventListener('DOMContentLoaded', () => {
   updateSettingsIcon();
 
   if (portalView) {
-    // Handle webview load errors
+    function clearSuspendInFlight() {
+      portalSuspendInFlight = false;
+    }
+
     portalView.addEventListener('did-fail-load', (event) => {
       console.error('[Webview] Failed to load:', event);
       showWebviewError();
       clearPortalLoadWatchdog();
       hidePortalSpinner();
-      if (portalSuspendInFlight) {
-        portalSuspendInFlight = false;
-        if (portalResumePendingAfterSuspend) {
-          portalResumePendingAfterSuspend = false;
-          resumePortalFromTrayIfNeeded();
-        }
-      }
+      clearSuspendInFlight();
     });
     try { portalView.addEventListener('did-fail-provisional-load', (event) => {
       console.error('[Webview] Provisional load failed:', event);
       showWebviewError();
       clearPortalLoadWatchdog();
       hidePortalSpinner();
-      if (portalSuspendInFlight) {
-        portalSuspendInFlight = false;
-        if (portalResumePendingAfterSuspend) {
-          portalResumePendingAfterSuspend = false;
-          resumePortalFromTrayIfNeeded();
-        }
-      }
+      clearSuspendInFlight();
     }); } catch (_) {}
 
     try { portalView.addEventListener('did-start-loading', () => {
@@ -960,13 +956,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try { portalView.addEventListener('did-stop-loading', () => {
       clearPortalLoadWatchdog();
       hidePortalSpinner();
-      if (portalSuspendInFlight) {
-        portalSuspendInFlight = false;
-        if (portalResumePendingAfterSuspend) {
-          portalResumePendingAfterSuspend = false;
-          resumePortalFromTrayIfNeeded();
-        }
-      }
+      clearSuspendInFlight();
     }); } catch (_) {}
 
     // When the webview is ready, send login token and optionally open devtools
