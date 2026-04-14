@@ -113,34 +113,31 @@
         </div>
         
         <div class="summary-content">
-          <div class="summary-section">
-            <h3 class="summary-section-title">What you worked on</h3>
-            <div id="summaryBulletsContainer" class="summary-bullets-container">
-              <!-- AI-generated bullet points will be inserted here -->
-            </div>
-          </div>
-          
-          <div class="summary-section">
-            <h3 class="summary-section-title">Add work (optional)</h3>
-            <div id="summaryCustomBulletsContainer" class="summary-custom-bullets-container">
-              <!-- Custom bullets will be inserted here -->
-            </div>
-            <div class="summary-add-custom">
-              <input type="text" id="summaryCustomInput" class="dt-input summary-custom-input" placeholder="Add work..." />
-              <input type="number" id="summaryCustomTimeInput" class="dt-input summary-custom-time-input" placeholder="hours" min="0.1" step="0.1" />
-              <button id="summaryAddCustomBtn" class="dt-button dt-button--primary dt-button--small">Add</button>
-            </div>
-          </div>
-          
           <div class="summary-comment-section">
             <label for="summaryCommentInput" class="dt-label summary-comment-label">Comment (optional)</label>
             <input type="text" id="summaryCommentInput" class="dt-input summary-comment-input" placeholder="What else would you like to share about your day?" />
+          </div>
+
+          <div class="summary-section summary-tasks-section">
+            <h3 class="summary-section-title">Tasks</h3>
+            <div class="summary-tasks-grid">
+              <!-- Task rows inserted by JS into these marker containers -->
+              <div id="summaryBulletsContainer" class="summary-grid-group"></div>
+              <div id="summaryCustomBulletsContainer" class="summary-grid-group"></div>
+              <!-- Add row: + button, input, project picker, hours input -->
+              <button type="button" id="summaryAddCustomBtn" class="summary-add-btn" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="summary-add-icon"><path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z"/></svg>
+              </button>
+              <input type="text" id="summaryCustomInput" class="dt-input summary-add-input" placeholder="Add a custom task..." />
+              <span id="summaryCustomProjectPicker" class="summary-add-custom-project hidden"></span>
+              <input type="number" id="summaryCustomTimeInput" class="dt-input summary-add-time-input" placeholder="h" min="0.1" step="0.1" />
+            </div>
           </div>
         </div>
         
         <div class="summary-actions">
           <button id="summaryCancelBtn" class="dt-button dt-button--secondary">Cancel</button>
-          <button id="summarySubmitBtn" class="dt-button dt-button--primary">Submit</button>
+          <button id="summarySubmitBtn" class="dt-button dt-button--solid">Submit</button>
         </div>
         <div class="summary-pause-note">
           <p class="summary-pause-text">DoneThat pauses after you submit your daily summary</p>

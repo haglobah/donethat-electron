@@ -33,10 +33,13 @@ let showSpinner;
 let hideSpinner;
 let currentPeriodEndTime = null;
 
-// Bullet point state management (matching FE pattern)
-let bulletPoints = []; // Array of BulletPoint objects: { text: string; duration?: number }
-let bulletPointsChecked = [];
-let customBullets = [];
+// Task-based state management
+let summaryTasks = [];       // {taskId, title, minutes, source, projectId, projectLabel}
+let taskVisibility = {};     // key -> boolean (taskId for real tasks, index for synthetic)
+let taskProjectEdits = {};   // taskId -> projectId (only real taskIds)
+let projects = [];           // {id, name, color, status, description}
+let customTasks = [];        // {title, durationMinutes?, projectId?}
+let activePickerCleanups = [];
 
 // Helper function to format date for headline
 function formatHeadlineDate(timestamp) {
@@ -84,13 +87,14 @@ function formatHeadlineDate(timestamp) {
 function formatDuration(minutes) {
   if (!minutes || minutes === 0) return '';
   
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
+  const rounded = Math.round(minutes);
+  const hours = Math.floor(rounded / 60);
+  const remainingMinutes = rounded % 60;
   
   if (hours > 0) {
     return `${hours}h ${remainingMinutes}m`;
   } else {
-    return `${minutes}m`;
+    return `${rounded}m`;
   }
 }
 
@@ -103,6 +107,8 @@ function showSummaryOverlay() {
 
 // Hide summary overlay
 function hideSummaryOverlay() {
+  activePickerCleanups.forEach(fn => fn());
+  activePickerCleanups = [];
   if (summaryOverlay) {
     summaryOverlay.classList.add('hidden');
   }
@@ -116,8 +122,12 @@ function hideSummaryOverlay() {
     const finishDayMessage = document.getElementById('finishDayMessage');
     if (finishDayMessage) finishDayMessage.classList.add('hidden');
     currentSummaryId = null;
-    customBullets = []; // Reset custom bullets
-    currentPeriodEndTime = null; // Reset the stored period end time
+    summaryTasks = [];
+    taskVisibility = {};
+    taskProjectEdits = {};
+    projects = [];
+    customTasks = [];
+    currentPeriodEndTime = null;
   
     // Reset headline
     const headlineElement = document.getElementById('dashboardHeadline');
@@ -152,43 +162,47 @@ if (summaryCancelBtn) {
   });
 }
 
-// Add event listener for custom bullet input
+// Add event listener for custom task input
 if (summaryCustomInput && summaryAddCustomBtn) {
-  const addCustomBullet = () => {
-    const text = summaryCustomInput.value.trim();
+  const addCustomTask = () => {
+    const title = summaryCustomInput.value.trim();
     const timeInput = document.getElementById('summaryCustomTimeInput');
-    // Input is provided in hours; convert to minutes for storage
+    const pickerWrapper = document.getElementById('summaryCustomProjectPicker');
     const timeHours = timeInput && timeInput.value ? parseFloat(timeInput.value) : null;
-    const timeMinutes = (typeof timeHours === 'number' && !isNaN(timeHours)) ? Math.max(0, Math.round(timeHours * 60)) : null;
+    const durationMinutes = (typeof timeHours === 'number' && !isNaN(timeHours)) ? Math.max(0, Math.round(timeHours * 60)) : undefined;
+    const selectedPicker = pickerWrapper?.querySelector('.project-picker');
+    const projectId = selectedPicker?.dataset.selectedProjectId || undefined;
     
-    if (text) {
-      customBullets.push({
-        text: text,
-        duration: timeMinutes // Store as minutes or null
-      });
+    if (title) {
+      customTasks.push({ title, durationMinutes, projectId });
       summaryCustomInput.value = '';
       if (timeInput) timeInput.value = '';
-      renderCustomBullets();
+      if (pickerWrapper) resetCustomProjectPicker();
+      summaryAddCustomBtn.disabled = true;
+      renderCustomTasks();
       summaryCustomInput.focus();
     }
   };
 
-  summaryAddCustomBtn.addEventListener('click', addCustomBullet);
+  summaryAddCustomBtn.addEventListener('click', addCustomTask);
+
+  summaryCustomInput.addEventListener('input', () => {
+    summaryAddCustomBtn.disabled = !summaryCustomInput.value.trim();
+  });
   
   summaryCustomInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      addCustomBullet();
+      addCustomTask();
     }
   });
   
-  // Add Enter key handling for time input
   const timeInput = document.getElementById('summaryCustomTimeInput');
   if (timeInput) {
     timeInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        addCustomBullet();
+        addCustomTask();
       }
     });
   }
@@ -196,26 +210,55 @@ if (summaryCustomInput && summaryAddCustomBtn) {
 
 if (summarySubmitBtn) {
   summarySubmitBtn.addEventListener('click', () => {
-    // Show loading state
+    // Flush any pending custom task from the input
+    const pendingTitle = summaryCustomInput?.value.trim();
+    if (pendingTitle) {
+      const timeInput = document.getElementById('summaryCustomTimeInput');
+      const pickerWrapper = document.getElementById('summaryCustomProjectPicker');
+      const timeHours = timeInput && timeInput.value ? parseFloat(timeInput.value) : null;
+      const durationMinutes = (typeof timeHours === 'number' && !isNaN(timeHours)) ? Math.max(0, Math.round(timeHours * 60)) : undefined;
+      const selectedPicker = pickerWrapper?.querySelector('.project-picker');
+      const projectId = selectedPicker?.dataset.selectedProjectId || undefined;
+      customTasks.push({ title: pendingTitle, durationMinutes, projectId });
+    }
+
     summarySubmitBtn.disabled = true;
     summarySubmitBtn.innerHTML = '<div class="spinner-small"></div> Submitting...';
 
-    // Filter to only include checked bullet points
-    const selectedBullets = bulletPoints.filter((_, index) => bulletPointsChecked[index]);
-
     const commentText = summaryCommentInput.value.trim();
 
-    saveFinalSummaryFunction({
+    const removeTaskIds = [];
+    const taskProjectAssignments = [];
+    summaryTasks.forEach((task, index) => {
+      const key = task.taskId || index;
+      if (!task.taskId) return;
+      if (!taskVisibility[key]) {
+        removeTaskIds.push(task.taskId);
+      }
+      if (taskProjectEdits[task.taskId] !== undefined) {
+        taskProjectAssignments.push({
+          taskId: task.taskId,
+          projectId: taskProjectEdits[task.taskId]
+        });
+      }
+    });
+
+    const payload = {
       summaryId: currentSummaryId,
-      selectedBullets: selectedBullets,
-      customBullets: customBullets.map(bullet => bullet.text || bullet),
-      comment: commentText
-    }).then(() => {
-      // Reset button state
+      removeTaskIds: removeTaskIds.slice(0, 100),
+      addCustomTasks: customTasks.slice(0, 100),
+      taskProjectAssignments: taskProjectAssignments.slice(0, 100),
+    };
+    if (commentText) {
+      payload.comment = commentText;
+    } else {
+      payload.clearComment = true;
+    }
+
+    saveFinalSummaryFunction(payload).then(() => {
       summarySubmitBtn.disabled = false;
       summarySubmitBtn.textContent = 'Submit';
 
-      // Send both the current timestamp and the period end time
       ipcRenderer.send("summarySubmitted", {
         timestamp: Date.now(),
         lastSummaryPeriodEnd: currentPeriodEndTime
@@ -223,29 +266,24 @@ if (summarySubmitBtn) {
 
       logAnalyticsEvent('summary_submitted', {
           status: 'success',
-          bullet_points_count: selectedBullets.length,
+          task_count: summaryTasks.length,
+          custom_task_count: customTasks.length,
           has_comment: !!commentText
       });
 
-      // Pause handled on click; no additional pause here
-      
-      // Reload the webview after successful submission
       const webview = document.getElementById('portalView');
       if (webview) {
         webview.reload();
       }
       
-      // Always reset immediately
       resetSummaryState();
 
     }).catch((error) => {
-      // Reset button state on error
       summarySubmitBtn.disabled = false;
       summarySubmitBtn.textContent = 'Submit';
       console.error("Error submitting summary:", error);
       showBanner(`Error submitting summary: ${error.message}`, { title: 'Summary', sticky: true });
       
-      // Log error in summary submission
       logAnalyticsEvent('summary_submitted', {
         status: 'error',
         error_code: error.code,
@@ -276,46 +314,39 @@ if (summarySubmitBtn) {
           const finishDayMessage = document.getElementById('finishDayMessage');
           if (finishDayMessage) finishDayMessage.classList.add('hidden');
 
-          // Process the result from the cloud function
-          const bulletPointsData = result.data.bulletPoints || [];
-          const bulletTimesData = result.data.bulletTimes || [];
           currentSummaryId = result.data.summaryId;
           const period = result.data.period;
           currentPeriodEndTime = period?.end;
-          
-          // Convert to BulletPoint objects with time data
-          bulletPoints = bulletPointsData.map((text, index) => ({
-            text: text,
-            duration: Array.isArray(bulletTimesData) ? bulletTimesData[index] : undefined
-          }));
-          bulletPointsChecked = bulletPoints.map(() => true);
-          customBullets = [];
 
-          // Update headline
+          summaryTasks = result.data.summaryTasks || [];
+          projects = result.data.projects || [];
+          taskVisibility = {};
+          taskProjectEdits = {};
+          customTasks = [];
+          summaryTasks.forEach((task, index) => {
+            taskVisibility[task.taskId || index] = true;
+          });
+
           const headlineElement = document.getElementById('dashboardHeadline');
           if (headlineElement) {
             headlineElement.textContent = formatHeadlineDate(period?.end);
           }
-
-          // Update overlay headline
           if (summaryHeadline) {
             summaryHeadline.textContent = formatHeadlineDate(period?.end);
           }
 
-          if (bulletPoints.length === 0) {
-             // Show notification for empty summary
+          if (summaryTasks.length === 0) {
              showBanner('No activities found for today. Check if DoneThat is paused and try again in an hour.', {
                title: 'Empty Summary',
                sticky: false
              });
             logAnalyticsEvent('summary_generated', {
               status: 'empty',
-              bullet_points_count: 0
+              task_count: 0
             });
             return;
           }
   
-          // Format the period timestamps
           const formatDateTime = (timestamp) => {
             if (!timestamp) return '';
             const date = new Date(timestamp);
@@ -328,7 +359,6 @@ if (summarySubmitBtn) {
             });
           };
   
-          // Update overlay period
           if (summaryPeriod) {
             if (period) {
               summaryPeriod.textContent = `Activities from ${formatDateTime(period.start)} to ${formatDateTime(period.end)}`;
@@ -338,71 +368,15 @@ if (summarySubmitBtn) {
             }
           }
   
-          // Populate overlay bullets
-          if (summaryBulletsContainer) {
-            summaryBulletsContainer.textContent = '';
-            const bulletsFragment = document.createDocumentFragment();
-            bulletPoints.forEach((point, index) => {
-              const isChecked = bulletPointsChecked[index];
-              const bulletItem = document.createElement('div');
-              bulletItem.className = 'bullet-item';
-
-              const checkbox = document.createElement('input');
-              checkbox.type = 'checkbox';
-              checkbox.className = 'bullet-checkbox';
-              checkbox.id = `bullet-${index}`;
-              checkbox.checked = !!isChecked;
-
-              const label = document.createElement('label');
-              label.setAttribute('for', `bullet-${index}`);
-              label.className = `bullet-text ${!isChecked ? 'bullet-text-crossed' : ''}`;
-              label.textContent = point?.text || '';
-
-              bulletItem.appendChild(checkbox);
-              bulletItem.appendChild(label);
-
-              const durationText = point.duration && formatDuration(point.duration);
-              if (durationText) {
-                const timeInfo = document.createElement('span');
-                timeInfo.className = `bullet-time-chip ${!isChecked ? 'bullet-time-chip-crossed' : ''}`;
-                timeInfo.textContent = durationText;
-                bulletItem.appendChild(timeInfo);
-              }
-
-              bulletsFragment.appendChild(bulletItem);
-            });
-            summaryBulletsContainer.appendChild(bulletsFragment);
-          }
-  
-          // Render custom bullets
-          renderCustomBullets();
-  
-          // Add event listeners for overlay checkboxes
-          summaryBulletsContainer.querySelectorAll('.bullet-checkbox').forEach(checkbox => {
-            checkbox.addEventListener('change', function () {
-              const index = parseInt(this.id.replace('bullet-', ''));
-              bulletPointsChecked[index] = this.checked;
-              
-              const bulletItem = this.closest('.bullet-item');
-              const textLabel = bulletItem.querySelector('.bullet-text');
-              const timeChip = bulletItem.querySelector('.bullet-time-chip');
-              
-              if (this.checked) {
-                textLabel.classList.remove('bullet-text-crossed');
-                if (timeChip) timeChip.classList.remove('bullet-time-chip-crossed');
-              } else {
-                textLabel.classList.add('bullet-text-crossed');
-                if (timeChip) timeChip.classList.add('bullet-time-chip-crossed');
-              }
-            });
-          });
+          renderSummaryTasks();
+          renderCustomTasks();
+          populateCustomProjectPicker();
   
           showSummaryOverlay();
           
-          // Log successful summary generation
           logAnalyticsEvent('summary_generated', {
             status: 'success',
-            bullet_points_count: bulletPoints.length,
+            task_count: summaryTasks.length,
             has_period: !!period
           });
         })
@@ -441,46 +415,262 @@ ipcRenderer.on('pauseStateChanged', (_event, isPaused, meta) => {
   // The workday ended notification will handle informing the user when appropriate
 });
 
-// Function to render existing custom bullets
-function renderCustomBullets() {
+const CHEVRON_SVG = '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>';
+
+function getProjectColor(project) {
+  return project.color || null;
+}
+
+function findProjectById(projectId) {
+  return projects.find(p => p.id === projectId) || null;
+}
+
+function buildProjectPicker(selectedProjectId, onChange) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'project-picker';
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'project-picker-trigger';
+
+  const updateTrigger = (projectId) => {
+    trigger.innerHTML = '';
+    const project = findProjectById(projectId);
+    if (project) {
+      const color = getProjectColor(project);
+      if (color) {
+        const dot = document.createElement('span');
+        dot.className = 'project-picker-dot';
+        dot.style.backgroundColor = color;
+        trigger.appendChild(dot);
+      }
+      const label = document.createElement('span');
+      label.className = 'project-picker-label';
+      label.textContent = project.name;
+      trigger.appendChild(label);
+    } else {
+      const label = document.createElement('span');
+      label.className = 'project-picker-label';
+      label.textContent = 'No project';
+      trigger.appendChild(label);
+    }
+    const chevron = document.createElement('span');
+    chevron.className = 'project-picker-chevron';
+    chevron.innerHTML = CHEVRON_SVG;
+    trigger.appendChild(chevron);
+  };
+
+  updateTrigger(selectedProjectId);
+  wrapper.appendChild(trigger);
+
+  let panel = null;
+  let closeListener = null;
+
+  const closePanel = () => {
+    if (panel) {
+      panel.remove();
+      panel = null;
+    }
+    if (closeListener) {
+      document.removeEventListener('mousedown', closeListener);
+      closeListener = null;
+    }
+    activePickerCleanups = activePickerCleanups.filter(fn => fn !== closePanel);
+  };
+
+  trigger.addEventListener('click', () => {
+    if (panel) { closePanel(); return; }
+
+    panel = document.createElement('div');
+    panel.className = 'project-picker-panel';
+
+    const currentId = wrapper.dataset.selectedProjectId || '';
+
+    const addOption = (id, name, color) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'project-picker-option';
+      if (id === currentId) btn.classList.add('project-picker-option-selected');
+      if (color) {
+        const dot = document.createElement('span');
+        dot.className = 'project-picker-dot';
+        dot.style.backgroundColor = color;
+        btn.appendChild(dot);
+      }
+      const label = document.createElement('span');
+      label.textContent = name;
+      label.style.overflow = 'hidden';
+      label.style.textOverflow = 'ellipsis';
+      btn.appendChild(label);
+      btn.addEventListener('click', () => {
+        wrapper.dataset.selectedProjectId = id;
+        updateTrigger(id);
+        onChange(id || null);
+        closePanel();
+      });
+      panel.appendChild(btn);
+    };
+
+    addOption('', 'No project', null);
+    projects.forEach(p => addOption(p.id, p.name, getProjectColor(p)));
+
+    wrapper.appendChild(panel);
+
+    closeListener = (e) => {
+      if (!wrapper.contains(e.target)) closePanel();
+    };
+    document.addEventListener('mousedown', closeListener);
+    activePickerCleanups.push(closePanel);
+  });
+
+  wrapper.dataset.selectedProjectId = selectedProjectId || '';
+  return wrapper;
+}
+
+function setRowCrossedState(elements, crossed) {
+  const { title, durationChip, picker, chip } = elements;
+  title.classList.toggle('task-title-crossed', crossed);
+  if (durationChip) durationChip.classList.toggle('task-duration-chip-crossed', crossed);
+  if (picker) picker.classList.toggle('project-picker-crossed', crossed);
+  if (chip) chip.classList.toggle('task-title-crossed', crossed);
+}
+
+function renderSummaryTasks() {
+  if (!summaryBulletsContainer) return;
+  summaryBulletsContainer.textContent = '';
+  const fragment = document.createDocumentFragment();
+
+  summaryTasks.forEach((task, index) => {
+    const key = task.taskId || index;
+    const isVisible = taskVisibility[key] !== false;
+
+    // Col 1: checkbox
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'bullet-checkbox';
+    checkbox.id = `task-${index}`;
+    checkbox.checked = isVisible;
+
+    // Col 2: title
+    const title = document.createElement('label');
+    title.setAttribute('for', `task-${index}`);
+    title.className = 'task-title';
+    if (!isVisible) title.classList.add('task-title-crossed');
+    title.textContent = task.title || '';
+
+    // Col 3: project picker or chip
+    let projectEl;
+    if (projects.length > 0 && task.taskId) {
+      const currentProjectId = taskProjectEdits[task.taskId] !== undefined
+        ? taskProjectEdits[task.taskId]
+        : (task.projectId || '');
+      projectEl = buildProjectPicker(currentProjectId, (newId) => {
+        taskProjectEdits[task.taskId] = newId;
+      });
+      if (!isVisible) projectEl.classList.add('project-picker-crossed');
+    } else if (task.projectLabel) {
+      projectEl = document.createElement('span');
+      projectEl.className = 'task-project-chip';
+      if (!isVisible) projectEl.classList.add('task-title-crossed');
+      const project = findProjectById(task.projectId);
+      if (project) {
+        const dot = document.createElement('span');
+        dot.className = 'project-picker-dot';
+        dot.style.backgroundColor = getProjectColor(project);
+        projectEl.appendChild(dot);
+      }
+      const chipLabel = document.createTextNode(task.projectLabel);
+      projectEl.appendChild(chipLabel);
+    } else {
+      projectEl = document.createElement('span');
+    }
+
+    // Col 4: duration chip
+    const durationChip = document.createElement('span');
+    const durationText = formatDuration(task.minutes);
+    if (durationText) {
+      durationChip.className = 'task-duration-chip';
+      if (!isVisible) durationChip.classList.add('task-duration-chip-crossed');
+      durationChip.textContent = durationText;
+    }
+
+    fragment.appendChild(checkbox);
+    fragment.appendChild(title);
+    fragment.appendChild(projectEl);
+    fragment.appendChild(durationChip);
+
+    // Wire checkbox toggle
+    checkbox.addEventListener('change', function () {
+      taskVisibility[key] = this.checked;
+      setRowCrossedState({
+        title,
+        durationChip: durationText ? durationChip : null,
+        picker: projectEl.classList.contains('project-picker') ? projectEl : null,
+        chip: projectEl.classList.contains('task-project-chip') ? projectEl : null,
+      }, !this.checked);
+    });
+  });
+
+  summaryBulletsContainer.appendChild(fragment);
+}
+
+function resetCustomProjectPicker() {
+  const wrapper = document.getElementById('summaryCustomProjectPicker');
+  if (!wrapper) return;
+  wrapper.innerHTML = '';
+  wrapper.appendChild(buildProjectPicker('', () => {}));
+  wrapper.classList.toggle('hidden', projects.length === 0);
+}
+
+function populateCustomProjectPicker() {
+  resetCustomProjectPicker();
+}
+
+function renderCustomTasks() {
   if (!summaryCustomBulletsContainer) return;
-  
-  // Clear existing bullets
   summaryCustomBulletsContainer.innerHTML = '';
   
-  // Add each custom bullet
-  customBullets.forEach((bullet, index) => {
-    const bulletItem = document.createElement('div');
-    bulletItem.className = 'custom-bullet';
-    
-    // Create delete button
+  customTasks.forEach((task, index) => {
+    // Col 1: delete button
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
-    deleteBtn.className = 'custom-bullet-delete';
-    deleteBtn.innerHTML = '×';
+    deleteBtn.className = 'custom-task-delete';
+    deleteBtn.innerHTML = '&times;';
     deleteBtn.addEventListener('click', () => {
-      customBullets.splice(index, 1);
-      renderCustomBullets();
+      customTasks.splice(index, 1);
+      renderCustomTasks();
     });
-    
-    // Create text span for the bullet content
-    const textSpan = document.createElement('span');
-    textSpan.className = 'custom-bullet-text';
-    textSpan.textContent = bullet.text || bullet;
-    
-    // Add elements to bullet item
-    bulletItem.appendChild(deleteBtn);
-    bulletItem.appendChild(textSpan);
-    
-    // Add time chip only if duration exists
-    if (bullet.duration) {
-      const timeChip = document.createElement('span');
-      timeChip.className = 'bullet-time-chip';
-      timeChip.textContent = formatDuration(bullet.duration);
-      bulletItem.appendChild(timeChip);
+
+    // Col 2: title
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'custom-task-title';
+    titleSpan.textContent = task.title;
+
+    // Col 3: project chip (read-only)
+    const projectEl = document.createElement('span');
+    if (task.projectId) {
+      const project = findProjectById(task.projectId);
+      if (project) {
+        projectEl.className = 'task-project-chip';
+        const dot = document.createElement('span');
+        dot.className = 'project-picker-dot';
+        dot.style.backgroundColor = getProjectColor(project);
+        projectEl.appendChild(dot);
+        projectEl.appendChild(document.createTextNode(project.name));
+      }
+    }
+
+    // Col 4: duration chip
+    const durationEl = document.createElement('span');
+    if (task.durationMinutes) {
+      durationEl.className = 'task-duration-chip';
+      durationEl.textContent = formatDuration(task.durationMinutes);
     }
     
-    summaryCustomBulletsContainer.appendChild(bulletItem);
+    summaryCustomBulletsContainer.appendChild(deleteBtn);
+    summaryCustomBulletsContainer.appendChild(titleSpan);
+    summaryCustomBulletsContainer.appendChild(projectEl);
+    summaryCustomBulletsContainer.appendChild(durationEl);
   });
 }
 

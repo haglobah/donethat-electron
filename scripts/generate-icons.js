@@ -24,7 +24,9 @@ const outputs = {
   recordingIco: path.join(resourcesDir, 'icon_recording.ico'),
   pausedIco: path.join(resourcesDir, 'icon_paused.ico'),
   recordingInversePng: path.join(resourcesDir, 'icon_recording_inverse.png'),
-  pausedInversePng: path.join(resourcesDir, 'icon_paused_inverse.png')
+  recordingInversePng2x: path.join(resourcesDir, 'icon_recording_inverse@2x.png'),
+  pausedInversePng: path.join(resourcesDir, 'icon_paused_inverse.png'),
+  pausedInversePng2x: path.join(resourcesDir, 'icon_paused_inverse@2x.png')
 };
 
 function fail(message) {
@@ -81,6 +83,33 @@ function renderTrayPng(inputPath, outputPath) {
     ],
     'magick'
   );
+}
+
+function renderMacOSTrayPng(inputPath, outputPath1x, outputPath2x) {
+  for (const [size, contentSize, dest] of [[18, 16, outputPath1x], [36, 32, outputPath2x]]) {
+    run(
+      'magick',
+      [
+        inputPath,
+        '-trim',
+        '+repage',
+        '-background',
+        'none',
+        '-gravity',
+        'center',
+        '-extent',
+        '%[fx:max(w,h)]x%[fx:max(w,h)]',
+        '-resize',
+        `${contentSize}x${contentSize}`,
+        '-gravity',
+        'center',
+        '-extent',
+        `${size}x${size}`,
+        dest
+      ],
+      'magick'
+    );
+  }
 }
 
 function renderIco(inputPath, outputPath, sizes) {
@@ -176,8 +205,8 @@ function generateTrayIcons() {
     renderLauncherPng(launcherFacePath, outputs.launcherPng, tempDir);
     renderTrayPng(recordingRasterPath, outputs.recordingPng);
     renderTrayPng(pausedRasterPath, outputs.pausedPng);
-    renderTrayPng(recordingInverseRasterPath, outputs.recordingInversePng);
-    renderTrayPng(pausedInverseRasterPath, outputs.pausedInversePng);
+    renderMacOSTrayPng(recordingInverseRasterPath, outputs.recordingInversePng, outputs.recordingInversePng2x);
+    renderMacOSTrayPng(pausedInverseRasterPath, outputs.pausedInversePng, outputs.pausedInversePng2x);
     renderIco(outputs.recordingPng, outputs.recordingIco, [32, 24, 20, 16]);
     renderIco(outputs.pausedPng, outputs.pausedIco, [32, 24, 20, 16]);
     renderIco(outputs.launcherPng, outputs.launcherIco, [256, 128, 64, 48, 32, 24, 20, 16]);

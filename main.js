@@ -1051,10 +1051,7 @@ app.whenReady().then(async () => {
   // Create tray with the default paused icon
   let trayIcon = nativeImage.createFromPath(trayIconPausedPath)
 
-  // Apply platform-specific resizing for initial icon
   if (process.platform === 'darwin') {
-    // macOS menu bar icons should be 18-22px
-    trayIcon = trayIcon.resize({ width: 18, height: 18 })
     trayIcon.setTemplateImage(true)
   }
 
@@ -1429,10 +1426,7 @@ function updateTrayIcon(isActuallyRecording) {
   // Load and set the appropriate icon
   let icon = nativeImage.createFromPath(iconPath)
 
-  // MODIFY the resizing code to skip Windows
   if (process.platform === 'darwin') {
-    // macOS menu bar icons look best at 18-22px
-    icon = icon.resize({ width: 18, height: 18 })
     icon.setTemplateImage(true)
   }
 

@@ -1132,24 +1132,58 @@ h6,
   color: var(--dt-color-text-default);
 }
 
-.summary-bullets-container {
-  @apply space-y-2 mb-3;
+.summary-grid-group {
+  display: contents;
 }
 
-.summary-custom-bullets-container {
-  @apply space-y-2 mb-3;
+.summary-tasks-section {
+  margin-top: var(--dt-space-4);
 }
 
-.summary-add-custom {
-  @apply flex gap-2;
+.summary-add-input,
+.summary-add-time-input {
+  min-height: 28px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: var(--dt-font-size-sm);
+  border-radius: var(--dt-radius-md);
 }
 
-.summary-custom-input {
-  @apply flex-1;
+.summary-add-input {
+  width: 100%;
 }
 
-.summary-custom-time-input {
-  @apply w-16 text-center;
+.summary-add-time-input {
+  width: 64px;
+  text-align: right;
+}
+
+.summary-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--dt-color-text-subtle);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  transition: color var(--dt-motion-duration-fast) var(--dt-motion-easing-standard);
+}
+
+.summary-add-btn:hover:not(:disabled) {
+  color: var(--dt-color-text-muted);
+}
+
+.summary-add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.summary-add-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .summary-comment-section {
@@ -1179,10 +1213,11 @@ h6,
   color: var(--dt-color-text-subtle);
 }
 
-/* Bullet point styles - matching FE design */
-.bullet-item {
-  @apply flex gap-3 items-center w-full;
-  min-height: 24px;
+/* Task grid layout — 4-column grid keeps columns aligned across all rows */
+.summary-tasks-grid {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 12px;
   align-items: center;
 }
 
@@ -1196,9 +1231,7 @@ h6,
   height: 16px;
   position: relative;
   cursor: pointer;
-  flex-shrink: 0;
   margin: 0;
-  align-self: center;
 }
 
 .bullet-checkbox:checked::after {
@@ -1218,64 +1251,189 @@ h6,
   outline-offset: 2px;
 }
 
-.bullet-text {
-  @apply text-sm text-gray-700;
-  flex: 1;
+.task-title {
+  font-size: var(--dt-font-size-sm);
+  color: var(--dt-color-text-default);
   cursor: pointer;
   line-height: 1.4;
-  padding: 0;
-  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-title-crossed {
+  color: var(--dt-color-text-subtle);
+  text-decoration: line-through;
+}
+
+.task-duration-chip {
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 8px;
+  font-size: var(--dt-font-size-xs);
+  font-weight: var(--dt-font-weight-medium, 500);
+  color: var(--dt-color-text-muted);
+  background: var(--dt-color-surface-subtle);
+  border-radius: 9999px;
+  white-space: nowrap;
 }
 
-.bullet-text-crossed {
-  @apply text-gray-400 line-through;
+.task-duration-chip-crossed {
+  color: var(--dt-color-text-subtle);
+  text-decoration: line-through;
 }
 
-.bullet-time {
-  @apply text-xs text-gray-500 ml-2;
+/* Project picker — custom dropdown trigger */
+.project-picker {
+  position: relative;
 }
 
-/* Time chip styling */
-.bullet-time-chip {
-  @apply inline-block px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full;
-  font-family: monospace;
+.project-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  max-width: 160px;
+  padding: 0 8px;
+  font-size: var(--dt-font-size-xs);
+  color: var(--dt-color-text-default);
+  background: var(--dt-color-surface-subtle);
+  border: 1px solid var(--dt-color-border-default);
+  border-radius: 9999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color var(--dt-motion-duration-fast) var(--dt-motion-easing-standard),
+    background-color var(--dt-motion-duration-fast) var(--dt-motion-easing-standard);
+}
+
+.project-picker-trigger:hover {
+  background: var(--dt-color-surface-default);
+  border-color: var(--dt-color-border-strong);
+}
+
+.project-picker-trigger:focus-visible {
+  outline: 2px solid var(--dt-color-focus-default);
+  outline-offset: 2px;
+}
+
+.project-picker-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
   flex-shrink: 0;
-  align-self: center;
-  margin: 0;
 }
 
-.bullet-time-chip-crossed {
-  @apply text-gray-400 line-through;
+.project-picker-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
 }
 
-/* Custom bullet styles */
-.custom-bullet {
-  @apply flex gap-3 items-center w-full;
-  min-height: 24px;
-  align-items: center;
+.project-picker-chevron {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  opacity: 0.5;
 }
 
-.custom-bullet-text {
-  @apply text-sm italic text-gray-600;
-  flex: 1;
+.project-picker-crossed {
+  opacity: 0.4;
+}
+
+/* Project picker dropdown panel */
+.project-picker-panel {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  width: 208px;
+  max-height: 192px;
+  overflow-y: auto;
+  background: var(--dt-color-surface-overlay);
+  border: 1px solid var(--dt-color-border-strong);
+  border-radius: var(--dt-radius-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  padding: 4px;
+  z-index: 50;
+}
+
+.project-picker-option {
   display: flex;
   align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: var(--dt-font-size-sm);
+  color: var(--dt-color-text-default);
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.custom-bullet-delete {
-  @apply text-gray-400 hover:text-gray-700 shrink-0 cursor-pointer;
+.project-picker-option:hover {
+  background: var(--dt-color-surface-subtle);
+}
+
+.project-picker-option-selected {
+  font-weight: var(--dt-font-weight-semibold, 600);
+}
+
+/* Read-only project chip (for null-taskId rows) */
+.task-project-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: var(--dt-font-size-xs);
+  color: var(--dt-color-text-subtle);
+  background: var(--dt-color-surface-subtle);
+  border-radius: 9999px;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Custom task styles */
+.custom-task-delete {
+  color: var(--dt-color-text-subtle);
+  cursor: pointer;
   width: 16px;
   height: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  align-self: center;
+  transition: color var(--dt-motion-duration-fast) var(--dt-motion-easing-standard);
 }
 
-.custom-bullet-delete:hover {
-  @apply text-red-500;
+.custom-task-delete:hover {
+  color: var(--dt-color-brand-primary);
 }
+
+.custom-task-title {
+  font-size: var(--dt-font-size-sm);
+  font-style: italic;
+  color: var(--dt-color-text-subtle);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-add-custom-project.hidden {
+  display: none;
+}
+
 
 .recording-text { 
   color: var(--dt-color-text-subtle);
