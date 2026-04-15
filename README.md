@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/donethatai/donethat-electron/tags"><img src="https://img.shields.io/github/v/tag/donethatai/donethat-electron?label=latest%20tag&sort=semver" alt="Latest Tag" /></a>
+  <a href="https://github.com/donethatai/donethat-releases/releases/latest"><img src="https://img.shields.io/github/v/release/donethatai/donethat-releases?label=latest" alt="Latest Release" /></a>
   <a href="https://github.com/donethatai/donethat-electron/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License" /></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platforms" />
   <img src="https://img.shields.io/badge/electron-latest-47848F?logo=electron&logoColor=white" alt="Electron" />
