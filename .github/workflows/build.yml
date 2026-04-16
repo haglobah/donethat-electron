@@ -38,9 +38,9 @@ jobs:
         shell: bash
         run: |
           echo "::add-mask::${{ secrets.GH_PAT }}"
-          echo "::add-mask::${{ secrets.CONNECT_ID }}"
-          echo "::add-mask::${{ secrets.CONNECT_ISSUER_ID }}"
-          echo "::add-mask::${{ secrets.CONNECT_PRIVATE_KEY_BASE64 }}"
+          echo "::add-mask::${{ secrets.APP_STORE_CONNECT_KEY_ID }}"
+          echo "::add-mask::${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}"
+          echo "::add-mask::${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}"
           echo "::add-mask::${{ secrets.MAC_CERTIFICATE_PASSWORD }}"
           echo "::add-mask::${{ secrets.SM_CLIENT_CERT_PASSWORD }}"
           echo "::add-mask::${{ secrets.SM_KEYPAIR_ALIAS }}"
@@ -89,12 +89,12 @@ jobs:
         if: matrix.platform == 'mac'
         run: |
           echo "::add-mask::${{ secrets.MAC_CERTIFICATE }}"
-          echo "::add-mask::${{ secrets.CONNECT_PRIVATE_KEY_BASE64 }}"
+          echo "::add-mask::${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}"
 
           mkdir -p "$RUNNER_TEMP/donethat"
-          echo "${{ secrets.CONNECT_PRIVATE_KEY_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/donethat/asc-notary.p8"
-          echo "APP_STORE_CONNECT_KEY_ID=${{ secrets.CONNECT_ID }}" >> $GITHUB_ENV
-          echo "APP_STORE_CONNECT_ISSUER_ID=${{ secrets.CONNECT_ISSUER_ID }}" >> $GITHUB_ENV
+          echo "${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/donethat/asc-notary.p8"
+          echo "APP_STORE_CONNECT_KEY_ID=${{ secrets.APP_STORE_CONNECT_KEY_ID }}" >> $GITHUB_ENV
+          echo "APP_STORE_CONNECT_ISSUER_ID=${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" >> $GITHUB_ENV
           echo "APP_STORE_CONNECT_PRIVATE_KEY_PATH=$RUNNER_TEMP/donethat/asc-notary.p8" >> $GITHUB_ENV
 
           echo "CSC_LINK=${{ secrets.MAC_CERTIFICATE }}" >> $GITHUB_ENV
