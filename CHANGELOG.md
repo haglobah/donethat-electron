@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.0
 
 - Switch license SPDX to `GPL-3.0-or-later`.
 - Docs updates.
