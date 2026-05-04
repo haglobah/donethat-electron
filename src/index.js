@@ -495,8 +495,25 @@ const resetView = document.getElementById("resetView");
 const dashboardView = document.getElementById("dashboardView");
   const settingsView = document.getElementById("settingsView");
 
-  
-  // Update the navigateToView function
+/** Chromium focuses the first tabbable node when the BrowserWindow gains focus; blur after that frame so the top bar does not stay focused (e.g. Setup). */
+function blurTopbarChromeFocus() {
+  try {
+    const ae = document.activeElement;
+    if (ae && ae.closest && ae.closest('#appTopbar')) {
+      ae.blur();
+    }
+  } catch (_) {}
+}
+
+function scheduleBlurTopbarChromeFocus() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      blurTopbarChromeFocus();
+    });
+  });
+}
+
+// Update the navigateToView function
 function navigateToView(viewName) {
   const currentView = getCurrentView();
 
@@ -815,6 +832,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // both directions: create if we optimistically defaulted true but were
   // actually visible-on-dashboard already, and destroy if we started hidden.
   ensurePortalActive('initial-visibility-probe');
+  if (isAppWindowVisible) {
+    scheduleBlurTopbarChromeFocus();
+  }
 
   if (reloadSuspendedPortalBtn) {
     reloadSuspendedPortalBtn.addEventListener('click', () => {
@@ -1246,6 +1266,7 @@ ipcRenderer.on('app:window-hidden', () => {
 ipcRenderer.on('app:window-shown', () => {
   isAppWindowVisible = true;
   ensurePortalActive('app-window-shown');
+  scheduleBlurTopbarChromeFocus();
 });
 
 // Add pause state handler
