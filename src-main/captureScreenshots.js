@@ -18,6 +18,22 @@ const PREVIOUS_SCREENSHOT_SCALE_FACTOR = 0.5
 // Maximum age factor for previous screenshot (1.5x the capture interval)
 const PREVIOUS_SCREENSHOT_MAX_AGE_FACTOR = 1.5
 
+// desktopCapturer probes can time out or briefly return no sources during cold start,
+// especially while contending on the shared semaphore—retry before treating as denial.
+// One policy for all platforms that use desktopCapturer (macOS, Windows); Linux uses checkLinuxScreenCapturePermission.
+const PERMISSION_PROBE_TIMEOUT_MS = 7000
+const PERMISSION_PROBE_MAX_ATTEMPTS = 4
+const PERMISSION_PROBE_BACKOFF_CAP_MS = 2000
+const PERMISSION_PROBE_BACKOFF_BASE_MS = 400
+
+function permissionProbeBackoffMs(attemptIndex) {
+  return Math.min(PERMISSION_PROBE_BACKOFF_CAP_MS, PERMISSION_PROBE_BACKOFF_BASE_MS * (2 ** attemptIndex))
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 let screenPermissionFocusListener = null
 const PENDING_PERMISSION_POST_RESTART_FOCUS_KEY = 'pendingPermissionPostRestartFocus'
 const DEFAULT_LINUX_SCREENSHOT_COMMAND = `bash -c 'getOriginalAnimationSetting=$(gsettings get org.gnome.desktop.interface enable-animations); getOriginalSoundSetting=$(gsettings get org.gnome.desktop.sound event-sounds); gsettings set org.gnome.desktop.interface enable-animations false; gsettings set org.gnome.desktop.sound event-sounds false; gnome-screenshot -f "%s"; gsettings set org.gnome.desktop.interface enable-animations $getOriginalAnimationSetting; gsettings set org.gnome.desktop.sound event-sounds $getOriginalSoundSetting'`
@@ -162,38 +178,87 @@ function saveCurrentScreenshot(screenshots) {
 
 
 
+async function probeDesktopCapturerScreenPermission(source = 'unknown') {
+  const startedAt = Date.now()
+  const maxAttempts = PERMISSION_PROBE_MAX_ATTEMPTS
+  let sawEmptySources = false
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const isLastAttempt = attempt === maxAttempts - 1
+    let sources = null
+
+    try {
+      sources = await getScreenSources(
+        {
+          types: ['screen'],
+          thumbnailSize: { width: 1, height: 1 }
+        },
+        {
+          wait: true,
+          timeoutMs: PERMISSION_PROBE_TIMEOUT_MS,
+          caller: 'permission_probe'
+        }
+      )
+    } catch (error) {
+      log.warn('[screen-capture] permission probe getSources rejected', {
+        source,
+        attempt,
+        error: error?.message || String(error)
+      })
+      if (isLastAttempt) {
+        if (sawEmptySources) {
+          recordPermissionCheck('screen', source, 'denied', Date.now() - startedAt)
+          return false
+        }
+        recordPermissionCheck('screen', source, 'error', Date.now() - startedAt)
+        return false
+      }
+      await sleep(permissionProbeBackoffMs(attempt))
+      continue
+    }
+
+    if (!sources) {
+      if (!isLastAttempt) {
+        await sleep(permissionProbeBackoffMs(attempt))
+        continue
+      }
+      if (sawEmptySources) {
+        recordPermissionCheck('screen', source, 'denied', Date.now() - startedAt)
+        return false
+      }
+      recordPermissionCheck('screen', source, 'skipped_busy', Date.now() - startedAt)
+      return undefined
+    }
+
+    if (sources.length === 0) {
+      sawEmptySources = true
+      if (!isLastAttempt) {
+        await sleep(permissionProbeBackoffMs(attempt))
+        continue
+      }
+      recordPermissionCheck('screen', source, 'denied', Date.now() - startedAt)
+      return false
+    }
+
+    recordPermissionCheck('screen', source, 'granted', Date.now() - startedAt)
+    return true
+  }
+}
+
 // Function to check screen capture permission
 async function checkScreenCapturePermission(source = 'unknown') {
   const startedAt = Date.now()
   try {
     // Linux-specific handling
-    if (process.platform === 'linux') {    
+    if (process.platform === 'linux') {
       const hasPermission = await checkLinuxScreenCapturePermission()
       recordPermissionCheck('screen', source, hasPermission ? 'granted' : 'denied', Date.now() - startedAt)
       return hasPermission
     }
-    
-    // For other platforms (macOS, Windows)
-    const sources = await getScreenSources(
-      {
-        types: ['screen'],
-        thumbnailSize: { width: 1, height: 1 }
-      },
-      {
-        wait: true,
-        timeoutMs: 2000,
-        caller: 'permission_probe'
-      }
-    )
-    if (!sources) {
-      recordPermissionCheck('screen', source, 'skipped_busy', Date.now() - startedAt)
-      return undefined
-    }
-    const granted = !!(sources && sources.length > 0)
-    recordPermissionCheck('screen', source, granted ? 'granted' : 'denied', Date.now() - startedAt)
-    return granted
+
+    return await probeDesktopCapturerScreenPermission(source)
   } catch (error) {
-    console.error('Error checking screen capture permission:', error)
+    log.error('[screen-capture] Error checking screen capture permission:', error)
     recordPermissionCheck('screen', source, 'error', Date.now() - startedAt)
     return false
   }
@@ -582,8 +647,10 @@ function initScreenCapturePermissionHandling(mainWindow, stateManager, checkAndA
       app.removeListener('browser-window-focus', focusListener);
 
       const oldPermission = stateManager?.hasScreenCapturePermission();
-      const hasPermission = await checkScreenCapturePermission('focus-recheck');
-      stateManager?.updateScreenCapturePermission(hasPermission);
+      const probeResult = await checkScreenCapturePermission('focus-recheck');
+      const resolved =
+        probeResult === undefined ? oldPermission : probeResult;
+      stateManager?.updateScreenCapturePermission(resolved);
 
       if (stateManager?.hasScreenCapturePermission() !== oldPermission && mainWindow) { // Check if permission *changed*
         mainWindow.webContents.send('screenCapturePermission', {
