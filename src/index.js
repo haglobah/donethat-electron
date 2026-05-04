@@ -52,7 +52,11 @@ const PORTAL_MAX_RETRIES = 3;
 let portalSpinnerTimer = null; // delay before showing dashboard spinner
 const PORTAL_RELOAD_COOLDOWN_MS = 10000; // avoid reloads shortly after token delivery
 const PORTAL_DEFAULT_URL = 'https://app.donethat.ai';
-let isAppWindowVisible = false;
+// Default to visible: the renderer is loaded by the main process when the
+// window is shown, and `app:window-shown` may have already fired before this
+// script registers its IPC handler. The DOMContentLoaded probe below corrects
+// this if the window actually started hidden.
+let isAppWindowVisible = true;
 const pendingPortalBridge = {
   customToken: null,
   reauthResult: null,
@@ -803,9 +807,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     isAppWindowVisible = await ipcRenderer.invoke('get-main-window-visibility');
   } catch (_) {
-    isAppWindowVisible = false;
+    // Keep optimistic default on probe failure rather than forcing the dashboard
+    // into the suspended placeholder.
+    isAppWindowVisible = true;
   }
-  updatePortalPlaceholderVisibility();
+  // Reconcile portal lifecycle now that we know the real visibility — handles
+  // both directions: create if we optimistically defaulted true but were
+  // actually visible-on-dashboard already, and destroy if we started hidden.
+  ensurePortalActive('initial-visibility-probe');
 
   if (reloadSuspendedPortalBtn) {
     reloadSuspendedPortalBtn.addEventListener('click', () => {

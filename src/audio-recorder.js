@@ -24,6 +24,7 @@ let deviceChangeListenerAttached = false;
 let audioRestartInFlight = false;
 let lastAutoRestartAt = 0;
 let autoRestartTimestamps = [];
+let shutdownRequested = false;
 
 const AUDIO_RESTART_MIN_INTERVAL_MS = 8000;
 const AUDIO_RESTART_WINDOW_MS = 60 * 1000;
@@ -484,15 +485,17 @@ window.startAudioRecording = async function(options = {}) {
     return true;
   }
 
+  shutdownRequested = false;
+
   const normalizedOptions = {
     systemAudio: !!options.systemAudio
   };
   lastStartOptions = {
     systemAudio: normalizedOptions.systemAudio
   };
-  
+
   try {
-    
+
     window.allowAudioResume = true;
     audioChunks = [];
     chunkTimestamps = [];
@@ -594,13 +597,20 @@ window.startAudioRecording = async function(options = {}) {
     mediaRecorder.onerror = (event) => {
       console.error('MediaRecorder error:', event.error);
     };
-    
-    
+
+    if (shutdownRequested) {
+      mediaRecorder = null;
+      isRecording = false;
+      stopAllInputStreams();
+      cleanupAudioContext();
+      return false;
+    }
+
     mediaRecorder.start(1000);
     recordingStartTime = Date.now();
     isRecording = true;
     beginRecordingInterval(recordingStartTime);
-    
+
     return true;
   } catch (error) {
     console.error('Error starting audio recording:', error);
@@ -717,6 +727,8 @@ async function restartAudioRecording() {
     // Force a real restart path; startAudioRecording short-circuits when isRecording is true.
     isRecording = false;
     stopAllInputStreams();
+
+    if (shutdownRequested) return false;
 
     const success = await window.startAudioRecording(restartOptions);
     if (!success) return false;
@@ -1076,6 +1088,7 @@ window.stopAudioRecording = async function() {
  * Stop recording completely; saves current buffer as chunk for next capture cycle
  */
 window.shutdownAudioRecording = async function(options = {}) {
+  shutdownRequested = true;
   const clearCycleState = options && options.clearCycleState === true;
   if (mediaRecorder && isRecording) {
     endRecordingInterval(Date.now());
