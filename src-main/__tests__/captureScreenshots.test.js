@@ -214,4 +214,16 @@ describe('checkScreenCapturePermission (desktopCapturer probe)', () => {
     expect(result).toBe(true)
     expect(mockGetScreenSources).toHaveBeenCalledTimes(2)
   })
+
+  test('interactive probe caps attempts when timing out', async () => {
+    jest.useFakeTimers()
+    mockGetScreenSources.mockResolvedValue(null)
+
+    const pending = checkScreenCapturePermission('unit-interactive-timeout', { interactive: true })
+    await jest.advanceTimersByTimeAsync(400)
+    const result = await pending
+
+    expect(result).toBeUndefined()
+    expect(mockGetScreenSources).toHaveBeenCalledTimes(2)
+  })
 })

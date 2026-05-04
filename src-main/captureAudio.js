@@ -631,10 +631,13 @@ async function checkMicrophonePermissionPassive(forceRefresh = false) {
 
 async function checkSystemAudioPermission(options = {}) {
   const activeProbe = !!options.activeProbe
+  const interactiveScreenProbe = !!options.interactiveScreenProbe
   if (process.platform === 'darwin') {
       const { checkScreenCapturePermission } = require('./captureScreenshots')
     try {
-      const result = await checkScreenCapturePermission('system-audio')
+      const result = await checkScreenCapturePermission('system-audio', {
+        interactive: interactiveScreenProbe
+      })
       if (result === undefined) {
         return null
       }

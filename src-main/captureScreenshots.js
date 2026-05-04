@@ -23,6 +23,9 @@ const PREVIOUS_SCREENSHOT_MAX_AGE_FACTOR = 1.5
 // One policy for all platforms that use desktopCapturer (macOS, Windows); Linux uses checkLinuxScreenCapturePermission.
 const PERMISSION_PROBE_TIMEOUT_MS = 7000
 const PERMISSION_PROBE_MAX_ATTEMPTS = 4
+// User-triggered checks (Settings buttons): cap worst-case wait — still one retry for flake.
+const INTERACTIVE_PROBE_TIMEOUT_MS = 3000
+const INTERACTIVE_PROBE_MAX_ATTEMPTS = 2
 const PERMISSION_PROBE_BACKOFF_CAP_MS = 2000
 const PERMISSION_PROBE_BACKOFF_BASE_MS = 400
 
@@ -178,9 +181,11 @@ function saveCurrentScreenshot(screenshots) {
 
 
 
-async function probeDesktopCapturerScreenPermission(source = 'unknown') {
+async function probeDesktopCapturerScreenPermission(source = 'unknown', options = {}) {
+  const interactive = !!options.interactive
   const startedAt = Date.now()
-  const maxAttempts = PERMISSION_PROBE_MAX_ATTEMPTS
+  const maxAttempts = interactive ? INTERACTIVE_PROBE_MAX_ATTEMPTS : PERMISSION_PROBE_MAX_ATTEMPTS
+  const timeoutMs = interactive ? INTERACTIVE_PROBE_TIMEOUT_MS : PERMISSION_PROBE_TIMEOUT_MS
   let sawEmptySources = false
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -195,7 +200,7 @@ async function probeDesktopCapturerScreenPermission(source = 'unknown') {
         },
         {
           wait: true,
-          timeoutMs: PERMISSION_PROBE_TIMEOUT_MS,
+          timeoutMs,
           caller: 'permission_probe'
         }
       )
@@ -246,7 +251,7 @@ async function probeDesktopCapturerScreenPermission(source = 'unknown') {
 }
 
 // Function to check screen capture permission
-async function checkScreenCapturePermission(source = 'unknown') {
+async function checkScreenCapturePermission(source = 'unknown', probeOptions = {}) {
   const startedAt = Date.now()
   try {
     // Linux-specific handling
@@ -256,7 +261,7 @@ async function checkScreenCapturePermission(source = 'unknown') {
       return hasPermission
     }
 
-    return await probeDesktopCapturerScreenPermission(source)
+    return await probeDesktopCapturerScreenPermission(source, probeOptions)
   } catch (error) {
     log.error('[screen-capture] Error checking screen capture permission:', error)
     recordPermissionCheck('screen', source, 'error', Date.now() - startedAt)
@@ -573,13 +578,13 @@ function initScreenCapturePermissionHandling(mainWindow, stateManager, checkAndA
   ipcMain.on('requestScreenCapturePermission', async (_event, shouldOpenSettings = true) => {
     // Never open system settings if permission is already granted.
     try {
-      let alreadyGranted = await checkScreenCapturePermission('request');
+      let alreadyGranted = await checkScreenCapturePermission('request', { interactive: true });
       if (alreadyGranted === undefined) {
         alreadyGranted = stateManager?.hasScreenCapturePermission();
       }
       if (!alreadyGranted) {
         await new Promise((resolve) => setTimeout(resolve, 400));
-        let secondCheck = await checkScreenCapturePermission('request-recheck');
+        let secondCheck = await checkScreenCapturePermission('request-recheck', { interactive: true });
         if (secondCheck === undefined) {
           secondCheck = stateManager?.hasScreenCapturePermission();
         }

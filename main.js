@@ -2453,9 +2453,9 @@ function stopRecording() {
 }
 
 // Function to check screen capture permission
-async function checkScreenCapturePermission(source = 'runtime') {
+async function checkScreenCapturePermission(source = 'runtime', probeOptions = {}) {
   // Get current permission status from OS-level APIs
-  const hasPermission = await moduleCheckPermission(source);
+  const hasPermission = await moduleCheckPermission(source, probeOptions);
   
   // If permission check was skipped (returned undefined), use cached state
   if (hasPermission === undefined) {

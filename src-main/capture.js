@@ -566,7 +566,11 @@ function initCapture(mainWindow, onAuthError, getIdToken, getClientTelemetryEnab
       const hasSystemAudioPermission = await probePermission(
         'systemAudio',
         'request',
-        () => checkSystemAudioPermission({ activeProbe: shouldOpenSettings === true })
+        () =>
+          checkSystemAudioPermission({
+            activeProbe: shouldOpenSettings === true,
+            interactiveScreenProbe: true
+          })
       );
       if (hasSystemAudioPermission === null) {
         // Permission check was skipped/in-progress; keep current UI state.
@@ -620,7 +624,8 @@ function initCapture(mainWindow, onAuthError, getIdToken, getClientTelemetryEnab
       const hasSystemAudioPermission = await probePermission(
         'systemAudio',
         'focus-recheck',
-        () => checkSystemAudioPermission({ activeProbe: true })
+        () =>
+          checkSystemAudioPermission({ activeProbe: true, interactiveScreenProbe: false })
       );
       if (hasSystemAudioPermission === null) return;
       mainWindow.webContents.send('systemAudioPermission', { hasPermission: !!hasSystemAudioPermission, source: 'request' });

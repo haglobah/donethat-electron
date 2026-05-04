@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Harden desktopCapturer-based screen permission probes (non-Linux) with backoff retries and longer timeouts so cold-start timeouts are less likely to block recording or macOS system-audio checks.
+- Harden desktopCapturer-based screen permission probes (non-Linux) with backoff retries and longer timeouts so cold-start timeouts are less likely to block recording or macOS system-audio checks; user-triggered permission checks use a shorter interactive probe so UI actions do not wait as long as background probes.
 - Fix dashboard portal lifecycle, recovery, and auth handoff around hide/reopen flows.
 - Listen for Google OAuth callback on IPv4 and IPv6 loopback so browsers that resolve `localhost` to `[::1]` (common on Windows) still reach the app.
 - Switch Windows code signing from DigiCert KeyLocker to Azure Trusted Signing (OIDC). Windows arm64 builds are temporarily unsigned because Azure Trusted Signing does not yet ship an ARM64 dlib.
