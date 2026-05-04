@@ -19,6 +19,14 @@ exports.default = async function (configuration) {
     return true;
   }
 
+  if (process.env.SKIP_WINDOWS_SIGNING === 'true') {
+    console.warn(
+      `WARNING: Skipping Azure Trusted Signing for ${configuration.path} ` +
+        '(SKIP_WINDOWS_SIGNING=true). The artifact will be unsigned and trigger SmartScreen warnings on install.',
+    );
+    return true;
+  }
+
   const dlibPath = process.env.AZURE_SIGN_DLIB;
   const metadataPath = process.env.AZURE_SIGN_METADATA;
 

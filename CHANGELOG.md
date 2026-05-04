@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Fix dashboard portal lifecycle, recovery, and auth handoff around hide/reopen flows.
-- Switch Windows code signing from DigiCert KeyLocker to Azure Trusted Signing (OIDC).
+- Switch Windows code signing from DigiCert KeyLocker to Azure Trusted Signing (OIDC). Windows arm64 builds are temporarily unsigned because Azure Trusted Signing does not yet ship an ARM64 dlib.
 
 ## 2.1.0
 
