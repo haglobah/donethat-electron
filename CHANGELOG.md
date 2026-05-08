@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix occasional audio capture cycles being rejected by the cloud transcription with a 400 error by preserving the WebM container header across buffer trims and recorder restarts.
+
 ## 2.2.2
 
 - **Embedded dashboard auth bridge:** strengthen Firebase id token handoff into `<webview>` — gate sends on `auth.currentUser` (not app-state `isAuthenticated`), staggered kicks after dashboard navigation (incl. post-login), main-window show, recover, main-process `webview:reload`, and calendar-linked reload; bounded retries from `dom-ready` / `did-finish-load`; debounce-bypass nudges on SPA `did-navigate` / `did-frame-finish-load`.

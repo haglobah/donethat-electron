@@ -712,9 +712,9 @@ async function restartAudioRecording() {
       mediaRecorder = null;
     }
     
-    // Buffer inputs
-    const previousChunks = [...audioChunks];
-    const previousTimestamps = [...chunkTimestamps];
+    // Buffer inputs. Don't snapshot audioChunks / chunkTimestamps: the new
+    // recorder writes a fresh EBML header and concatenating old bytes with
+    // the new stream produces a multi-header WebM that Gemini rejects.
     const previousIntervals = [...userSpeechIntervals];
     const previousRecordingIntervals = [...cycleRecordingIntervals];
 
@@ -733,9 +733,6 @@ async function restartAudioRecording() {
     const success = await window.startAudioRecording(restartOptions);
     if (!success) return false;
     
-    // Restore previous chunks
-    audioChunks = previousChunks;
-    chunkTimestamps = previousTimestamps;
     userSpeechIntervals = previousIntervals;
     cycleRecordingIntervals = previousRecordingIntervals;
     currentRecordingIntervalStartMs = null;
@@ -1051,19 +1048,22 @@ function trimAudioBuffer() {
   const cutoffTime = now - MAX_BUFFER_DURATION_MS;
   
   let cutoffIndex = -1;
-  for (let i = 0; i < chunkTimestamps.length; i++) {
+  // Index 0 carries the EBML/Segment/Tracks header for the current
+  // MediaRecorder session; trimming it produces a header-less WebM
+  // that Gemini rejects with 400.
+  for (let i = 1; i < chunkTimestamps.length; i++) {
     if (chunkTimestamps[i] >= cutoffTime) {
       cutoffIndex = i;
       break;
     }
   }
-  
+
   if (cutoffIndex === -1) {
-    audioChunks = [];
-    chunkTimestamps = [];
-  } else if (cutoffIndex > 0) {
-    audioChunks = audioChunks.slice(cutoffIndex);
-    chunkTimestamps = chunkTimestamps.slice(cutoffIndex);
+    audioChunks = [audioChunks[0]];
+    chunkTimestamps = [chunkTimestamps[0]];
+  } else if (cutoffIndex > 1) {
+    audioChunks = [audioChunks[0], ...audioChunks.slice(cutoffIndex)];
+    chunkTimestamps = [chunkTimestamps[0], ...chunkTimestamps.slice(cutoffIndex)];
   }
 
   // Prune old intervals
