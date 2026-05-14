@@ -29,6 +29,7 @@ let shutdownRequested = false;
 const AUDIO_RESTART_MIN_INTERVAL_MS = 8000;
 const AUDIO_RESTART_WINDOW_MS = 60 * 1000;
 const AUDIO_RESTART_MAX_PER_WINDOW = 6;
+const AUDIO_BITRATE_BPS = 64000;
 
 function isWaylandLinuxSession() {
   try {
@@ -566,7 +567,7 @@ window.startAudioRecording = async function(options = {}) {
     
     const mimeType = getBestSupportedMimeType();
     const recorderOptions = {
-      audioBitsPerSecond: 128000
+      audioBitsPerSecond: AUDIO_BITRATE_BPS
     };
     
     if (mimeType) {
@@ -652,7 +653,7 @@ async function cycleMediaRecorder() {
     
     // Create a new MediaRecorder with the same stream
     const recorderOptions = {
-      audioBitsPerSecond: 128000
+      audioBitsPerSecond: AUDIO_BITRATE_BPS
     };
     
     if (currentMimeType) {
