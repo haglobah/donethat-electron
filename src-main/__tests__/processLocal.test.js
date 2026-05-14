@@ -68,6 +68,21 @@ describe('local processing notifications', () => {
     expect(buildLocalProcessingNotification(error).alsoNative).toBe(true);
   });
 
+  test('shows explicit native Gemini quota notification on 429 errors', () => {
+    const error = new Error(
+      '[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent: [429 Too Many Requests] Quota exceeded'
+    );
+    error.status = 429;
+
+    expect(buildLocalProcessingNotification(error)).toEqual({
+      id: 'gemini-quota-exceeded',
+      title: 'Gemini quota reached',
+      message: 'Your Gemini API key hit a 429 quota limit. Local processing will retry automatically on the next capture.',
+      sticky: true,
+      alsoNative: true
+    });
+  });
+
   test('recognizes Firebase auth failures so they can propagate', () => {
     expect(isLocalProcessingAuthError({ source: 'FIREBASE', code: 'AUTH_ERROR' })).toBe(true);
     expect(isLocalProcessingAuthError({ source: 'FIREBASE', code: 'TOKEN_EXPIRED' })).toBe(true);

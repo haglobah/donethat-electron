@@ -99,6 +99,16 @@ function isTransientLocalProcessingError(err) {
   return /(network error|offline|getaddrinfo|\bEAI_AGAIN\b|\bENETDOWN\b|\bENETRESET\b|\bENETUNREACH\b)/i.test(text);
 }
 
+function isGeminiQuotaError(err) {
+  const { status, text } = getLocalProcessingErrorContext(err);
+  const isRateLimited = status === 429 || /(429\s*too many requests|quota exceeded|rate limit)/i.test(text);
+  if (!isRateLimited) {
+    return false;
+  }
+
+  return /(generativelanguage\.googleapis\.com|googlegenerativeai|gemini)/i.test(text);
+}
+
 /**
  * Short summary for banners when the OpenAI client puts full HTML bodies in error.message (e.g. 404 pages).
  */
@@ -140,6 +150,16 @@ function formatLocalProcessingErrorForUser(err) {
 }
 
 function buildLocalProcessingNotification(err) {
+  if (isGeminiQuotaError(err)) {
+    return {
+      id: 'gemini-quota-exceeded',
+      title: 'Gemini quota reached',
+      message: 'Your Gemini API key hit a quota limit. Local processing will retry automatically on the next capture.',
+      sticky: true,
+      alsoNative: true
+    };
+  }
+
   if (isTransientLocalProcessingError(err)) {
     return {
       id: 'local-processing-connection-issue',
