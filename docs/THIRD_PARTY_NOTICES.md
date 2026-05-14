@@ -6,16 +6,17 @@ This project uses third-party open-source dependencies. All production dependenc
 
 | License | Count |
 |---------|-------|
-| MIT | 202 |
+| MIT | 192 |
 | ISC | 59 |
 | Apache-2.0 | 57 |
 | BSD-3-Clause | 16 |
 | BlueOak-1.0.0 | 8 |
+| MIT* | 4 |
 | BSD-2-Clause | 3 |
-| MPL-2.0 | 1 |
 | Python-2.0 | 1 |
-| 0BSD | 1 |
+| MPL-2.0 | 1 |
 | (MIT AND Zlib) | 1 |
+| 0BSD | 1 |
 | (MIT OR CC0-1.0) | 1 |
 
 ## Notable Non-MIT/Apache/BSD Licenses
@@ -28,5 +29,5 @@ This project uses third-party open-source dependencies. All production dependenc
 ## Refresh
 
 ```
-npx license-checker --production --summary
+npx license-checker --production --summary --excludePackages 'donethat@2.2.2'
 ```

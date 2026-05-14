@@ -130,9 +130,10 @@ let activePausedMood = null
 let lastDocumentVisibilityState = document.visibilityState
 const IDLE_SLEEP_MS = 60 * 1000
 /**
- * Whether the user is engaged with this overlay. Window focus/blur is unreliable in Electron
- * (focus often does not fire again after the first time), so we also set this true on
- * pointerdown / focusin inside the overlay.
+ * False while the overlay document is hidden (minimized, window hidden, etc.). Used so the mascot
+ * can sleep when the overlay is not on screen. We do not flip this on window `blur`: losing focus
+ * to another app still leaves the overlay visible, and that should not jump straight to sleeping.
+ * `markOverlayEngaged()` runs on pointer/focus inside the overlay and when the document becomes visible again.
  */
 let overlayWindowActive = true
 
@@ -171,12 +172,16 @@ function setMascotMoodOverride(mood, durationMs) {
   mascotMoodOverride = mood
   if (mascotMoodOverrideTimer) {
     try { clearTimeout(mascotMoodOverrideTimer) } catch (_) {}
-  }
-  mascotMoodOverrideTimer = setTimeout(() => {
-    mascotMoodOverride = null
     mascotMoodOverrideTimer = null
-    syncMascotState()
-  }, durationMs)
+  }
+  const ms = Number(durationMs)
+  if (Number.isFinite(ms) && ms > 0) {
+    mascotMoodOverrideTimer = setTimeout(() => {
+      mascotMoodOverride = null
+      mascotMoodOverrideTimer = null
+      syncMascotState()
+    }, ms)
+  }
   syncMascotState()
 }
 
@@ -257,6 +262,14 @@ function getWaitingMood() {
     activeWaitingMood = WAITING_MOODS[nextIndex]
   }
   return activeWaitingMood
+}
+
+/** One waiting mood from send until the assistant reply clears the override (see chat:receive-messages). */
+function holdMascotWaitingUntilReply() {
+  if (WAITING_MOODS.length === 0) return
+  const nextIndex = Math.floor(Math.random() * WAITING_MOODS.length)
+  activeWaitingMood = WAITING_MOODS[nextIndex]
+  setMascotMoodOverride(activeWaitingMood, Infinity)
 }
 
 function getPausedMood() {
@@ -1075,7 +1088,7 @@ async function addMessageFromInput() {
   const text = input0.value.trim()
   if (!text) return
   breakMascotIdleOverride()
-  activeWaitingMood = null
+  holdMascotWaitingUntilReply()
 
   // Capture screenshot if enabled (check BEFORE disabling)
   let images = []
@@ -1301,6 +1314,7 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
   // Incoming assistant replies or proactive pushes are user-visible even if the overlay window
   // never received focus — wake engagement + idle, and show emotion for new coach text.
   if (hasNewAssistant) {
+    clearMascotMoodOverride()
     markOverlayEngaged()
     resetIdleTimer()
     breakMascotIdleOverride()
@@ -1309,6 +1323,7 @@ ipcRenderer.on('chat:receive-messages', (event, newMessages) => {
       setAssistantWritingState(ASSISTANT_WRITING_HOLD_MS)
       playAssistantEmotion(lastMsg, ASSISTANT_WRITING_HOLD_MS + ASSISTANT_EMOTION_PLAYBACK_MS)
     }
+    syncMascotState()
   }
 
   // Auto-show and expand only when a new assistant message arrives.
@@ -1402,11 +1417,6 @@ window.addEventListener('focus', () => {
     }
     resetIdleTimer()
   } catch (e) {}
-})
-
-window.addEventListener('blur', () => {
-  overlayWindowActive = false
-  syncMascotState()
 })
 
 // Handle ESC key to close overlay
