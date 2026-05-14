@@ -65,7 +65,7 @@ const {
 const { startContextCapture, stopContextCapture } = require('./src-main/contextCapture')
 const { initState } = require('./src-main/main-state')
 const { getScreenSources } = require('./src-main/screenCaptureSemaphore')
-const { recordLog } = require('./src-main/telemetry')
+const { recordLog, recordSignal } = require('./src-main/telemetry')
 const linuxAutostart = require('./src-main/linuxAutostart')
 
 // Conditionally load liquid glass with fallback
@@ -320,6 +320,9 @@ const RELOAD_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 let lastWebviewReloadAt = 0;
 let mainLogMirrorInstalled = false
 let webContentsLogMirrorInstalled = false
+let processMetricsInterval = null
+let lastRecordingAdjustAt = 0
+let lastWebviewActivityAt = 0
 
 if (DEBUG) {
   // For debugging, replace console with more verbose electron-log
@@ -737,6 +740,67 @@ function scheduleUpdateChecks() {
   }, 1 * 60 * 1000);
 }
 
+function startProcessMetricsSampling() {
+  if (processMetricsInterval) {
+    clearInterval(processMetricsInterval)
+    processMetricsInterval = null
+  }
+
+  const sample = () => {
+    try {
+      const metrics = app.getAppMetrics()
+      if (!Array.isArray(metrics) || metrics.length === 0) return
+      const top = metrics
+        .map((item) => {
+          const cpuPercent = Number(item?.cpu?.percentCPUUsage || 0)
+          const privateBytes = Number(item?.memory?.privateBytes || 0)
+          return {
+            pid: item?.pid,
+            type: item?.type || 'unknown',
+            cpuPercent: Number.isFinite(cpuPercent) ? Math.round(cpuPercent * 100) / 100 : 0,
+            privateMb: Number.isFinite(privateBytes) ? Math.round((privateBytes / (1024 * 1024)) * 100) / 100 : 0
+          }
+        })
+        .sort((a, b) => b.cpuPercent - a.cpuPercent)
+        .slice(0, 2)
+      if (top.length === 0) return
+      const hot = top[0]
+      const second = top[1]
+      recordSignal('process_metrics_sample', {
+        sampleCount: metrics.length,
+        hotType: hot?.type || 'unknown',
+        hotPid: hot?.pid,
+        hotCpuPercent: hot?.cpuPercent ?? 0,
+        hotPrivateMb: hot?.privateMb ?? 0,
+        secondType: second?.type || 'none',
+        secondCpuPercent: second?.cpuPercent ?? 0
+      })
+    } catch (_) {}
+  }
+
+  sample()
+  processMetricsInterval = setInterval(sample, 30_000)
+}
+
+async function emitLaunchConfigSnapshot() {
+  try {
+    const inputSettings = getInputDataSettings()
+    const localState = await stateManager?.getLocalProcessingState?.()
+    const hasOpenAI = !!localState?.state?.openAICompatible?.hasApiKey
+    const hasGemini = !!localState?.state?.gemini?.hasKey
+    let localProvider = 'none'
+    if (hasOpenAI) localProvider = 'openai'
+    else if (hasGemini) localProvider = 'gemini'
+    recordSignal('launch_config_snapshot', {
+      audioEnabled: !!inputSettings?.audio,
+      systemAudioEnabled: !!inputSettings?.systemAudio,
+      localProvider,
+      overlayCreated: !!(overlayWindow && !overlayWindow.isDestroyed()),
+      mainVisible: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible())
+    })
+  } catch (_) {}
+}
+
 // Add IPC handler for getting app version
 ipcMain.handle('get-app-version', () => {
   return app.getVersion();
@@ -956,6 +1020,14 @@ app.whenReady().then(async () => {
     } catch (e) {}
   });
 
+  ipcMain.on('telemetry:signal', (_event, payload = {}) => {
+    try {
+      const name = typeof payload?.name === 'string' ? payload.name : 'renderer_signal'
+      const fields = payload && typeof payload.fields === 'object' ? payload.fields : {}
+      recordSignal(name, fields)
+    } catch (_) {}
+  })
+
   ipcMain.handle('auth:google-signin', async (_event, payload) => {
     try {
       const port = await startAuthServer();
@@ -1133,7 +1205,7 @@ app.whenReady().then(async () => {
   await checkScreenCapturePermission('startup')
   
   // Initial state check and schedule daily check
-  checkAndAdjustRecording();
+  checkAndAdjustRecording('startup');
   
   // Handle left-click to show a fresh context menu
   tray.on('click', () => {
@@ -1170,6 +1242,9 @@ app.whenReady().then(async () => {
 
   // Create overlay window (hidden initially)
   createOverlayWindow()
+
+  startProcessMetricsSampling();
+  emitLaunchConfigSnapshot().catch(() => {})
 
   // Check for updates with proper error handling
   try {
@@ -1441,6 +1516,10 @@ app.on('before-quit', () => {
   // Clean up resources
   if (screenshotInterval) {
     clearInterval(screenshotInterval);
+  }
+  if (processMetricsInterval) {
+    clearInterval(processMetricsInterval)
+    processMetricsInterval = null
   }
   
   // Stop auth server
@@ -1789,7 +1868,7 @@ function buildContextMenu() {
 // Central function to evaluate and adjust recording state based on all factors
 let hasShownInactiveBanner = false;
 
-function checkAndAdjustRecording() {
+function checkAndAdjustRecording(source = 'unknown') {
     const isCurrentlyRecording = isCapturing();
 
     // Determine if we should be recording based on current conditions
@@ -1799,6 +1878,14 @@ function checkAndAdjustRecording() {
     const isPaused = stateManager?.isPaused();
     const isSystemIdle = stateManager?.isSystemIdle() ?? false;
     const shouldBeRecording = isAuthenticated && hasPermission && hasValidAccess && !isPaused && !isSystemIdle;
+    const now = Date.now()
+    const sincePrevMs = lastRecordingAdjustAt > 0 ? (now - lastRecordingAdjustAt) : -1
+    lastRecordingAdjustAt = now
+    recordSignal('recording_adjust_called', {
+      source,
+      sincePrevMs,
+      changedState: isCurrentlyRecording !== shouldBeRecording
+    })
     
     // to capture some cases where auth is loaded later
     // but not recording it's not triggering above function because
@@ -2035,6 +2122,12 @@ function createWindow() {
             return;
           }
           try { mainWindow.webContents.send('webview:reload'); } catch (e) {}
+          recordSignal('webview_activity', {
+            event: 'reload',
+            reason: 'window-show',
+            sincePrevMs: lastWebviewActivityAt > 0 ? (now - lastWebviewActivityAt) : -1
+          })
+          lastWebviewActivityAt = now
               lastWebviewReloadAt = now;
         }
       } catch (e) {}
@@ -2054,6 +2147,12 @@ function createWindow() {
         if (now < suppressWebviewReloadUntil) return;
         if (!lastWebviewReloadAt || (now - lastWebviewReloadAt) > RELOAD_MIN_INTERVAL_MS) {
           try { mainWindow.webContents.send('webview:reload'); } catch (e) {}
+          recordSignal('webview_activity', {
+            event: 'reload',
+            reason: 'window-focus',
+            sincePrevMs: lastWebviewActivityAt > 0 ? (now - lastWebviewActivityAt) : -1
+          })
+          lastWebviewActivityAt = now
           lastWebviewReloadAt = now;
         }
       } catch (e) {}
@@ -2383,7 +2482,7 @@ app.on('browser-window-focus', async () => {
   stateManager?.clearSystemIdleFlags();
 
   // Re-evaluate recording state after clearing idle flags.
-  checkAndAdjustRecording();
+  checkAndAdjustRecording('focus');
 });
 
 ////// INPUT DATA ////

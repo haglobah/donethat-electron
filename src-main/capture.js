@@ -20,7 +20,8 @@ const {
   requeueCompletedCycleTelemetry,
   recordCyclePhaseDuration,
   recordPermissionCheck,
-  recordCaptureCycleSkippedOverlap
+  recordCaptureCycleSkippedOverlap,
+  recordSignal
 } = require('./telemetry');
 
 // Firebase URL constant
@@ -39,6 +40,7 @@ let mainWindowRef = null; // Store mainWindow reference
 let getIdTokenFunction = null; // Store the getIdToken function reference
 let getClientTelemetryEnabledFunction = null;
 let captureCycleInFlight = false;
+const captureModuleStartedAt = Date.now();
 let microphonePermissionFocusListener = null;
 let systemAudioPermissionFocusListener = null;
 const PENDING_PERMISSION_POST_RESTART_FOCUS_KEY = 'pendingPermissionPostRestartFocus';
@@ -919,6 +921,10 @@ async function _sendToServer(idToken, screenshots, inputData = {}, previousScree
  */
 async function captureAndSend(idToken) {
   try {
+    let screenshotDurationMs = 0;
+    let inputCollectionDurationMs = 0;
+    let sendDurationMs = 0;
+
     // Get previous screenshots BEFORE capturing new ones (they represent the ~5min-ago snapshot)
     const previousScreenshotData = getPreviousScreenshots(captureIntervalMinutes);
 
@@ -970,7 +976,8 @@ async function captureAndSend(idToken) {
     } catch (error) {
       log.warn('Error applying image diff bounding boxes:', error);
     }
-    recordCyclePhaseDuration('screenshot', Date.now() - screenshotPhaseStartedAt);
+    screenshotDurationMs = Date.now() - screenshotPhaseStartedAt;
+    recordCyclePhaseDuration('screenshot', screenshotDurationMs);
 
     if (!screenshots || screenshots.length === 0) {
         // No screenshots captured, continuing with other data
@@ -991,7 +998,8 @@ async function captureAndSend(idToken) {
     // Get input data while resetting buffers
     const inputCollectionStartedAt = Date.now();
     const inputData = await collectInputData(true, { includeOpenAIWav });
-    recordCyclePhaseDuration('input_collection', Date.now() - inputCollectionStartedAt);
+    inputCollectionDurationMs = Date.now() - inputCollectionStartedAt;
+    recordCyclePhaseDuration('input_collection', inputCollectionDurationMs);
     const moduleErrors = inputData.captureErrors || {};
     captureErrors.windows = !!moduleErrors.windows;
     captureErrors.microphone = !!moduleErrors.microphone;
@@ -1055,7 +1063,15 @@ async function captureAndSend(idToken) {
     const clientTelemetry = isClientTelemetryEnabled() ? completedTelemetry : null;
     const sendStartedAt = Date.now();
     const sendResult = await _sendToServer(idToken, screenshots, inputData, previousForUpload, clientTelemetry)
-    recordCyclePhaseDuration('send', Date.now() - sendStartedAt);
+    sendDurationMs = Date.now() - sendStartedAt;
+    recordCyclePhaseDuration('send', sendDurationMs);
+
+    recordSignal('capture_cycle_phases_end', {
+      screenshotMs: Math.round(screenshotDurationMs),
+      collectMs: Math.round(inputCollectionDurationMs),
+      sendMs: Math.round(sendDurationMs),
+      localPath: localProcessingAvailable ? '1' : '0'
+    })
 
     const sendFailed = sendResult === false
       || !!(sendResult && typeof sendResult === 'object' && (sendResult.authError || sendResult.tokenExpired || sendResult.success === false));
@@ -1065,7 +1081,8 @@ async function captureAndSend(idToken) {
 
     return {
       sendResult,
-      dumpDir
+      dumpDir,
+      hadAudio: hasAudioCycle
     }
   } catch (error) {
     // Handle errors specifically from captureScreenshot or collectInputData
@@ -1268,6 +1285,13 @@ async function _runCaptureCycle() {
         log.warn('Capture dump append failed:', e?.message)
       }
     }
+    recordSignal('capture_cycle_end', {
+      sinceLaunchMs: Math.max(0, Date.now() - captureModuleStartedAt),
+      isFirstCycle: cycleTelemetry?.cycleId === 1 ? '1' : '0',
+      totalMs: Math.round(cycleTelemetry?.captureCycleDurationMs || 0),
+      hadAudio: cycleCaptureResult?.hadAudio ? '1' : '0',
+      success: cycleStatus === 'success' ? '1' : '0'
+    })
     captureCycleInFlight = false;
   }
 }

@@ -134,6 +134,12 @@ function recordLog(level, source, message, meta = null) {
   trimLogs(logs)
 }
 
+function recordSignal(name, fields = {}) {
+  const signalName = clampString(name, 'unknown', 64)
+  if (!signalName || signalName === 'unknown') return
+  recordLog('info', 'signal', `signal:${signalName}`, fields)
+}
+
 function getAppVersion() {
   try {
     return app?.getVersion?.() || 'unknown'
@@ -341,6 +347,7 @@ module.exports = {
   requeueCompletedCycleTelemetry,
   recordCyclePhaseDuration,
   recordLog,
+  recordSignal,
   recordPermissionCheck,
   recordScreenLock,
   recordAudioRestart,

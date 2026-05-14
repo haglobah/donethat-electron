@@ -5,6 +5,12 @@ const ipcRenderer = window.electronAPI;
 
 const isMacPlatform = !!(window.electronAPI && window.electronAPI.platform === 'darwin')
 
+function emitTelemetrySignal(name, fields = {}) {
+  try {
+    ipcRenderer.send('telemetry:signal', { name, fields })
+  } catch (_) {}
+}
+
 function updateOverlayVisualMode() {
   const root = document.documentElement
   if (!root) return
@@ -50,6 +56,7 @@ if (chatContainer) {
 let messages = []
 let chatVisible = false
 let lastSentHeight = null
+let lastOverlayRenderTelemetryAt = 0
 let includeScreenOnNextMessage = true
 const MIN_INPUT_HEIGHT = 28
 let typingTimer = null
@@ -936,6 +943,7 @@ function parseMarkdown(text) {
 }
 
 function renderChat() {
+  const renderStartedAt = Date.now()
   // Dedupe: if a Firestore message matches a pending optimistic one, drop the pending
   const serverByTextRole = new Set(messages.map(m => `${m.role}|${m.text}`))
   const filteredPending = pendingMessages.filter(pm => {
@@ -1010,6 +1018,17 @@ function renderChat() {
     applyScrollAndClamp(desired)
     sendOverlayHeight(desired)
   })
+
+  const now = Date.now()
+  if (!lastOverlayRenderTelemetryAt || (now - lastOverlayRenderTelemetryAt) >= 2500) {
+    lastOverlayRenderTelemetryAt = now
+    emitTelemetrySignal('overlay_render_end', {
+      durationMs: Math.max(0, now - renderStartedAt),
+      messageCount: toRender.length,
+      overlayVisible: chatVisible ? '1' : '0',
+      mascotActive: mascotRive ? '1' : '0'
+    })
+  }
 }
 
 function animateResize(toHeight, opts = {}) {

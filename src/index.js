@@ -55,6 +55,9 @@ let portalHandshakeRetryTimers = [];
 let portalSpinnerTimer = null; // delay before showing dashboard spinner
 const PORTAL_RELOAD_COOLDOWN_MS = 10000; // avoid reloads shortly after token delivery
 const PORTAL_DEFAULT_URL = 'https://app.donethat.ai';
+let lastWebviewActivityTs = 0;
+let lastWebviewActivityKey = '';
+const WEBVIEW_ACTIVITY_DEDUPE_MS = 1500;
 // Default to visible: the renderer is loaded by the main process when the
 // window is shown, and `app:window-shown` may have already fired before this
 // script registers its IPC handler. The DOMContentLoaded probe below corrects
@@ -69,6 +72,27 @@ const pendingPortalBridge = {
 
 // Inform main that renderer is ready to receive auth tokens as early as possible
 try { ipcRenderer.send('renderer:ready-for-auth'); } catch (_) {}
+
+function emitTelemetrySignal(name, fields = {}) {
+  try {
+    ipcRenderer.send('telemetry:signal', { name, fields });
+  } catch (_) {}
+}
+
+function emitWebviewActivity(event, reason) {
+  const now = Date.now();
+  const key = `${event}|${reason}`;
+  if (lastWebviewActivityKey === key && (now - lastWebviewActivityTs) < WEBVIEW_ACTIVITY_DEDUPE_MS) {
+    return;
+  }
+  emitTelemetrySignal('webview_activity', {
+    event,
+    reason,
+    sincePrevMs: lastWebviewActivityTs ? (now - lastWebviewActivityTs) : -1
+  });
+  lastWebviewActivityTs = now;
+  lastWebviewActivityKey = key;
+}
 
 function clearPortalHandshakeRetries() {
   try {
@@ -258,6 +282,7 @@ function safePortalReload(reason) {
     if (!canReloadPortalNow()) { return; }
     hideWebviewError();
     portalView.reload();
+    emitWebviewActivity('reload', reason || 'safe-reload');
     startPortalLoadWatchdog(reason || 'safe-reload');
   } catch (e) {
     console.error('[Webview] Error in safePortalReload:', e);
@@ -331,6 +356,7 @@ function attachPortalViewListeners(view) {
   try {
     view.addEventListener('did-start-loading', () => {
       if (!isActivePortalView()) return;
+      emitWebviewActivity('did-start-loading', 'guest');
       if (navigator.onLine) {
         hideWebviewError();
         startPortalLoadWatchdog('did-start-loading');
@@ -343,6 +369,7 @@ function attachPortalViewListeners(view) {
   try {
     view.addEventListener('did-stop-loading', () => {
       if (!isActivePortalView()) return;
+      emitWebviewActivity('did-stop-loading', 'guest');
       clearPortalLoadWatchdog();
       hidePortalSpinner();
     });
@@ -388,7 +415,13 @@ function attachPortalViewListeners(view) {
     });
   } catch (_) {}
 
-  try { view.addEventListener('did-navigate', () => { if (isActivePortalView()) nudgePortalAuthToken(); }); } catch (e) {}
+  try {
+    view.addEventListener('did-navigate', () => {
+      if (!isActivePortalView()) return;
+      emitWebviewActivity('did-navigate', 'guest');
+      nudgePortalAuthToken();
+    });
+  } catch (e) {}
   try { view.addEventListener('did-frame-finish-load', () => { if (isActivePortalView()) nudgePortalAuthToken(); }); } catch (e) {}
 
   (async () => {

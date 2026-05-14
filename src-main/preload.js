@@ -50,6 +50,7 @@ const validSendChannels = [
   'create-overlay-if-needed',
   'focus-app-window',
   'updateUserStatus',
+  'telemetry:signal',
 
   // Notifications
   'background:notify',

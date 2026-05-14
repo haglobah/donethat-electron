@@ -378,7 +378,7 @@ function _validateState() {
     // Ensure recording state matches all conditions
     // This catches any other state drift (permissions, auth, etc.)
     if (checkAndAdjustRecording) {
-      checkAndAdjustRecording();
+      checkAndAdjustRecording('state-validation');
     }
   } catch (error) {
     log.error('Error in state validation heartbeat:', error);
@@ -643,7 +643,7 @@ function applyManagedAppSettings(rawSettings = null) {
   try { require('./processLocal').resetLLMModels(); } catch (_) {}
 
   if (checkAndAdjustRecording) {
-    checkAndAdjustRecording();
+    checkAndAdjustRecording('managed-settings');
   }
 }
 
@@ -850,7 +850,7 @@ function resume() {
   
   // Ensure all state is synchronized after initialization
   if (checkAndAdjustRecording) {
-    checkAndAdjustRecording();
+    checkAndAdjustRecording('resume');
   }
 }
 
@@ -955,7 +955,7 @@ function _clearPauseStateAndCheckRecording() {
   pauseState = { endTime: null, timeoutId: null, reason: null };
 
   if (checkAndAdjustRecording) {
-    checkAndAdjustRecording();
+    checkAndAdjustRecording('clear-pause');
   }
 }
 
@@ -988,7 +988,7 @@ function pauseRecording(duration, mainWindow, reason = null) {
   
   // Make sure recording is stopped
   if (checkAndAdjustRecording) {
-    checkAndAdjustRecording();
+    checkAndAdjustRecording('pause-recording');
   }
 
   // Send analytics event to renderer
@@ -1316,7 +1316,7 @@ function updateUserStatus(status) {
   
   // Trigger recording state check when status changes
   if (checkAndAdjustRecording) {
-    checkAndAdjustRecording();
+    checkAndAdjustRecording('user-status');
   }
 }
 
@@ -1336,7 +1336,7 @@ function setupIPCHandlers() {
 
       // Only start recording if we're in work hours
       if (checkAndAdjustRecording) {
-        checkAndAdjustRecording();
+        checkAndAdjustRecording('login');
       }
       
       // Send permission status to renderer
@@ -1354,7 +1354,7 @@ function setupIPCHandlers() {
     
     // Stop recording on logout
     if (checkAndAdjustRecording) {
-      checkAndAdjustRecording();
+      checkAndAdjustRecording('logout');
     }
   });
   
@@ -2447,7 +2447,7 @@ function setupPowerMonitorHandlers() {
     // Rebase timers after system resume
     resume();
     if (checkAndAdjustRecording) {
-      checkAndAdjustRecording();
+      checkAndAdjustRecording('power-resume');
     }
   });
   
@@ -2457,21 +2457,21 @@ function setupPowerMonitorHandlers() {
     // and existing setTimeouts would otherwise extend pauses by sleep duration
     resume();
     if (checkAndAdjustRecording) {
-      checkAndAdjustRecording();
+      checkAndAdjustRecording('power-unlock');
     }
   });
   
   powerMonitor.on('suspend', () => {
     isSystemSuspended = true;
     if (checkAndAdjustRecording) {
-      checkAndAdjustRecording();
+      checkAndAdjustRecording('power-suspend');
     }
   });
   
   powerMonitor.on('lock-screen', () => {
     isScreenLocked = true;
     if (checkAndAdjustRecording) {
-      checkAndAdjustRecording();
+      checkAndAdjustRecording('power-lock');
     }
   });
 }

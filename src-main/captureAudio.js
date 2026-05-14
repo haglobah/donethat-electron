@@ -1,7 +1,7 @@
 const log = require('electron-log')
 const { ipcMain, systemPreferences } = require('electron')
 const audioSessionDetector = require('./audioSessionDetector')
-const { recordAudioRestart, recordLog } = require('./telemetry')
+const { recordAudioRestart, recordLog, recordSignal } = require('./telemetry')
 let mediabunnyPromise = null
 
 // Variables to track audio capture
@@ -214,6 +214,9 @@ async function buildCycleAudioPayload(rawAudioCycle, options = {}) {
   }
 
   const includeOpenAIWav = options.includeOpenAIWav === true
+  const payloadBuildStartedAt = Date.now()
+  let mergeWebmMs = 0
+  let wavConvertMs = 0
   const sourceSegments = Array.isArray(rawAudioCycle.segments) ? rawAudioCycle.segments : []
   const normalizedSegments = sourceSegments
     .map((segment, index) => {
@@ -254,7 +257,9 @@ async function buildCycleAudioPayload(rawAudioCycle, options = {}) {
     })
   } else {
     try {
+      const mergeStartedAt = Date.now()
       payloadBase64 = await mergeWebmSegmentsToBase64(normalizedSegments)
+      mergeWebmMs = Date.now() - mergeStartedAt
       payloadMimeType = 'audio/webm'
       mergedSegmentCount = normalizedSegments.length
       effectiveStartMs = normalizedSegments[0].startMs
@@ -292,7 +297,9 @@ async function buildCycleAudioPayload(rawAudioCycle, options = {}) {
 
   if (includeOpenAIWav) {
     try {
+      const wavStartedAt = Date.now()
       const wavBase64 = await convertWebmToWavInRenderer(payloadBase64)
+      wavConvertMs = Date.now() - wavStartedAt
       if (!wavBase64 || typeof wavBase64 !== 'string') {
         throw new Error('Renderer WAV conversion returned empty result')
       }
@@ -312,6 +319,16 @@ async function buildCycleAudioPayload(rawAudioCycle, options = {}) {
       })
     }
   }
+
+  recordSignal('audio_payload_phases_end', {
+    blobToBase64Ms: -1,
+    mergeWebmMs: Math.round(mergeWebmMs),
+    wavConvertMs: Math.round(wavConvertMs),
+    segmentCount: normalizedSegments.length,
+    webmBytes: Buffer.byteLength(payloadBase64 || '', 'base64'),
+    wavRequested: includeOpenAIWav ? '1' : '0',
+    totalMs: Math.max(0, Date.now() - payloadBuildStartedAt)
+  })
 
   return audioCycle
 }
@@ -484,6 +501,11 @@ async function syncRecordingState(reason = 'unknown') {
  */
 async function handleDeviceSwitch(_deviceInfo) {
   await syncRecordingState('audio-device-changed')
+  recordSignal('audio_runtime_state_change', {
+    action: 'restart',
+    reason: 'device-switch',
+    systemAudio: currentConfig.systemAudio ? '1' : '0'
+  })
 }
 
 /**
@@ -754,6 +776,11 @@ async function startRecordingInternal() {
       }
 
       isRecording = true
+      recordSignal('audio_runtime_state_change', {
+        action: 'start',
+        reason: 'recording-active',
+        systemAudio: currentConfig.systemAudio ? '1' : '0'
+      })
       return true
     } catch (error) {
       log.error('Error starting audio recording:', error)
@@ -808,6 +835,11 @@ async function stopRecordingInternal() {
     }
 
     isRecording = false
+    recordSignal('audio_runtime_state_change', {
+      action: 'stop',
+      reason: 'recording-stopped',
+      systemAudio: currentConfig.systemAudio ? '1' : '0'
+    })
     return true
   } catch (error) {
     log.error('Error stopping audio recording:', error)
@@ -883,6 +915,11 @@ async function startAudioTracking(config) {
   }
 
   isAudioTrackingActive = true
+  recordSignal('audio_runtime_state_change', {
+    action: 'tracking-start',
+    reason: 'start-audio-tracking',
+    systemAudio: currentConfig.systemAudio ? '1' : '0'
+  })
   initializeSessionDetectionIfNeeded(config)
   await syncRecordingState('start-audio-tracking')
   return true
@@ -925,6 +962,11 @@ async function stopRecording(resetBuffers = false, options = {}) {
 async function shutdownRecording() {
   try {
     isAudioTrackingActive = false
+    recordSignal('audio_runtime_state_change', {
+      action: 'tracking-stop',
+      reason: 'shutdown-recording',
+      systemAudio: currentConfig.systemAudio ? '1' : '0'
+    })
 
     if (isRecording) {
       await stopRecordingInternal()

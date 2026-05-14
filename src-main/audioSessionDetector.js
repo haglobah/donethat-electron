@@ -4,6 +4,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { promisify } = require('util');
+const { recordSignal } = require('./telemetry');
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -84,6 +85,7 @@ class AudioSessionManager {
     this.platform = process.platform;
     this.isChecking = false;
     this.currentCheckPromise = null;
+    this.probeSampleCounter = 0;
   }
 
   initialize(options = 1000) {
@@ -113,15 +115,20 @@ class AudioSessionManager {
       try {
         const previouslyActiveMic = this.activeMicrophone;
         let currentlyActiveMic = null;
+        const probeStartedAt = Date.now();
+        let probeType = this.platform;
 
         switch (this.platform) {
           case 'win32':
+            probeType = 'powershell';
             currentlyActiveMic = await this.detectWindowsMicrophoneUsage();
             break;
           case 'darwin':
+            probeType = 'mic-monitor';
             currentlyActiveMic = await this.detectMacOSMicrophoneUsage();
             break;
           case 'linux':
+            probeType = 'pactl';
             currentlyActiveMic = await this.detectLinuxMicrophoneUsage();
             break;
           default:
@@ -130,6 +137,16 @@ class AudioSessionManager {
         }
 
         this.activeMicrophone = currentlyActiveMic;
+        this.probeSampleCounter = (this.probeSampleCounter + 1) % 6;
+        const shouldEmitProbeSample = this.probeSampleCounter === 0 || !!currentlyActiveMic;
+        if (shouldEmitProbeSample) {
+          recordSignal('audio_session_probe_end', {
+            platform: this.platform,
+            probeType,
+            durationMs: Math.max(0, Date.now() - probeStartedAt),
+            active: currentlyActiveMic ? '1' : '0'
+          })
+        }
 
         const isSameSession = (a, b) => {
           if (a === b) return true;
