@@ -5,6 +5,12 @@ const { logAnalyticsEvent } = require('./analytics.js');
 const { getIsPaused } = require('./app-state.js');
 const { showBanner } = require('./notify.js');
 
+function emitTelemetrySignal(name, fields = {}) {
+  try {
+    ipcRenderer.send('telemetry:signal', { name, fields });
+  } catch (_) {}
+}
+
 // Callable SDK default timeout is 70s; Finish Day summarization often runs longer.
 const FINISH_DAY_CALLABLE_TIMEOUT_MS = 15 * 60 * 1000;
 
@@ -308,10 +314,20 @@ if (summarySubmitBtn) {
       if (finishDayMessage) finishDayMessage.classList.remove('hidden');
       // Immediately pause until tomorrow when finishing the day, if not already paused
       try {
-        if (!getIsPaused()) {
+        const rendererPaused = !!getIsPaused();
+        const sentPauseUntilTomorrow = !rendererPaused;
+        emitTelemetrySignal('finish_day_click', {
+          rendererPaused,
+          sentPauseUntilTomorrow
+        });
+        if (sentPauseUntilTomorrow) {
           ipcRenderer.send("pauseUntilTomorrow");
         }
       } catch (e) {
+        emitTelemetrySignal('finish_day_click', {
+          rendererPaused: 'error',
+          sentPauseUntilTomorrow: false
+        });
         // No-op if IPC is unavailable
       }
 

@@ -4,6 +4,7 @@ const path = require('path');
 const { encryptData, decryptData, decryptDataWithRetry, isLegacyEncryptedData } = require('./encryption');
 const { default: Store } = require('electron-store');
 const linuxAutostart = require('./linuxAutostart');
+const { recordSignal } = require('./telemetry');
 
 // State variables
 let store = null;
@@ -63,6 +64,20 @@ let managedAppSettings = {
     openAICompatible: null
   }
 };
+
+function getPauseTelemetryFields(extra = {}) {
+  const endTime = pauseState.endTime instanceof Date ? pauseState.endTime : null;
+  return {
+    previousReason: pauseState.reason || 'none',
+    previousRemainingMs: endTime ? Math.round(endTime.getTime() - Date.now()) : 0,
+    ...extra
+  };
+}
+
+function recordPauseStateCleared(source) {
+  if (!pauseState.endTime && !pauseState.reason && !pauseState.timeoutId) return;
+  recordSignal('pause_state_cleared', getPauseTelemetryFields({ source }));
+}
 
 function isManagedValue(value) {
   return value !== null && value !== undefined;
@@ -948,7 +963,9 @@ function _checkWorkdayEndNotification() {
   }
 }
 
-function _clearPauseStateAndCheckRecording() {
+function _clearPauseStateAndCheckRecording(source = 'clear-pause') {
+  recordPauseStateCleared(source);
+
   if (pauseState.timeoutId) {
     clearTimeout(pauseState.timeoutId);
   }
@@ -981,7 +998,7 @@ function _handlePauseTimeout(reason) {
     _validateState();
     return;
   }
-  _clearPauseStateAndCheckRecording();
+  _clearPauseStateAndCheckRecording('pause-timeout');
 }
 
 // Function to pause recording for a specified duration
@@ -1029,6 +1046,11 @@ function pauseForToday(mainWindow) {
   setManualOverrideWorkHours(false);
 
   if (duration > 0) {
+    recordSignal('pause_today_request', getPauseTelemetryFields({
+      source: 'pauseForToday',
+      wasPaused: isPaused(),
+      newEndTimeMs: midnight.getTime()
+    }));
     pauseRecording(duration, mainWindow, PAUSE_REASON_PAUSE_TODAY);
     return;
   }
@@ -1118,6 +1140,7 @@ function recordingStarted(mainWindow) {
 
   // Reset pause state
   const wasPaused = isPaused(); // Check if we were paused
+  recordPauseStateCleared('recording-started');
   pauseState = { endTime: null, timeoutId: null };
   
   // Clear the saved pause state
@@ -1221,6 +1244,7 @@ function loadPauseState() {
       return true;
     } else {
       // Pause period has already expired - clear both storage and in-memory state
+      recordPauseStateCleared('load-expired-pause-state');
       safeStoreOperation(() => store.delete('pauseState'), 'delete expired pause state');
       // Clear in-memory pause state to prevent stale state
       if (pauseState.timeoutId) {
@@ -2390,6 +2414,7 @@ function resetSessionState() {
   clearIdToken();
   
   // Clear pause state and timers
+  recordPauseStateCleared('reset-session');
   if (pauseState.timeoutId) {
     clearTimeout(pauseState.timeoutId);
   }
