@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add Sentry Electron error reporting and source-map upload for the main app and chat overlay.
+- Pin Electron to 41.7.0 to avoid the Chromium 148 Windows startup crash.
 
 ## 2.2.3
 
