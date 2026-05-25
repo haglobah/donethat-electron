@@ -1,10 +1,10 @@
-const { nativeImage, ipcMain, shell, app } = require('electron')
+const { nativeImage, ipcMain, shell, app, systemPreferences } = require('electron')
 const { execSync } = require('child_process')
 const path = require('path')
 const log = require('electron-log')
 const { default: Store } = require('electron-store')
 const { getScreenSources } = require('./screenCaptureSemaphore')
-const { recordPermissionCheck } = require('./telemetry')
+const { recordPermissionCheck, recordSignal } = require('./telemetry')
 
 // Store Linux screenshot command
 let linuxScreenshotCommand = null
@@ -250,6 +250,21 @@ async function probeDesktopCapturerScreenPermission(source = 'unknown', options 
   }
 }
 
+// Synchronously read the macOS TCC database for screen-recording access.
+// Returns 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown' | null (non-macOS or error).
+// This is the OS-level authority and is not subject to the transient empty/timeout
+// flakes that affect desktopCapturer.getSources during ScreenCaptureKit init,
+// post-wake, or secure-desktop races.
+function getMacScreenAccessStatus() {
+  if (process.platform !== 'darwin') return null
+  try {
+    return systemPreferences.getMediaAccessStatus('screen')
+  } catch (error) {
+    log.warn('[screen-capture] Failed to read macOS TCC screen access status:', error?.message || error)
+    return null
+  }
+}
+
 // Function to check screen capture permission
 async function checkScreenCapturePermission(source = 'unknown', probeOptions = {}) {
   const startedAt = Date.now()
@@ -259,6 +274,25 @@ async function checkScreenCapturePermission(source = 'unknown', probeOptions = {
       const hasPermission = await checkLinuxScreenCapturePermission()
       recordPermissionCheck('screen', source, hasPermission ? 'granted' : 'denied', Date.now() - startedAt)
       return hasPermission
+    }
+
+    // On macOS, prefer the TCC database over the desktopCapturer probe.
+    // The probe can transiently return empty for reasons unrelated to permission
+    // (ScreenCaptureKit cold-start, post-wake, secure-desktop), which used to flip
+    // the cached state to "denied" even though access was granted.
+    if (process.platform === 'darwin') {
+      const tccStatus = getMacScreenAccessStatus()
+      if (tccStatus === 'granted') {
+        recordPermissionCheck('screen', source, 'granted', Date.now() - startedAt)
+        try { recordSignal('screen_permission_resolved_via_tcc', { source, status: tccStatus }) } catch (_) {}
+        return true
+      }
+      if (tccStatus === 'denied' || tccStatus === 'restricted') {
+        recordPermissionCheck('screen', source, 'denied', Date.now() - startedAt)
+        try { recordSignal('screen_permission_resolved_via_tcc', { source, status: tccStatus }) } catch (_) {}
+        return false
+      }
+      // 'not-determined', 'unknown', or null → fall through to active probe.
     }
 
     return await probeDesktopCapturerScreenPermission(source, probeOptions)
@@ -729,6 +763,7 @@ module.exports = {
   captureScreenshot,
   captureScreenshotDetailed,
   checkScreenCapturePermission,
+  getMacScreenAccessStatus,
   getPreviousScreenshots,
   saveCurrentScreenshot,
   scaleScreenshotToPreviousSize,

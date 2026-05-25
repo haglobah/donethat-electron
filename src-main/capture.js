@@ -5,6 +5,7 @@ const {
   saveCurrentScreenshot,
   scaleScreenshotToPreviousSize,
   checkScreenCapturePermission,
+  getMacScreenAccessStatus,
   PREVIOUS_SCREENSHOT_SCALE_FACTOR
 } = require('./captureScreenshots');
 const { ipcMain, powerMonitor } = require('electron');
@@ -1120,6 +1121,17 @@ function handleCaptureError(error, context, captureErrors = null, stopCapture = 
         const threshold = RUNTIME_ISSUE_THRESHOLDS[feature] || 4;
 
         if (streak >= threshold) {
+          // On macOS, suppress the screen runtime-issue flag when TCC reports
+          // access is granted. The streak is then almost certainly a transient
+          // ScreenCaptureKit hiccup, not a permission loss, and flagging it
+          // would incorrectly trip the renderer into showing a "permission
+          // denied" UI.
+          if (feature === 'screen' && getMacScreenAccessStatus && getMacScreenAccessStatus() === 'granted') {
+            log.warn(`[capture] Screen capture failures reached threshold (${streak}/${threshold}) but macOS TCC reports granted; suppressing runtime-issue flag`);
+            resetFailureStreak(feature);
+            return;
+          }
+
           runtimeIssues[feature] = {
             status: 'degraded',
             threshold,

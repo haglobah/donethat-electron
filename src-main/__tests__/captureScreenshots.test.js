@@ -1,5 +1,6 @@
 const mockGetScreenSources = jest.fn()
 const mockCreateFromBuffer = jest.fn()
+const mockGetMediaAccessStatus = jest.fn()
 
 const mockLog = {
   info: jest.fn(),
@@ -28,7 +29,8 @@ jest.mock('../screenCaptureSemaphore', () => ({
   getScreenSources: (...args) => mockGetScreenSources(...args)
 }))
 jest.mock('../telemetry', () => ({
-  recordPermissionCheck: jest.fn()
+  recordPermissionCheck: jest.fn(),
+  recordSignal: jest.fn()
 }))
 jest.mock('electron', () => ({
   nativeImage: {
@@ -43,6 +45,9 @@ jest.mock('electron', () => ({
   },
   app: {
     getPath: jest.fn(() => '/tmp/test-user-data')
+  },
+  systemPreferences: {
+    getMediaAccessStatus: (...args) => mockGetMediaAccessStatus(...args)
   }
 }))
 
@@ -53,7 +58,8 @@ const { recordPermissionCheck } = require('../telemetry')
 const {
   captureScreenshot,
   captureScreenshotDetailed,
-  checkScreenCapturePermission
+  checkScreenCapturePermission,
+  getMacScreenAccessStatus
 } = require('../captureScreenshots')
 
 const minimalScreenSource = {
@@ -125,6 +131,10 @@ describe('checkScreenCapturePermission (desktopCapturer probe)', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockGetScreenSources.mockReset()
+    mockGetMediaAccessStatus.mockReset()
+    // Default: TCC says "not-determined" so the probe path is exercised in the
+    // pre-existing probe-focused tests below.
+    mockGetMediaAccessStatus.mockReturnValue('not-determined')
     mockStore.get.mockReturnValue(undefined)
     mockCreateFromBuffer.mockReturnValue({
       getSize: () => ({ width: 1000, height: 700 }),
@@ -225,5 +235,103 @@ describe('checkScreenCapturePermission (desktopCapturer probe)', () => {
 
     expect(result).toBeUndefined()
     expect(mockGetScreenSources).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('checkScreenCapturePermission (macOS TCC priority)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockGetScreenSources.mockReset()
+    mockGetMediaAccessStatus.mockReset()
+    mockStore.get.mockReturnValue(undefined)
+    if (platformDescriptor) {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    }
+  })
+
+  afterEach(() => {
+    if (platformDescriptor) {
+      Object.defineProperty(process, 'platform', platformDescriptor)
+    }
+  })
+
+  test('TCC "granted" short-circuits without probing desktopCapturer', async () => {
+    mockGetMediaAccessStatus.mockReturnValue('granted')
+    mockGetScreenSources.mockResolvedValue([])
+
+    const result = await checkScreenCapturePermission('unit-tcc-granted')
+
+    expect(result).toBe(true)
+    expect(mockGetMediaAccessStatus).toHaveBeenCalledWith('screen')
+    // Probe must NOT run when TCC is authoritative.
+    expect(mockGetScreenSources).not.toHaveBeenCalled()
+    expect(recordPermissionCheck).toHaveBeenLastCalledWith(
+      'screen',
+      'unit-tcc-granted',
+      'granted',
+      expect.any(Number)
+    )
+  })
+
+  test('TCC "denied" short-circuits without probing desktopCapturer', async () => {
+    mockGetMediaAccessStatus.mockReturnValue('denied')
+    mockGetScreenSources.mockResolvedValue([{ id: 'screen-1' }])
+
+    const result = await checkScreenCapturePermission('unit-tcc-denied')
+
+    expect(result).toBe(false)
+    expect(mockGetScreenSources).not.toHaveBeenCalled()
+    expect(recordPermissionCheck).toHaveBeenLastCalledWith(
+      'screen',
+      'unit-tcc-denied',
+      'denied',
+      expect.any(Number)
+    )
+  })
+
+  test('TCC "restricted" short-circuits as denied', async () => {
+    mockGetMediaAccessStatus.mockReturnValue('restricted')
+
+    const result = await checkScreenCapturePermission('unit-tcc-restricted')
+
+    expect(result).toBe(false)
+    expect(mockGetScreenSources).not.toHaveBeenCalled()
+  })
+
+  test('TCC "not-determined" falls through to desktopCapturer probe', async () => {
+    jest.useFakeTimers()
+    mockGetMediaAccessStatus.mockReturnValue('not-determined')
+    mockGetScreenSources.mockResolvedValueOnce([minimalScreenSource])
+
+    const pending = checkScreenCapturePermission('unit-tcc-not-determined')
+    await jest.advanceTimersByTimeAsync(0)
+    const result = await pending
+
+    expect(result).toBe(true)
+    expect(mockGetScreenSources).toHaveBeenCalledTimes(1)
+    jest.useRealTimers()
+  })
+
+  test('TCC "unknown" falls through to desktopCapturer probe', async () => {
+    jest.useFakeTimers()
+    mockGetMediaAccessStatus.mockReturnValue('unknown')
+    mockGetScreenSources.mockResolvedValueOnce([minimalScreenSource])
+
+    const pending = checkScreenCapturePermission('unit-tcc-unknown')
+    await jest.advanceTimersByTimeAsync(0)
+    const result = await pending
+
+    expect(result).toBe(true)
+    jest.useRealTimers()
+  })
+
+  test('getMacScreenAccessStatus returns null on non-darwin', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    expect(getMacScreenAccessStatus()).toBeNull()
+  })
+
+  test('getMacScreenAccessStatus surfaces the TCC value on darwin', () => {
+    mockGetMediaAccessStatus.mockReturnValue('granted')
+    expect(getMacScreenAccessStatus()).toBe('granted')
   })
 })

@@ -50,7 +50,8 @@ if (process.platform === 'linux') {
 }
 const {
   checkScreenCapturePermission: moduleCheckPermission,
-  initScreenCapturePermissionHandling
+  initScreenCapturePermissionHandling,
+  getMacScreenAccessStatus
 } = require('./src-main/captureScreenshots')
 const { initWindowsPermissionHandling, checkPermissions: checkWindowsPermission } = require('./src-main/captureWindows')
 const { checkMicrophonePermission } = require('./src-main/captureAudio')
@@ -1873,6 +1874,12 @@ function buildContextMenu() {
 let hasShownInactiveBanner = false;
 
 function checkAndAdjustRecording(source = 'unknown') {
+    // Self-heal stale screen-permission state from macOS TCC before we read it.
+    // This catches the case where a previous transient desktopCapturer flake
+    // flipped the cached state to "denied" even though access is actually granted.
+    reconcileScreenPermissionFromTCC(source);
+    maybeScheduleHeartbeatPermissionSample(source);
+
     const isCurrentlyRecording = isCapturing();
 
     // Determine if we should be recording based on current conditions
@@ -2555,28 +2562,168 @@ function stopRecording() {
   }
 }
 
+// Sticky-state machinery for the screen-capture permission cache.
+//
+// macOS's desktopCapturer probe can transiently return empty/timeouts for
+// reasons unrelated to permission (ScreenCaptureKit cold-start, post-wake,
+// secure-desktop races). Treating a single negative probe as "permission lost"
+// caused random pauses with a misleading "no permission" tray tooltip.
+//
+// We now treat the cached state as sticky toward "granted":
+//   * A positive result always promotes false → true immediately.
+//   * Demoting true → false requires either (a) macOS TCC saying denied/restricted,
+//     or (b) several consecutive non-macOS denied probes.
+let consecutiveDeniedScreenProbes = 0;
+const SCREEN_DENY_CONFIRMATION_THRESHOLD = 3;
+const HEARTBEAT_PERMISSION_SAMPLE_RATE = 0.1;
+let heartbeatPermissionSampleInFlight = false;
+
+function broadcastScreenPermissionChange(hasPermission, source) {
+  if (!mainWindow || mainWindow.isDestroyed?.()) return;
+  try {
+    mainWindow.webContents.send('screenCapturePermission', {
+      hasPermission: !!hasPermission,
+      source: source || 'reconcile'
+    });
+  } catch (_) {}
+}
+
+// Reconcile the cached screen-permission state from the macOS TCC database.
+// This is synchronous (TCC read), cheap, and authoritative — call it before any
+// code reads stateManager.hasScreenCapturePermission() to self-heal stale flips
+// caused by transient desktopCapturer flakes.
+// Returns true if state was changed, false otherwise.
+function reconcileScreenPermissionFromTCC(source = 'reconcile') {
+  if (process.platform !== 'darwin') return false;
+  if (!stateManager) return false;
+  const tccStatus = getMacScreenAccessStatus();
+  if (tccStatus !== 'granted' && tccStatus !== 'denied' && tccStatus !== 'restricted') {
+    return false;
+  }
+  const tccGranted = tccStatus === 'granted';
+  const cachedGranted = stateManager.hasScreenCapturePermission();
+  if (tccGranted === cachedGranted) return false;
+
+  log.info('[screen-permission] TCC reconciliation overriding cached state', {
+    source,
+    tccStatus,
+    cachedGranted
+  });
+  try { recordSignal('screen_permission_tcc_reconcile', { source, tccStatus, cachedGranted: cachedGranted ? '1' : '0' }); } catch (_) {}
+
+  stateManager.updateScreenCapturePermission(tccGranted);
+  consecutiveDeniedScreenProbes = tccGranted ? 0 : SCREEN_DENY_CONFIRMATION_THRESHOLD;
+  broadcastScreenPermissionChange(tccGranted, `tcc-${source}`);
+  return true;
+}
+
+// When cached permission is still denied after TCC reconcile, occasionally run a
+// full desktopCapturer probe on the state-validation heartbeat (~1 in 10 ticks).
+// Skips when macOS TCC definitively says denied/restricted (probe cannot help).
+function maybeScheduleHeartbeatPermissionSample(source) {
+  if (source !== 'state-validation') return;
+  if (stateManager?.hasScreenCapturePermission()) return;
+  if (heartbeatPermissionSampleInFlight) return;
+
+  if (process.platform === 'darwin') {
+    const tccStatus = getMacScreenAccessStatus();
+    if (tccStatus === 'denied' || tccStatus === 'restricted') return;
+  }
+
+  if (Math.random() >= HEARTBEAT_PERMISSION_SAMPLE_RATE) return;
+
+  heartbeatPermissionSampleInFlight = true;
+  try { recordSignal('screen_permission_heartbeat_sample', { scheduled: '1' }); } catch (_) {}
+
+  checkScreenCapturePermission('heartbeat-sample')
+    .catch((error) => {
+      log.warn('[screen-permission] Heartbeat sample probe failed:', error?.message || error);
+    })
+    .finally(() => {
+      heartbeatPermissionSampleInFlight = false;
+      try { checkAndAdjustRecording('heartbeat-sample'); } catch (_) {}
+    });
+}
+
 // Function to check screen capture permission
 async function checkScreenCapturePermission(source = 'runtime', probeOptions = {}) {
-  // Get current permission status from OS-level APIs
+  // Always reconcile from TCC first on macOS — this is the authoritative state.
+  reconcileScreenPermissionFromTCC(`pre-${source}`);
+
   const hasPermission = await moduleCheckPermission(source, probeOptions);
-  
+
   // If permission check was skipped (returned undefined), use cached state
   if (hasPermission === undefined) {
     return stateManager?.hasScreenCapturePermission() ?? false;
   }
-  
-  // Update the state manager with current values
+
   if (stateManager) {
-    stateManager.updateScreenCapturePermission(hasPermission);
+    const previouslyGranted = stateManager.hasScreenCapturePermission();
+
+    if (hasPermission === true) {
+      // Positive result: always promote, reset deny counter.
+      consecutiveDeniedScreenProbes = 0;
+      if (!previouslyGranted) {
+        stateManager.updateScreenCapturePermission(true);
+        broadcastScreenPermissionChange(true, source);
+      }
+    } else {
+      // hasPermission === false
+      consecutiveDeniedScreenProbes += 1;
+
+      if (process.platform === 'darwin') {
+        // On macOS the probe (post-TCC change) only returns false when:
+        // 1) TCC explicitly says denied/restricted (definitive), or
+        // 2) TCC is not-determined and the active probe came back empty (rare).
+        const tccStatus = getMacScreenAccessStatus();
+        if (tccStatus === 'denied' || tccStatus === 'restricted') {
+          if (previouslyGranted) {
+            stateManager.updateScreenCapturePermission(false);
+            broadcastScreenPermissionChange(false, source);
+          }
+        } else if (tccStatus === 'granted') {
+          // Probe disagrees with TCC — trust TCC, ignore the false negative.
+          log.warn('[screen-permission] Probe returned denied but TCC reports granted; trusting TCC', {
+            source,
+            consecutiveDeniedScreenProbes
+          });
+          consecutiveDeniedScreenProbes = 0;
+          if (!previouslyGranted) {
+            stateManager.updateScreenCapturePermission(true);
+            broadcastScreenPermissionChange(true, source);
+          }
+        } else if (!previouslyGranted) {
+          // Already denied and probe agrees — no change.
+        } else if (consecutiveDeniedScreenProbes >= SCREEN_DENY_CONFIRMATION_THRESHOLD) {
+          stateManager.updateScreenCapturePermission(false);
+          broadcastScreenPermissionChange(false, source);
+        } else {
+          log.warn('[screen-permission] Ignoring transient probe denial (waiting for confirmation)', {
+            source,
+            consecutiveDeniedScreenProbes
+          });
+        }
+      } else if (!previouslyGranted) {
+        // Non-macOS: agrees with cached state.
+      } else if (consecutiveDeniedScreenProbes >= SCREEN_DENY_CONFIRMATION_THRESHOLD) {
+        stateManager.updateScreenCapturePermission(false);
+        broadcastScreenPermissionChange(false, source);
+      } else {
+        log.warn('[screen-permission] Ignoring transient probe denial (waiting for confirmation)', {
+          source,
+          consecutiveDeniedScreenProbes
+        });
+      }
+    }
   } else {
     log.warn('State manager not initialized, cannot update screen capture permission');
   }
-  
+
   // Update application menu when permission changes
   createApplicationMenu();
   sendOverlayState();
-  
-  return hasPermission;
+
+  return stateManager?.hasScreenCapturePermission() ?? hasPermission;
 }
 
 // Also update the explicit permission check handler
