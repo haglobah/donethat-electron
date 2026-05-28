@@ -54,6 +54,10 @@ const PORTAL_AUTH_HANDSHAKE_RETRY_DELAYS_MS = [350, 900, 2200, 5000];
 let portalHandshakeRetryTimers = [];
 let portalSpinnerTimer = null; // delay before showing dashboard spinner
 const PORTAL_RELOAD_COOLDOWN_MS = 10000; // avoid reloads shortly after token delivery
+// When the portal is kept warm in the background, refresh it on re-show only if
+// it has been idle longer than this, balancing instant returns vs. stale data.
+const PORTAL_STALE_REFRESH_MS = 10 * 60 * 1000; // 10 minutes
+let lastPortalLoadTs = 0; // updated whenever the portal finishes loading
 const PORTAL_DEFAULT_URL = 'https://app.donethat.ai';
 let lastWebviewActivityTs = 0;
 let lastWebviewActivityKey = '';
@@ -403,6 +407,7 @@ function attachPortalViewListeners(view) {
     view.addEventListener('did-finish-load', () => {
       if (!isActivePortalView()) return;
       portalLoadRetries = 0;
+      lastPortalLoadTs = Date.now();
       clearPortalLoadWatchdog();
       hidePortalSpinner();
       if (shouldSendGenericPortalToken(pendingPortalBridge)) {
@@ -520,6 +525,7 @@ function destroyPortalView(reason) {
   portalView = null;
   portalDomReady = false;
   portalLoadRetries = 0;
+  lastPortalLoadTs = 0;
   resetPortalAuthSyncState();
   clearPortalLoadWatchdog();
   clearPortalHandshakeRetries();
@@ -530,13 +536,26 @@ function destroyPortalView(reason) {
   updatePortalPlaceholderVisibility();
 }
 
+// Keep the embedded portal webview "warm": only tear it down when the user is
+// logged out. Previously it was destroyed whenever the window was hidden or the
+// user left the dashboard, forcing a full app.donethat.ai reload on every
+// return — the main cause of the slow "loading of events".
 function ensurePortalActive(reason) {
-  if (!(getCurrentView() === 'dashboard' && isAppWindowVisible === true)) {
-    destroyPortalView(reason || 'portal-inactive');
+  if (!isAuthenticated()) {
+    destroyPortalView(reason || 'portal-unauthenticated');
     return null;
   }
 
-  return portalView || createPortalView(reason || 'ensure-portal-active');
+  if (portalView) return portalView;
+
+  // Only create on first paint of the dashboard while the window is visible, so
+  // the <webview> guest attaches reliably (creating it inside a display:none
+  // container can silently fail to load).
+  if (getCurrentView() === 'dashboard' && isAppWindowVisible === true) {
+    return createPortalView(reason || 'ensure-portal-active');
+  }
+
+  return null;
 }
 
 function recoverPortalView(reason, options = {}) {
@@ -711,8 +730,10 @@ function navigateToView(viewName) {
   if (viewName === 'dashboard') {
     ensurePortalActive('navigate-to-dashboard');
     schedulePortalKickAfterDashboardNavigation();
-  } else {
-    destroyPortalView('navigate-away-from-dashboard');
+  } else if (!isAuthenticated()) {
+    // Auth screens (signin/signup/reset/mfa): drop the portal so no logged-in
+    // session lingers. While authenticated we keep it warm in the background.
+    destroyPortalView('navigate-to-auth-screen');
   }
 
   updateSettingsToggleLabelGlobal();
@@ -1345,13 +1366,20 @@ ipcRenderer.on('navigate', (event, viewName) => {
 
 ipcRenderer.on('app:window-hidden', () => {
   isAppWindowVisible = false;
-  destroyPortalView('app-window-hidden');
+  // Keep the portal warm while hidden so reopening the window shows the
+  // dashboard instantly instead of reloading app.donethat.ai.
 });
 
 ipcRenderer.on('app:window-shown', () => {
   isAppWindowVisible = true;
   ensurePortalActive('app-window-shown');
   if (getCurrentView() === 'dashboard') {
+    // The webview survived the hide, so data may be stale after a long pause —
+    // do a background reload only if it has been warm-but-idle for a while.
+    if (portalView && portalDomReady && lastPortalLoadTs &&
+        (Date.now() - lastPortalLoadTs) > PORTAL_STALE_REFRESH_MS) {
+      safePortalReload('stale-refresh-on-show');
+    }
     schedulePortalKickAfterDashboardNavigation();
   }
   scheduleBlurTopbarChromeFocus();
