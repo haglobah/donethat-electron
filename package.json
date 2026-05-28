@@ -6,6 +6,7 @@
   "scripts": {
     "predev": "node scripts/build-os-helpers.js",
     "generate:icons": "node scripts/generate-icons.js",
+    "install:gnome-extension": "node scripts/install-gnome-extension.js",
     "build:css": "postcss src/styles.css -o ./build/output.css --verbose",
     "build:webpack": "webpack --config webpack.config.js",
     "prebuild:prepare": "node scripts/build-os-helpers.js",

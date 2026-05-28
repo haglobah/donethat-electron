@@ -1,0 +1,7 @@
+{
+  "uuid": "donethat-window-tracker@donethat.ai",
+  "name": "DoneThat Window Tracker",
+  "description": "Exposes the currently focused window (app name, title, geometry) over D-Bus so the DoneThat desktop app can track active-application usage on Wayland, where this information is otherwise unavailable to ordinary applications. Read-only; no window content is exposed.",
+  "shell-version": ["45", "46", "47", "48"],
+  "url": "https://github.com/donethatai/donethat-electron"
+}

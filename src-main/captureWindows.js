@@ -2,6 +2,7 @@ const log = require('electron-log')
 const { activeWindow, openWindows } = require('get-windows')
 const { systemPreferences, ipcMain, shell, app, screen } = require('electron')
 const { recordPermissionCheck, recordActiveWindowProbeTimeout } = require('./telemetry')
+const waylandWindows = require('./linuxWaylandWindows')
 
 // Helper to normalize app name
 function normalizeAppName(appName) {
@@ -197,8 +198,13 @@ async function safeActiveWindow(timeoutMs = 300) {
   activeWindowProbePromise = (async () => {
     let timeoutId = null
     try {
+      // On GNOME Wayland, get-windows cannot read the focused window; query the
+      // DoneThat GNOME Shell extension over D-Bus instead.
+      const activeWindowProbe = waylandWindows.shouldUse()
+        ? waylandWindows.getActiveWindow(timeoutMs)
+        : activeWindow()
       const result = await Promise.race([
-        activeWindow(),
+        activeWindowProbe,
         new Promise((resolve) => {
           timeoutId = setTimeout(() => resolve(ACTIVE_WINDOW_TIMEOUT), timeoutMs)
         })
@@ -860,7 +866,9 @@ async function getAllVisibleWindows() {
     // Enumerate windows on-demand
     let windows = []
     try {
-      windows = await openWindows()
+      windows = waylandWindows.shouldUse()
+        ? await waylandWindows.getWindows()
+        : await openWindows()
     } catch (error) {
       log.warn('Error enumerating windows:', error)
       
