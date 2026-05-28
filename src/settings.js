@@ -55,6 +55,8 @@ const MANAGED_LIST_MODE_MINIMUM = 'minimum';
 const MANAGED_INPUT_ENABLED = 'enabled';
 const MANAGED_INPUT_OPTIONAL = 'optional';
 const MANAGED_INPUT_DISABLED = 'disabled';
+const DEFAULT_CAPTURE_INTERVAL_MINUTES = 5;
+const ALLOWED_CAPTURE_INTERVAL_MINUTES = [1, 2, 3, 5, 6];
 const llmManagedLocks = {
   gemini: false,
   openAICompatible: false
@@ -99,6 +101,12 @@ function resolveInputDataValue(managedState, storedValue, fallbackValue) {
   if (managedState === MANAGED_INPUT_ENABLED) return true;
   if (managedState === MANAGED_INPUT_DISABLED) return false;
   return storedValue != null ? !!storedValue : fallbackValue;
+}
+
+function normalizeCaptureIntervalMinutes(value) {
+  return ALLOWED_CAPTURE_INTERVAL_MINUTES.includes(value)
+    ? value
+    : DEFAULT_CAPTURE_INTERVAL_MINUTES;
 }
 
 function normalizeManagedListMode(value, fallback = MANAGED_LIST_MODE_FIXED) {
@@ -823,6 +831,8 @@ async function updateSettingsUI(settings) {
   applyInputDataManagedLockUI();
   try { recomputeSystemAudioDependency(); } catch (_) {}
 
+  const captureIntervalMinutes = normalizeCaptureIntervalMinutes(settings?.capture?.intervalMinutes);
+  ipcRenderer.send('updateCaptureInterval', captureIntervalMinutes);
 
 
   // Handle workhours setting

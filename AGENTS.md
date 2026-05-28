@@ -4,6 +4,8 @@ This document explains the DoneThat Desktop app to autonomous coding agents. It 
 
 **Never run git commands** unless the user explicitly asks you to in that message.
 
+**Always propose a brief plan and get the user's approval before making code changes.** Do not start implementation or edit files until the user explicitly agrees to the plan.
+
 ## Tech Stack
 
 - Electron (main + renderer)

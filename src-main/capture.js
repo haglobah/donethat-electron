@@ -48,6 +48,22 @@ const PENDING_PERMISSION_POST_RESTART_FOCUS_KEY = 'pendingPermissionPostRestartF
 
 const WINDOW_CACHE_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 let lastWindowCacheCleanupAt = 0;
+const ALLOWED_CAPTURE_INTERVAL_MINUTES = new Set([1, 2, 3, 5, 6]);
+
+function scheduleRepeatingCaptureInterval() {
+  if (screenshotInterval) {
+    clearInterval(screenshotInterval);
+  }
+
+  screenshotInterval = setInterval(() => {
+    _runCaptureCycle().catch(error => {
+      log.error('startCaptureInterval: Error during scheduled _runCaptureCycle execution:', error);
+       // handleCaptureError should be called within _runCaptureCycle itself
+    });
+  }, captureIntervalMinutes * 60 * 1000);
+
+  return screenshotInterval;
+}
 
 function markPermissionFocusOnNextLaunch(reason = 'system-audio-permission') {
   try {
@@ -195,6 +211,9 @@ function setCaptureInterval(minutes) {
   if (!minutes || typeof minutes !== 'number' || minutes <= 0) {
     throw new Error('Capture interval must be a positive number of minutes');
   }
+  if (captureIntervalMinutes === minutes) {
+    return captureIntervalMinutes;
+  }
   captureIntervalMinutes = minutes;
   
   // Update audio buffer duration if mainWindow exists
@@ -208,6 +227,10 @@ function setCaptureInterval(minutes) {
       log.error('Error updating audio recorder buffer duration:', error);
       // Don't throw here as this is a post-initialization update
     });
+  }
+
+  if (screenshotInterval) {
+    scheduleRepeatingCaptureInterval();
   }
   
   return captureIntervalMinutes;
@@ -473,6 +496,14 @@ function initCapture(mainWindow, onAuthError, getIdToken, getClientTelemetryEnab
   // Handler for updating input data settings
   ipcMain.on('updateInputDataSettings', (event, settings) => {
     updateInputDataSettings(settings);
+  });
+
+  ipcMain.on('updateCaptureInterval', (_event, minutes) => {
+    if (!ALLOWED_CAPTURE_INTERVAL_MINUTES.has(minutes)) {
+      log.warn('Ignoring invalid capture interval:', minutes);
+      return;
+    }
+    setCaptureInterval(minutes);
   });
 
   ipcMain.on('apply-managed-app-settings', (_event, payload) => {
@@ -1366,15 +1397,7 @@ function startCaptureInterval() {
     });
   }, 60000);
 
-  // Set up interval for subsequent cycles
-  screenshotInterval = setInterval(() => {
-    _runCaptureCycle().catch(error => {
-      log.error('startCaptureInterval: Error during scheduled _runCaptureCycle execution:', error);
-       // handleCaptureError should be called within _runCaptureCycle itself
-    });
-  }, captureIntervalMinutes * 60 * 1000);
-  
-  return screenshotInterval;
+  return scheduleRepeatingCaptureInterval();
 }
 
 /**

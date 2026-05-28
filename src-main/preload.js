@@ -30,6 +30,7 @@ const validSendChannels = [
   'requestSystemAudioPermission',
   'checkScreenCapturePermission',
   'updateInputDataSettings',
+  'updateCaptureInterval',
 
   'updateSaveCaptureData',
   'updateSaveCaptureDataPath',
