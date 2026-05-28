@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Improve Electron child-process exit reporting in Sentry diagnostics.
+- Fix system audio capture request handling when Electron cancels the media request.
+- Fix settings loading crash when auth state changes during managed settings sync.
+
 ## 2.2.5
 
 - Fix macOS pausing with a false "no screen capture permission" message.

@@ -590,7 +590,7 @@ async function loadUserSettings() {
 
   try {
     const result = await getUserSettingsFunction();
-    updateSettingsUI(result.data);
+    await updateSettingsUI(result.data);
     return result;
 
   } catch (error) {
@@ -738,20 +738,25 @@ async function saveUserSettings(type, value) {
 }
 
 async function updateSettingsUI(settings) {
-  managedAppSettings = normalizeAppSettings(settings?.appSettings || null);
-  applyManualPausePolicy(managedAppSettings.recording.manualPauseEnabled);
+  const nextManagedAppSettings = normalizeAppSettings(settings?.appSettings || null);
+  managedAppSettings = nextManagedAppSettings;
+  applyManualPausePolicy(nextManagedAppSettings.recording.manualPauseEnabled);
   pushManagedSettingsToMain();
 
   if (typeof applyAppExclusionsManagedConfig === 'function') {
-    await applyAppExclusionsManagedConfig(managedAppSettings.capture.appExclusions);
+    await applyAppExclusionsManagedConfig(nextManagedAppSettings.capture.appExclusions);
+    if (managedAppSettings !== nextManagedAppSettings) return;
   }
   if (typeof applyContextCaptureManagedConfig === 'function') {
-    await applyContextCaptureManagedConfig(managedAppSettings.capture.contextCapture);
+    await applyContextCaptureManagedConfig(nextManagedAppSettings.capture.contextCapture);
+    if (managedAppSettings !== nextManagedAppSettings) return;
   }
   if (typeof applySaveCaptureManagedConfig === 'function') {
-    await applySaveCaptureManagedConfig(managedAppSettings.capture.saveCaptureData);
+    await applySaveCaptureManagedConfig(nextManagedAppSettings.capture.saveCaptureData);
+    if (managedAppSettings !== nextManagedAppSettings) return;
   }
-  await applyManagedLocalProcessingSettings(managedAppSettings.localProcessing);
+  await applyManagedLocalProcessingSettings(nextManagedAppSettings.localProcessing);
+  if (managedAppSettings !== nextManagedAppSettings) return;
 
   // Handle screenshots setting
   if (settings && typeof settings.storeScreenshots === 'boolean') {
@@ -766,7 +771,7 @@ async function updateSettingsUI(settings) {
   // Handle input data settings
   const loadedInputData = settings?.inputData || {};
   const prevInputData = { ...inputData };
-  const managedInputData = managedAppSettings.capture.inputData;
+  const managedInputData = nextManagedAppSettings.capture.inputData;
   inputDataManagedLocks = {
     windows: isManagedInputStateForced(managedInputData.windows),
     audio: isManagedInputStateForced(managedInputData.audio),

@@ -70,13 +70,93 @@ const { getScreenSources } = require('./src-main/screenCaptureSemaphore')
 const { recordLog, recordSignal } = require('./src-main/telemetry')
 const linuxAutostart = require('./src-main/linuxAutostart')
 
+const SENTRY_CHILD_PROCESS_EVENT_REASONS = new Set(['abnormal-exit', 'launch-failed', 'integrity-failure'])
+const TRANSIENT_SENTRY_NETWORK_ERRORS = [
+  'net::ERR_NETWORK_CHANGED',
+  'net::ERR_CONNECTION_RESET',
+  'ERR_NETWORK_CHANGED',
+  'ERR_CONNECTION_RESET',
+  'ECONNRESET'
+]
+
+function isTransientSentryNetworkError(event, hint) {
+  const exceptionValues = event?.exception?.values || []
+  const text = [
+    event?.message,
+    hint?.originalException?.message,
+    hint?.originalException?.code,
+    ...exceptionValues.flatMap(value => [
+      value?.type,
+      value?.value,
+      value?.stacktrace?.frames?.map(frame => frame?.function || '').join(' ')
+    ])
+  ].filter(Boolean).join(' ')
+
+  return TRANSIENT_SENTRY_NETWORK_ERRORS.some(errorText => text.includes(errorText))
+}
+
+function installChildProcessGoneReporting() {
+  app.on('child-process-gone', (_event, details = {}) => {
+    const type = String(details.type || 'Unknown')
+    const reason = String(details.reason || 'unknown')
+    const name = details.name ? String(details.name) : ''
+    const serviceName = details.serviceName ? String(details.serviceName) : ''
+    const exitCode = Number.isFinite(details.exitCode) ? details.exitCode : null
+    const fields = {
+      type,
+      reason,
+      exitCode: exitCode === null ? 'unknown' : String(exitCode),
+      name,
+      serviceName
+    }
+
+    log.warn('Electron child process exited', fields)
+    recordSignal('electron-child-process-gone', fields)
+
+    if (!SENTRY_CHILD_PROCESS_EVENT_REASONS.has(reason)) return
+
+    const label = name || serviceName || type
+    Sentry.captureMessage(`Electron child process exited: ${label} (${reason})`, {
+      level: reason === 'abnormal-exit' ? 'warning' : 'fatal',
+      tags: {
+        'event.process': type,
+        'exit.reason': reason,
+        'electron.child_process.name': name || 'unknown',
+        'electron.child_process.service_name': serviceName || 'unknown'
+      },
+      contexts: {
+        electron_child_process: {
+          type,
+          reason,
+          exitCode,
+          name: name || undefined,
+          serviceName: serviceName || undefined
+        }
+      }
+    })
+  })
+}
+
 Sentry.init({
   dsn: 'https://c133ed0231c60f905e847ccf2ce2dfc9@o4511426462285824.ingest.de.sentry.io/4511426468642896',
   release: `donethat@${app.getVersion()}`,
   attachScreenshot: false,
   sendDefaultPii: false,
-  getSessions: () => [session.defaultSession, session.fromPartition('persist:donethat')]
+  integrations: (defaultIntegrations) => defaultIntegrations.map((integration) => (
+    integration.name === 'ChildProcess'
+      ? Sentry.childProcessIntegration({ events: false })
+      : integration
+  )),
+  getSessions: () => [session.defaultSession, session.fromPartition('persist:donethat')],
+  beforeSend(event, hint) {
+    if (isTransientSentryNetworkError(event, hint)) {
+      return null
+    }
+
+    return event
+  }
 })
+installChildProcessGoneReporting()
 
 // Conditionally load liquid glass with fallback
 let liquidGlass = null;
@@ -962,6 +1042,17 @@ function setupAutoStart() {
 
 app.whenReady().then(async () => {
   session.fromPartition('persist:donethat').setDisplayMediaRequestHandler(async (request, callback) => {
+    let responded = false
+    const respond = (payload) => {
+      if (responded) return
+      responded = true
+      try {
+        callback(payload)
+      } catch (error) {
+        log.warn('Failed to respond to display media request:', error)
+      }
+    }
+
     try {
       const sources = await getScreenSources(
         { types: ['screen'] },
@@ -973,22 +1064,22 @@ app.whenReady().then(async () => {
       )
       if (!sources) {
         log.warn('Timed out waiting for screen capture lock in display media request')
-        callback({})
+        respond({})
         return
       }
 
       if (!sources || sources.length === 0) {
         log.warn('No screen sources available for display media request')
-        callback({})
+        respond({})
         return
       }
-      callback({
+      respond({
         video: sources[0],
         audio: 'loopback'
       })
     } catch (error) {
       log.error('Failed to resolve display media request handler source:', error)
-      callback({})
+      respond({})
     }
   })
 
