@@ -172,17 +172,17 @@
             gdk-pixbuf
             alsa-lib
             # X11 / window-info stack used by get-windows on X11 sessions.
-            xorg.libX11
-            xorg.libXext
-            xorg.libXrandr
-            xorg.libXcomposite
-            xorg.libXdamage
-            xorg.libXfixes
-            xorg.libXcursor
-            xorg.libXi
-            xorg.libXtst
-            xorg.libxcb
-            xorg.libXScrnSaver
+            libx11
+            libxext
+            libxrandr
+            libxcomposite
+            libxdamage
+            libxfixes
+            libxcursor
+            libxi
+            libxtst
+            libxcb
+            libxscrnsaver
           ];
 
           desktopItem = pkgs.makeDesktopItem {
