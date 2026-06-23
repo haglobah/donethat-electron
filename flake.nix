@@ -19,12 +19,17 @@
       # Home Manager module. Usage in a home configuration:
       #
       #   imports = [ inputs.donethat.homeManagerModules.donethat ];
-      #   programs.donethat.enable = true;
+      #   programs.donethat = {
+      #     enable = true;
+      #     gnomeWindowTracker.enable = true;  # GNOME Wayland active-window tracking
+      #     screenshotHelper.enable = true;    # Wayland screen capture helper
+      #   };
       #
-      # That installs the app and, on GNOME Wayland, installs + enables the
-      # bundled "DoneThat Window Tracker" Shell extension so active-window
-      # tracking works. Log out and back in once for the extension to load
-      # (Wayland cannot hot-reload GNOME Shell).
+      # That installs the app and, opt-in, the bundled "DoneThat Window Tracker"
+      # Shell extension (active-window tracking on GNOME Wayland) and the
+      # donethat-screenshot helper (portal/PipeWire screen capture on Wayland).
+      # Log out and back in once for the extension to load (Wayland cannot
+      # hot-reload GNOME Shell).
       flake.homeManagerModules =
         let
           uuid = "donethat-window-tracker@donethat.ai";
@@ -78,6 +83,29 @@
                     '';
                   };
                 };
+
+                screenshotHelper = {
+                  enable = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    example = true;
+                    description = ''
+                      Install `donethat-screenshot`, a portal/PipeWire-based
+                      screen capture helper for Wayland. gnome-screenshot and most
+                      CLI capture tools are silent no-ops on GNOME Wayland; point
+                      DoneThat's screenshot-tool setting at
+                      `donethat-screenshot -f "%s"`. The first run pops a
+                      screen-picker; later runs reuse the cached restore token.
+                    '';
+                  };
+
+                  package = lib.mkOption {
+                    type = lib.types.package;
+                    default = inputs.self.packages.${pkgs.stdenv.hostPlatform.system}.donethat-screenshot;
+                    defaultText = lib.literalExpression "donethat.packages.\${system}.donethat-screenshot";
+                    description = "The donethat-screenshot helper package to install.";
+                  };
+                };
               };
 
               config = lib.mkIf cfg.enable (
@@ -95,6 +123,10 @@
 
                   (lib.mkIf (cfg.gnomeWindowTracker.enable && cfg.gnomeWindowTracker.autoEnable) {
                     dconf.settings."org/gnome/shell".enabled-extensions = [ uuid ];
+                  })
+
+                  (lib.mkIf cfg.screenshotHelper.enable {
+                    home.packages = [ cfg.screenshotHelper.package ];
                   })
                 ]
               );
@@ -255,10 +287,16 @@
               mainProgram = "donethat";
             };
           });
+
+          # Portal/PipeWire screen capture helper for Wayland, where
+          # gnome-screenshot and most CLI tools are silent no-ops. Wired into
+          # the Home Manager module via programs.donethat.screenshotHelper.
+          donethat-screenshot = import ./nix/donethat-screenshot.nix { inherit pkgs; };
         in
         {
           packages.default = donethat;
           packages.donethat = donethat;
+          packages.donethat-screenshot = donethat-screenshot;
 
           apps.default = {
             type = "app";
