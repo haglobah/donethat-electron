@@ -16,6 +16,95 @@
         # "aarch64-darwin"
       ];
 
+      # Home Manager module. Usage in a home configuration:
+      #
+      #   imports = [ inputs.donethat.homeManagerModules.donethat ];
+      #   programs.donethat.enable = true;
+      #
+      # That installs the app and, on GNOME Wayland, installs + enables the
+      # bundled "DoneThat Window Tracker" Shell extension so active-window
+      # tracking works. Log out and back in once for the extension to load
+      # (Wayland cannot hot-reload GNOME Shell).
+      flake.homeManagerModules =
+        let
+          uuid = "donethat-window-tracker@donethat.ai";
+
+          donethatModule =
+            {
+              config,
+              lib,
+              pkgs,
+              ...
+            }:
+            let
+              cfg = config.programs.donethat;
+            in
+            {
+              options.programs.donethat = {
+                enable = lib.mkEnableOption "DoneThat, the AI activity tracker";
+
+                package = lib.mkOption {
+                  type = lib.types.package;
+                  default = inputs.self.packages.${pkgs.stdenv.hostPlatform.system}.donethat;
+                  defaultText = lib.literalExpression "donethat.packages.\${system}.donethat";
+                  description = "The DoneThat package to install.";
+                };
+
+                gnomeWindowTracker = {
+                  enable = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    example = true;
+                    description = ''
+                      Install the bundled GNOME Shell extension into the user
+                      profile. Enable this on GNOME Wayland, where ordinary apps
+                      cannot read the focused window and active-window tracking
+                      depends on the extension. It is unnecessary (and inert) on
+                      X11 and non-GNOME desktops.
+                    '';
+                  };
+
+                  autoEnable = lib.mkOption {
+                    type = lib.types.bool;
+                    default = true;
+                    description = ''
+                      Enable the extension via dconf
+                      (org/gnome/shell enabled-extensions).
+
+                      Home Manager writes this key wholesale, so it overrides any
+                      extensions you enabled outside Home Manager. If you manage
+                      enabled-extensions yourself, set this to false and add
+                      "${uuid}" to your own list instead.
+                    '';
+                  };
+                };
+              };
+
+              config = lib.mkIf cfg.enable (
+                lib.mkMerge [
+                  { home.packages = [ cfg.package ]; }
+
+                  (lib.mkIf cfg.gnomeWindowTracker.enable {
+                    # Symlink into the directory GNOME Shell ALWAYS searches, so
+                    # this does not depend on the session having the Nix profile
+                    # in XDG_DATA_DIRS (which standalone Home Manager + GNOME does
+                    # not reliably provide for extensions).
+                    home.file.".local/share/gnome-shell/extensions/${uuid}".source =
+                      "${cfg.package}/share/gnome-shell/extensions/${uuid}";
+                  })
+
+                  (lib.mkIf (cfg.gnomeWindowTracker.enable && cfg.gnomeWindowTracker.autoEnable) {
+                    dconf.settings."org/gnome/shell".enabled-extensions = [ uuid ];
+                  })
+                ]
+              );
+            };
+        in
+        {
+          donethat = donethatModule;
+          default = donethatModule;
+        };
+
       perSystem =
         { system, lib, ... }:
         let
@@ -77,7 +166,7 @@
 
           donethat = pkgs.buildNpmPackage (finalAttrs: {
             pname = "donethat";
-            version = "2.2.5";
+            version = "2.2.6";
 
             src = ./.;
 
