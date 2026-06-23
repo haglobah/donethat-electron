@@ -46,3 +46,6 @@ bin/donethatmicmonitor.exe
 
 # Swift module cache
 .build/
+
+# Nix
+result*
