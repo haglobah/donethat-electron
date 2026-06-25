@@ -5,6 +5,10 @@
 - Harden desktop OAuth callbacks, embedded portal token handoff, and webview navigation.
 - Fix Windows updater cache permission failures by checking update metadata without downloading and offering a manual download.
 
+## 2.2.7
+
+- Sign Windows ARM64 releases by compiling on ARM runners and signing/package-publishing on x64 runners.
+
 ## 2.2.6
 
 - Remove experimental context capture settings and disable the focused-screenshot capture path.
