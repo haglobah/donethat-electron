@@ -16,8 +16,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=VOjVuAhCYBc">
-    <img src="https://i.ytimg.com/vi/VOjVuAhCYBc/maxresdefault.jpg" alt="DoneThat walkthrough" width="720" />
+  <a href="https://www.youtube.com/watch?v=p1gual1TV58">
+    <img src="https://i.ytimg.com/vi/p1gual1TV58/maxresdefault.jpg" alt="DoneThat walkthrough" width="720" />
   </a>
 </p>
 
