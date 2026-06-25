@@ -22,6 +22,7 @@ if (process.platform === 'linux') {
 
 const { app, ipcMain, Tray, Menu, BrowserWindow, nativeImage, screen, Notification, powerMonitor, globalShortcut, session } = require('electron')
 const path = require('path')
+const crypto = require('crypto')
 const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
 const Sentry = require('@sentry/electron/main')
@@ -444,7 +445,83 @@ let notificationIconPath = path.join(
 // State module and variables
 let stateManager = null
 let tray = null
+let trayMenu = null // retain popped-up tray menu so GC can't reclaim it while open
 let mainWindow = null
+
+// Menu refresh machinery: keeps the application menu bar in sync with stateManager
+// without ever calling setApplicationMenu() while a native menu is open (which tears
+// down the open menu's backing model and crashes in views::MenuModelAdapter on Windows).
+//
+// The open-state flags below are ADVISORY: they let us avoid the crash window, but
+// correctness must not depend on them ever clearing. A leaked flag (a menu dismissed
+// without emitting its close event) is bounded by the watchdog to brief staleness
+// rather than a permanent menu-bar freeze.
+let trayMenuOpen = false
+let menuBarOpen = false
+let menuRefreshPending = false
+let menuRefreshTimer = null
+let menuRefreshWatchdog = null
+
+// Longer than any plausible *continuous* menu interaction, so the watchdog never
+// force-rebuilds a menu the user is actively using (which would re-trigger the crash).
+// It only fires when an open flag has leaked.
+const MENU_REFRESH_MAX_DEFER_MS = 25000
+
+function isAnyMenuOpen() {
+  return trayMenuOpen || menuBarOpen
+}
+
+function applyMenuRefresh() {
+  if (isAnyMenuOpen()) {
+    // A menu is on screen; defer the rebuild until it closes (advisory).
+    menuRefreshPending = true
+    if (!menuRefreshWatchdog) {
+      menuRefreshWatchdog = setTimeout(() => {
+        menuRefreshWatchdog = null
+        // Any still-set flag has almost certainly leaked; force the rebuild.
+        trayMenuOpen = false
+        menuBarOpen = false
+        if (menuRefreshPending) applyMenuRefresh()
+      }, MENU_REFRESH_MAX_DEFER_MS)
+    }
+    return
+  }
+  if (menuRefreshWatchdog) {
+    clearTimeout(menuRefreshWatchdog)
+    menuRefreshWatchdog = null
+  }
+  menuRefreshPending = false
+  rebuildApplicationMenu()
+}
+
+// Coalesce bursts (auth + recording + power events often fire together).
+function refreshMenus() {
+  if (menuRefreshTimer) return
+  menuRefreshTimer = setTimeout(() => {
+    menuRefreshTimer = null
+    applyMenuRefresh()
+  }, 50)
+}
+
+// Apply any refresh that was deferred while a menu was open.
+function onMenuClosed() {
+  if (menuRefreshPending) setImmediate(applyMenuRefresh)
+}
+
+// Build and pop up a fresh tray menu. Only one can be open at a time, so a boolean
+// flag (not a counter) can't accumulate; a late close from a superseded menu is
+// ignored because we only clear the flag for the menu that is still current.
+function openTrayMenu() {
+  const menu = buildContextMenu()
+  trayMenu = menu // retain ref so GC can't reclaim it while open
+  trayMenuOpen = true
+  menu.once('menu-will-close', () => {
+    if (trayMenu !== menu) return // superseded by a newer tray menu
+    trayMenuOpen = false
+    onMenuClosed()
+  })
+  tray.popUpContextMenu(menu)
+}
 let overlayWindow = null
 let screenshotInterval = null
 let startupMainWindowReady = false
@@ -463,6 +540,12 @@ let overlayResizeAnchorBottom = null
 const OVERLAY_COLLAPSED_HEIGHT = 52
 // Track update availability for Windows/Linux update button
 let updateAvailable = false
+let windowsUpdaterCacheWriteCheck = null
+// True when running on Linux without process.env.APPIMAGE (e.g. an extracted
+// AppImage or an env-stripping launcher). In that state electron-updater's
+// AppImageUpdater can't perform an in-place update and throws "APPIMAGE env is
+// not defined", so we disable autoDownload and offer a manual download instead.
+let linuxAppImageUnavailable = false
 const DESKTOP_NOTIFICATION_DEBOUNCE_MS = 8 * 60 * 60 * 1000
 const desktopNotificationHistory = new Map()
 /** Keep Notification objects referenced until close; otherwise GC removes them and click never fires (Electron/macOS). */
@@ -479,6 +562,53 @@ let returnFocusToMainOnOverlayClose = false;
 
 // Localhost server for OAuth callback
 let authServer = null;
+const AUTH_CALLBACK_TTL_MS = 10 * 60 * 1000;
+const pendingAuthCallbacks = new Map();
+
+function createAuthCallback(flow, requestCalendar = false) {
+  const desktopState = crypto.randomBytes(32).toString('base64url');
+  pendingAuthCallbacks.set(desktopState, {
+    flow,
+    requestCalendar: !!requestCalendar,
+    expiresAt: Date.now() + AUTH_CALLBACK_TTL_MS
+  });
+  return desktopState;
+}
+
+function buildAuthRedirectUrl(port, desktopState) {
+  const url = new URL(`http://localhost:${port}/auth`);
+  url.searchParams.set('desktopState', desktopState);
+  return url.toString();
+}
+
+function consumeAuthCallback(desktopState) {
+  if (!desktopState || typeof desktopState !== 'string') return null;
+  const pending = pendingAuthCallbacks.get(desktopState);
+  pendingAuthCallbacks.delete(desktopState);
+  if (!pending) return null;
+  if (pending.expiresAt < Date.now()) return null;
+  return pending;
+}
+
+function isExpectedAuthCallback(callbackState, token, googleTokens) {
+  const isLinked = googleTokens?.action === 'linked' && googleTokens?.success === true;
+  const hasGoogleTokens = !!googleTokens?.idToken;
+  const hasToken = !!token;
+
+  if (callbackState.flow === 'reauth') {
+    return hasGoogleTokens;
+  }
+
+  if (callbackState.flow === 'portal-signin') {
+    return callbackState.requestCalendar ? isLinked || hasToken : hasToken;
+  }
+
+  if (callbackState.flow === 'signin') {
+    return hasToken;
+  }
+
+  return false;
+}
 
 function enqueueDeepLinkToken(token) {
   if (!token) return;
@@ -510,7 +640,29 @@ async function startAuthServer() {
 
   authServer = new AuthServer();
   const port = await authServer.start((token, googleTokens) => {
-    handleAuthServerToken(token, googleTokens, mainWindow, enqueueDeepLinkToken);
+    const callbackState = consumeAuthCallback(googleTokens?.desktopState);
+    if (!callbackState) {
+      log.warn('Rejected localhost auth callback with invalid or expired desktop state');
+      return false;
+    }
+    if (!isExpectedAuthCallback(callbackState, token, googleTokens)) {
+      log.warn('Rejected localhost auth callback with unexpected flow result', {
+        flow: callbackState.flow,
+        requestCalendar: callbackState.requestCalendar,
+        hasToken: !!token,
+        hasGoogleTokens: !!googleTokens?.idToken,
+        action: googleTokens?.action || null
+      });
+      return false;
+    }
+
+    handleAuthServerToken(token, {
+      ...googleTokens,
+      desktopFlow: callbackState.flow,
+      requestCalendar: callbackState.requestCalendar
+    }, mainWindow, enqueueDeepLinkToken);
+    setImmediate(stopAuthServer);
+    return true;
   });
   return port;
 }
@@ -521,6 +673,7 @@ function stopAuthServer() {
     authServer.stop();
     authServer = null;
   }
+  pendingAuthCallbacks.clear();
 }
 
 // Track last time we reloaded the embedded webview to avoid excessive reloads
@@ -780,6 +933,83 @@ function openDownloadPage() {
   }
 }
 
+function isUpdaterCachePermissionError(error) {
+  const text = [
+    error?.code,
+    error?.message,
+    error?.stack
+  ].filter(Boolean).join(' ')
+
+  return /(?:EPERM|EACCES)/.test(text) && /donethat-updater|updater|pending/.test(text)
+}
+
+async function checkWindowsUpdaterCacheWritable() {
+  if (process.platform !== 'win32') return { writable: true, path: null }
+
+  try {
+    const fs = require('fs')
+    if (typeof autoUpdater.getOrCreateDownloadHelper !== 'function') {
+      return { writable: true, path: null }
+    }
+    const helper = await autoUpdater.getOrCreateDownloadHelper()
+    const cacheDir = helper?.cacheDirForPendingUpdate
+    if (!cacheDir) return { writable: true, path: null }
+
+    await fs.promises.mkdir(cacheDir, { recursive: true })
+    await fs.promises.access(cacheDir, fs.constants.W_OK)
+    return { writable: true, path: cacheDir }
+  } catch (error) {
+    return {
+      writable: false,
+      path: error?.path || null,
+      reason: error?.code || error?.message || 'unknown'
+    }
+  }
+}
+
+function notifyManualWindowsUpdate(info, writeCheck) {
+  updateAvailable = true
+  const version = info?.version ? ` (${info.version})` : ''
+  const locationHint = writeCheck?.path
+    ? `DoneThat can't write to its updater cache at ${writeCheck.path}.`
+    : `DoneThat can't write to its updater cache.`
+
+  try {
+    if (mainWindow) {
+      mainWindow.webContents.send('update:available')
+      mainWindow.webContents.send('request-notification', {
+        id: 'update-manual-download-windows',
+        title: 'DoneThat Update Available',
+        message: `A new version${version} is available. ${locationHint} Download and install the latest version manually.`,
+        sticky: true,
+        action: { label: 'Download', channel: 'update:open-download-page', payload: null }
+      })
+    }
+  } catch (e) {
+    log.warn('Failed to send manual-update notify (windows):', e)
+  }
+}
+
+function notifyManualLinuxUpdate(info) {
+  updateAvailable = true
+  const version = info?.version ? ` (${info.version})` : ''
+
+  try {
+    if (mainWindow) {
+      mainWindow.webContents.send('update:available')
+      mainWindow.webContents.send('request-notification', {
+        id: 'update-manual-download-linux',
+        title: 'DoneThat Update Available',
+        message: `A new version${version} is available. Automatic updates aren't available for this install (it isn't running as an AppImage). Download and install the latest version manually.`,
+        sticky: true,
+        action: { label: 'Download', channel: 'update:open-download-page', payload: null }
+      })
+    }
+  } catch (e) {
+    log.warn('Failed to send manual-update notify (linux):', e)
+  }
+}
+
 function dispatchNotificationAction(action) {
   const channel = action && action.channel;
   const payload = action && action.payload;
@@ -852,6 +1082,24 @@ function setupAutoUpdater() {
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
   autoUpdater.channel = arch
 
+  autoUpdater.on('update-available', (info) => {
+    // Only relevant when autoDownload was disabled up front; otherwise the
+    // update-downloaded handler takes over.
+    if (autoUpdater.autoDownload !== false) return
+
+    if (process.platform === 'linux' && linuxAppImageUnavailable) {
+      log.warn('Update available but APPIMAGE env not set; offering manual download instead.')
+      notifyManualLinuxUpdate(info)
+      return
+    }
+
+    if (process.platform !== 'win32') return
+    const writeCheck = windowsUpdaterCacheWriteCheck
+    if (!writeCheck || writeCheck.writable) return
+    log.warn(`Windows updater cache is not writable (${writeCheck.reason}); offering manual download instead.`)
+    notifyManualWindowsUpdate(info, writeCheck)
+  })
+
   autoUpdater.on('update-downloaded', (info) => {
     log.info('Update downloaded:', info.version)
     updateAvailable = true
@@ -920,6 +1168,20 @@ function setupAutoUpdater() {
   })
 
   autoUpdater.on('error', (error) => {
+    if (process.platform === 'win32' && isUpdaterCachePermissionError(error)) {
+      log.warn('Windows updater cache permission error; auto-update will be skipped:', error?.message || error)
+      try { autoUpdater.autoDownload = false } catch (_) {}
+      // The up-front writability probe (fs.access W_OK) is unreliable on Windows ACLs,
+      // so the cache can read as writable yet fail the actual download here. In that
+      // case update-available already returned early without notifying, so surface the
+      // manual-download prompt now. (Deduped 8h by message, so retries don't spam.)
+      const writeCheck = (windowsUpdaterCacheWriteCheck && !windowsUpdaterCacheWriteCheck.writable)
+        ? windowsUpdaterCacheWriteCheck
+        : { writable: false, path: error?.path || null, reason: error?.code || 'EPERM' }
+      notifyManualWindowsUpdate(null, writeCheck)
+      return
+    }
+
     log.error('Update error:', error);
 
     // More detailed error logging
@@ -932,18 +1194,50 @@ function setupAutoUpdater() {
   })
 }
 
+async function checkForUpdatesSafely(label) {
+  if (process.platform === 'win32') {
+    const writeCheck = await checkWindowsUpdaterCacheWritable()
+    windowsUpdaterCacheWriteCheck = writeCheck
+    autoUpdater.autoDownload = writeCheck.writable
+
+    if (!writeCheck.writable) {
+      log.warn(`Windows updater cache at ${writeCheck.path || '<unknown>'} is not writable (${writeCheck.reason}); checking metadata only.`)
+    }
+  } else if (process.platform === 'linux') {
+    // AppImageUpdater needs process.env.APPIMAGE to point at the running image.
+    // When it's unset the download throws "APPIMAGE env is not defined", so only
+    // auto-download when we have a real AppImage path; otherwise check metadata
+    // only and surface a manual-download prompt from the update-available handler.
+    linuxAppImageUnavailable = !process.env.APPIMAGE
+    autoUpdater.autoDownload = !linuxAppImageUnavailable
+
+    if (linuxAppImageUnavailable) {
+      log.warn('APPIMAGE env not set; in-place AppImage update is unavailable. Checking metadata only.')
+    }
+  }
+
+  try {
+    await autoUpdater.checkForUpdates()
+  } catch (err) {
+    if (process.platform === 'win32' && isUpdaterCachePermissionError(err)) {
+      log.warn(`Windows updater cache permission error during ${label} update check:`, err?.message || err)
+      try { autoUpdater.autoDownload = false } catch (_) {}
+      return
+    }
+    log.error(`Error in ${label} update check:`, err)
+  }
+}
+
 // Function to handle scheduled update checks
 function scheduleUpdateChecks() {
 
   // First check after 1 minute to let the app fully initialize
   setTimeout(() => {    
-    autoUpdater.checkForUpdates()
-      .catch(err => log.error('Error in first update check:', err));
+    checkForUpdatesSafely('first')
 
     // Then check every hour
     setInterval(() => {
-      autoUpdater.checkForUpdates()
-        .catch(err => log.error('Error in hourly update check:', err));
+      checkForUpdatesSafely('hourly')
     }, 60 * 60 * 1000);
   }, 1 * 60 * 1000);
 }
@@ -1223,7 +1517,7 @@ app.whenReady().then(async () => {
       try { overlayStore?.set('hotkeySuffix', HOTKEY_SUFFIX); } catch (_) {}
       registerGlobalShortcut();
       // Refresh menus so accelerators/labels update
-      createApplicationMenu();
+      refreshMenus();
       const payloadOut = { success: true, suffix: HOTKEY_SUFFIX, accelerator: getHotkeyAccelerator(), label: getHotkeyLabel() };
       try { mainWindow?.webContents?.send('hotkey:updated', payloadOut); } catch (_) {}
       return payloadOut;
@@ -1267,13 +1561,17 @@ app.whenReady().then(async () => {
     try {
       const port = await startAuthServer();
       const requestCalendar = !!(payload && payload.requestCalendar);
+      const fromPortal = !!(payload && payload.fromPortal);
       const idToken = requestCalendar ? stateManager?.getIdToken?.() ?? null : null;
       if (requestCalendar && !idToken) {
         return { success: false, error: 'Missing authenticated session for calendar linking' };
       }
-      const data = await getGoogleSignInUrl({ port, requestCalendar, idToken });
+      const flow = fromPortal ? 'portal-signin' : 'signin';
+      const desktopState = createAuthCallback(flow, requestCalendar);
+      const redirectUrl = buildAuthRedirectUrl(port, desktopState);
+      const data = await getGoogleSignInUrl({ port, redirectUrl, requestCalendar, idToken });
       const url = data && (data.authUrl || data.url || (data.data && data.data.url));
-      if (url && payload && payload.fromPortal) markPortalSigninPending(requestCalendar);
+      if (url && fromPortal) markPortalSigninPending(requestCalendar);
       return url ? { success: true, url } : { success: false, error: 'No URL in response' };
     } catch (error) {
       log.error('Failed to get desktop Google Sign In URL from main:', error);
@@ -1284,8 +1582,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('auth:google-reauth', async (_event, payload) => {
     try {
       const port = await startAuthServer();
+      const desktopState = createAuthCallback('reauth', !!(payload && payload.requestCalendar));
+      const redirectUrl = buildAuthRedirectUrl(port, desktopState);
       const data = await getGoogleReauthUrl({
         port,
+        redirectUrl,
         idToken: payload && payload.idToken,
         requestCalendar: !!(payload && payload.requestCalendar),
       });
@@ -1340,11 +1641,11 @@ app.whenReady().then(async () => {
 
 
   // Create application menu
-  createApplicationMenu();
+  refreshMenus();
   
   // Register for auth state change events from renderer
   ipcMain.on('auth-state-changed', (event, isAuthenticated) => {
-    createApplicationMenu(); // Update menu on auth state change
+    refreshMenus(); // Update menu on auth state change
   });
 
   // Background notification handlers
@@ -1444,14 +1745,12 @@ app.whenReady().then(async () => {
   
   // Handle left-click to show a fresh context menu
   tray.on('click', () => {
-    const contextMenu = buildContextMenu()
-    tray.popUpContextMenu(contextMenu)
+    openTrayMenu()
   })
 
   // Also handle right-click to show a fresh context menu
   tray.on('right-click', () => {
-    const contextMenu = buildContextMenu()
-    tray.popUpContextMenu(contextMenu)
+    openTrayMenu()
   })
 
   
@@ -1858,8 +2157,8 @@ function navigateToView(viewName) {
   mainWindow.webContents.send('navigate', viewName);
 }
 
-// Function to create application menu with Help option and context menu options
-function createApplicationMenu() {
+// Build the application menu bar template from current stateManager flags.
+function buildAppMenuTemplate() {
   const isLoggedIn = stateManager?.isAuthenticated() ?? false;
   const isPaused = stateManager?.isPaused() ?? false;
   const hasPermission = stateManager?.hasScreenCapturePermission() ?? false;
@@ -1999,13 +2298,24 @@ function createApplicationMenu() {
   
   // Push menus to template
   template.push(fileMenu, editMenu, windowMenu, recordingMenu, accountMenu, helpMenu);
-  
-  // Set as application menu
-  const menu = Menu.buildFromTemplate(template);
+
+  return template;
+}
+
+// Immediately rebuild and install the application menu. Callers should normally go
+// through refreshMenus()/applyMenuRefresh() so this never runs while a menu is open.
+function rebuildApplicationMenu() {
+  const menu = Menu.buildFromTemplate(buildAppMenuTemplate());
+  // Flag the menu bar as open while the user browses it, so a state change can't
+  // replace it mid-display (the crash). A boolean is idempotent, so extra
+  // menu-will-show events (e.g. Windows submenu navigation) can't leak the count.
+  menu.on('menu-will-show', () => { menuBarOpen = true; });
+  menu.on('menu-will-close', () => { menuBarOpen = false; onMenuClosed(); });
   Menu.setApplicationMenu(menu);
 }
 
-// Update context menu build function to also update application menu
+// Build the tray context menu from current stateManager flags. Rebuilt fresh on
+// every open, so it is always current; it does not touch the application menu.
 function buildContextMenu() {
   const isLoggedIn = stateManager?.isAuthenticated() ?? false;
   const isPaused = stateManager?.isPaused() ?? false;
@@ -2107,9 +2417,6 @@ function buildContextMenu() {
     }
   )
 
-  // After building the context menu, also refresh the application menu
-  createApplicationMenu();
-  
   return Menu.buildFromTemplate(template)
 }
 
@@ -2148,7 +2455,7 @@ function checkAndAdjustRecording(source = 'unknown') {
     sendOverlayState();
     
     // Update application menu when recording state changes
-    createApplicationMenu();
+    refreshMenus();
 
     // Show sticky banner if account is inactive (once per session)
     if (isAuthenticated && !hasValidAccess && !hasShownInactiveBanner) {
@@ -2491,7 +2798,12 @@ function createOverlayWindow() {
         partition: 'persist:donethat',
         sandbox: true,             // SECURED
         preload: path.join(__dirname, 'src-main', 'preload.js'), // NEW PRELOAD
-        backgroundThrottling: true,
+        // Keep the renderer awake even when the overlay is not the active window.
+        // As an always-on-top panel floating over other apps (especially native
+        // fullscreen Spaces), macOS reports it as occluded/backgrounded, which would
+        // otherwise throttle/suspend input handling and rAF — making it impossible to
+        // type and freezing the mascot. Matches the main window.
+        backgroundThrottling: false,
         spellcheck: true
       },
       ...(isPlatformMac ? { acceptFirstMouse: true } : {})
@@ -2755,7 +3067,7 @@ function startRecording() {
   stateManager?.recordingStarted(mainWindow);
   
   updateTrayIcon(true) // Show recording state
-  createApplicationMenu(); // Update menu when recording starts
+  refreshMenus(); // Update menu when recording starts
   sendOverlayState();
 
   if (mainWindow) {
@@ -2777,7 +3089,7 @@ function stopRecording() {
   // or by permissions (already in state)
 
   updateTrayIcon(false) // Update icon to non-recording state
-  createApplicationMenu(); // Update menu when recording stops
+  refreshMenus(); // Update menu when recording stops
   sendOverlayState();
   
   // Send state updates
@@ -2955,7 +3267,7 @@ async function checkScreenCapturePermission(source = 'runtime', probeOptions = {
   }
 
   // Update application menu when permission changes
-  createApplicationMenu();
+  refreshMenus();
   sendOverlayState();
 
   return stateManager?.hasScreenCapturePermission() ?? hasPermission;
@@ -3009,7 +3321,7 @@ ipcMain.on('initialAuthCheck', (event, isAuthenticated) => {
   startupAuthCheckResolved = true;
   startupIsAuthenticated = !!isAuthenticated;
   maybeShowStartupWindowForUnauthenticated();
-  createApplicationMenu(); // Update menu after auth check
+  refreshMenus(); // Update menu after auth check
 });
 
 // Add this function before app.whenReady()

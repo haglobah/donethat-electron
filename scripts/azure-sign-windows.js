@@ -11,7 +11,7 @@ function logProcessError(label, error) {
   if (error.stderr) console.error(`${label} stderr:\n${error.stderr.toString()}`);
 }
 
-exports.default = async function (configuration) {
+function shouldSkipSigning(file) {
   const isCi = process.env.GITHUB_ACTIONS === 'true';
 
   if (!isCi && process.env.SIGN_WINDOWS !== 'true') {
@@ -21,12 +21,16 @@ exports.default = async function (configuration) {
 
   if (process.env.SKIP_WINDOWS_SIGNING === 'true') {
     console.warn(
-      `WARNING: Skipping Azure Trusted Signing for ${configuration.path} ` +
+      `WARNING: Skipping Azure Trusted Signing for ${file} ` +
         '(SKIP_WINDOWS_SIGNING=true). The artifact will be unsigned and trigger SmartScreen warnings on install.',
     );
     return true;
   }
 
+  return false;
+}
+
+function signFile(file) {
   const dlibPath = process.env.AZURE_SIGN_DLIB;
   const metadataPath = process.env.AZURE_SIGN_METADATA;
 
@@ -42,8 +46,10 @@ exports.default = async function (configuration) {
   if (!fs.existsSync(metadataPath)) {
     throw new Error(`Build failed: Signing metadata file not found at ${metadataPath}`);
   }
+  if (!fs.existsSync(file)) {
+    throw new Error(`Build failed: file to sign not found at ${file}`);
+  }
 
-  const file = configuration.path;
   console.log(`Signing via Azure Trusted Signing: ${file}`);
 
   try {
@@ -71,6 +77,39 @@ exports.default = async function (configuration) {
     logProcessError('signtool verify', error);
     throw new Error(`Build failed: signtool verify failed for ${file}`);
   }
+}
+
+async function signConfiguration(configuration) {
+  const file = configuration.path;
+
+  if (shouldSkipSigning(file)) {
+    return true;
+  }
+
+  signFile(file);
 
   return true;
-};
+}
+
+exports.signFile = signFile;
+exports.default = signConfiguration;
+
+if (require.main === module) {
+  const files = process.argv.slice(2);
+
+  if (files.length === 0) {
+    console.error('Usage: node scripts/azure-sign-windows.js <file> [file...]');
+    process.exit(1);
+  }
+
+  try {
+    for (const file of files) {
+      if (!shouldSkipSigning(file)) {
+        signFile(file);
+      }
+    }
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+}
