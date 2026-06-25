@@ -445,7 +445,83 @@ let notificationIconPath = path.join(
 // State module and variables
 let stateManager = null
 let tray = null
+let trayMenu = null // retain popped-up tray menu so GC can't reclaim it while open
 let mainWindow = null
+
+// Menu refresh machinery: keeps the application menu bar in sync with stateManager
+// without ever calling setApplicationMenu() while a native menu is open (which tears
+// down the open menu's backing model and crashes in views::MenuModelAdapter on Windows).
+//
+// The open-state flags below are ADVISORY: they let us avoid the crash window, but
+// correctness must not depend on them ever clearing. A leaked flag (a menu dismissed
+// without emitting its close event) is bounded by the watchdog to brief staleness
+// rather than a permanent menu-bar freeze.
+let trayMenuOpen = false
+let menuBarOpen = false
+let menuRefreshPending = false
+let menuRefreshTimer = null
+let menuRefreshWatchdog = null
+
+// Longer than any plausible *continuous* menu interaction, so the watchdog never
+// force-rebuilds a menu the user is actively using (which would re-trigger the crash).
+// It only fires when an open flag has leaked.
+const MENU_REFRESH_MAX_DEFER_MS = 25000
+
+function isAnyMenuOpen() {
+  return trayMenuOpen || menuBarOpen
+}
+
+function applyMenuRefresh() {
+  if (isAnyMenuOpen()) {
+    // A menu is on screen; defer the rebuild until it closes (advisory).
+    menuRefreshPending = true
+    if (!menuRefreshWatchdog) {
+      menuRefreshWatchdog = setTimeout(() => {
+        menuRefreshWatchdog = null
+        // Any still-set flag has almost certainly leaked; force the rebuild.
+        trayMenuOpen = false
+        menuBarOpen = false
+        if (menuRefreshPending) applyMenuRefresh()
+      }, MENU_REFRESH_MAX_DEFER_MS)
+    }
+    return
+  }
+  if (menuRefreshWatchdog) {
+    clearTimeout(menuRefreshWatchdog)
+    menuRefreshWatchdog = null
+  }
+  menuRefreshPending = false
+  rebuildApplicationMenu()
+}
+
+// Coalesce bursts (auth + recording + power events often fire together).
+function refreshMenus() {
+  if (menuRefreshTimer) return
+  menuRefreshTimer = setTimeout(() => {
+    menuRefreshTimer = null
+    applyMenuRefresh()
+  }, 50)
+}
+
+// Apply any refresh that was deferred while a menu was open.
+function onMenuClosed() {
+  if (menuRefreshPending) setImmediate(applyMenuRefresh)
+}
+
+// Build and pop up a fresh tray menu. Only one can be open at a time, so a boolean
+// flag (not a counter) can't accumulate; a late close from a superseded menu is
+// ignored because we only clear the flag for the menu that is still current.
+function openTrayMenu() {
+  const menu = buildContextMenu()
+  trayMenu = menu // retain ref so GC can't reclaim it while open
+  trayMenuOpen = true
+  menu.once('menu-will-close', () => {
+    if (trayMenu !== menu) return // superseded by a newer tray menu
+    trayMenuOpen = false
+    onMenuClosed()
+  })
+  tray.popUpContextMenu(menu)
+}
 let overlayWindow = null
 let screenshotInterval = null
 let startupMainWindowReady = false
@@ -1395,7 +1471,7 @@ app.whenReady().then(async () => {
       try { overlayStore?.set('hotkeySuffix', HOTKEY_SUFFIX); } catch (_) {}
       registerGlobalShortcut();
       // Refresh menus so accelerators/labels update
-      createApplicationMenu();
+      refreshMenus();
       const payloadOut = { success: true, suffix: HOTKEY_SUFFIX, accelerator: getHotkeyAccelerator(), label: getHotkeyLabel() };
       try { mainWindow?.webContents?.send('hotkey:updated', payloadOut); } catch (_) {}
       return payloadOut;
@@ -1519,11 +1595,11 @@ app.whenReady().then(async () => {
 
 
   // Create application menu
-  createApplicationMenu();
+  refreshMenus();
   
   // Register for auth state change events from renderer
   ipcMain.on('auth-state-changed', (event, isAuthenticated) => {
-    createApplicationMenu(); // Update menu on auth state change
+    refreshMenus(); // Update menu on auth state change
   });
 
   // Background notification handlers
@@ -1623,14 +1699,12 @@ app.whenReady().then(async () => {
   
   // Handle left-click to show a fresh context menu
   tray.on('click', () => {
-    const contextMenu = buildContextMenu()
-    tray.popUpContextMenu(contextMenu)
+    openTrayMenu()
   })
 
   // Also handle right-click to show a fresh context menu
   tray.on('right-click', () => {
-    const contextMenu = buildContextMenu()
-    tray.popUpContextMenu(contextMenu)
+    openTrayMenu()
   })
 
   
@@ -2037,8 +2111,8 @@ function navigateToView(viewName) {
   mainWindow.webContents.send('navigate', viewName);
 }
 
-// Function to create application menu with Help option and context menu options
-function createApplicationMenu() {
+// Build the application menu bar template from current stateManager flags.
+function buildAppMenuTemplate() {
   const isLoggedIn = stateManager?.isAuthenticated() ?? false;
   const isPaused = stateManager?.isPaused() ?? false;
   const hasPermission = stateManager?.hasScreenCapturePermission() ?? false;
@@ -2178,13 +2252,24 @@ function createApplicationMenu() {
   
   // Push menus to template
   template.push(fileMenu, editMenu, windowMenu, recordingMenu, accountMenu, helpMenu);
-  
-  // Set as application menu
-  const menu = Menu.buildFromTemplate(template);
+
+  return template;
+}
+
+// Immediately rebuild and install the application menu. Callers should normally go
+// through refreshMenus()/applyMenuRefresh() so this never runs while a menu is open.
+function rebuildApplicationMenu() {
+  const menu = Menu.buildFromTemplate(buildAppMenuTemplate());
+  // Flag the menu bar as open while the user browses it, so a state change can't
+  // replace it mid-display (the crash). A boolean is idempotent, so extra
+  // menu-will-show events (e.g. Windows submenu navigation) can't leak the count.
+  menu.on('menu-will-show', () => { menuBarOpen = true; });
+  menu.on('menu-will-close', () => { menuBarOpen = false; onMenuClosed(); });
   Menu.setApplicationMenu(menu);
 }
 
-// Update context menu build function to also update application menu
+// Build the tray context menu from current stateManager flags. Rebuilt fresh on
+// every open, so it is always current; it does not touch the application menu.
 function buildContextMenu() {
   const isLoggedIn = stateManager?.isAuthenticated() ?? false;
   const isPaused = stateManager?.isPaused() ?? false;
@@ -2286,9 +2371,6 @@ function buildContextMenu() {
     }
   )
 
-  // After building the context menu, also refresh the application menu
-  createApplicationMenu();
-  
   return Menu.buildFromTemplate(template)
 }
 
@@ -2327,7 +2409,7 @@ function checkAndAdjustRecording(source = 'unknown') {
     sendOverlayState();
     
     // Update application menu when recording state changes
-    createApplicationMenu();
+    refreshMenus();
 
     // Show sticky banner if account is inactive (once per session)
     if (isAuthenticated && !hasValidAccess && !hasShownInactiveBanner) {
@@ -2934,7 +3016,7 @@ function startRecording() {
   stateManager?.recordingStarted(mainWindow);
   
   updateTrayIcon(true) // Show recording state
-  createApplicationMenu(); // Update menu when recording starts
+  refreshMenus(); // Update menu when recording starts
   sendOverlayState();
 
   if (mainWindow) {
@@ -2956,7 +3038,7 @@ function stopRecording() {
   // or by permissions (already in state)
 
   updateTrayIcon(false) // Update icon to non-recording state
-  createApplicationMenu(); // Update menu when recording stops
+  refreshMenus(); // Update menu when recording stops
   sendOverlayState();
   
   // Send state updates
@@ -3134,7 +3216,7 @@ async function checkScreenCapturePermission(source = 'runtime', probeOptions = {
   }
 
   // Update application menu when permission changes
-  createApplicationMenu();
+  refreshMenus();
   sendOverlayState();
 
   return stateManager?.hasScreenCapturePermission() ?? hasPermission;
@@ -3188,7 +3270,7 @@ ipcMain.on('initialAuthCheck', (event, isAuthenticated) => {
   startupAuthCheckResolved = true;
   startupIsAuthenticated = !!isAuthenticated;
   maybeShowStartupWindowForUnauthenticated();
-  createApplicationMenu(); // Update menu after auth check
+  refreshMenus(); // Update menu after auth check
 });
 
 // Add this function before app.whenReady()
