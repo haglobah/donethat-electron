@@ -199,12 +199,22 @@ jobs:
       - name: Install dependencies
         run: npm ci --include=optional
 
-      - name: Build Windows ARM64 unpacked app
+      - name: Build Windows ARM64 unsigned NSIS app
         shell: pwsh
         env:
           CI: true
           SKIP_WINDOWS_SIGNING: true
-        run: npm run build:win:arm64:dir
+        run: npm run build:win:arm64:unsigned-nsis
+
+      - name: Verify Windows ARM64 updater config
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $configPath = Join-Path $PWD 'release/win-arm64-unpacked/resources/app-update.yml'
+          if (!(Test-Path $configPath)) {
+            throw "Missing updater config in unpacked app: $configPath"
+          }
+          Write-Host "Found updater config: $configPath"
 
       - name: Upload Windows ARM64 unpacked app
         uses: actions/upload-artifact@v4

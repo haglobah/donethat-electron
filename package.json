@@ -1,6 +1,6 @@
 {
   "name": "donethat",
-  "version": "2.2.10",
+  "version": "2.2.11",
   "description": "DoneThat",
   "main": "main.js",
   "scripts": {
@@ -20,7 +20,7 @@
     "build:mac:arm64": "npm run build:prepare && electron-builder --mac --arm64",
     "build:win:x64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true ELECTRON_BUILDER_7Z_FILTER=BCJ electron-builder --win --x64",
     "build:win:arm64": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true ELECTRON_BUILDER_7Z_FILTER=BCJ electron-builder --win --arm64",
-    "build:win:arm64:dir": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true ELECTRON_BUILDER_7Z_FILTER=BCJ electron-builder --win dir --arm64 --publish never --config.extraMetadata.main=main.js",
+    "build:win:arm64:unsigned-nsis": "dotenv -- npm run build:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true ELECTRON_BUILDER_7Z_FILTER=BCJ electron-builder --win nsis --arm64 --publish never --config.extraMetadata.main=main.js",
     "build:linux:x64": "npm run build:prepare && electron-builder --linux --x64 --config.asar=false",
     "build:linux:arm64": "npm run build:prepare && electron-builder --linux --arm64 --config.asar=false",
     "upload:mac:x64": "dotenv -- npm run build:prepare && npm run release:prepare && dotenv -- cross-env ELECTRON_BUILDER_SIGN=true electron-builder --mac --x64 --publish always --config.extraMetadata.main=main.js --config.publish.channel=x64",

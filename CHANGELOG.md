@@ -4,6 +4,7 @@
 
 - Harden desktop OAuth callbacks, embedded portal token handoff, and webview navigation.
 - Fix Windows updater cache permission failures by checking update metadata without downloading and offering a manual download.
+- Build Windows ARM64 release payloads through NSIS packaging before signing so updater resources are present in the installed app.
 
 ## 2.2.10
 
