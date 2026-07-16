@@ -204,7 +204,7 @@
 
             # Run `nix build` once with this set to lib.fakeHash, then replace it
             # with the sha256 Nix prints in the resulting error.
-            npmDepsHash = "sha256-OHr4INsyOYZpTYde3rbkKobDu8vs+UA/OsdRbpBrDkA=";
+            npmDepsHash = "sha256-7o+5/SrhGHf2N/HI0tAMMyrGGjOd0+Do++6QZEAIwEo=";
 
             # Skip lifecycle scripts: `postinstall` runs build-os-helpers (macOS
             # only) or electron-builder install-app-deps (needs network). We do
@@ -251,6 +251,14 @@
                 src-main \
                 node_modules \
                 "$appdir/"
+
+              # npm installs every matching optional platform package, including
+              # musl prebuilds (lightningcss, @resvg, @tailwindcss/oxide). They
+              # link against libc.musl, which does not exist in this closure and
+              # trips autoPatchelf; on glibc NixOS Node always loads the -gnu
+              # variant, so drop the musl ones.
+              find "$appdir/node_modules" -maxdepth 2 -type d -name '*-musl*' \
+                -exec rm -rf {} +
 
               # Native helper binaries (macOS only) – copy if present.
               [ -d bin ] && cp -r bin "$appdir/" || true
