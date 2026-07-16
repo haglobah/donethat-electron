@@ -1,13 +1,16 @@
 # Changelog
 
-## Unreleased
+## 2.2.12
 
+- Fix a crash dialog ("A JavaScript error occurred in the main process") caused by an unguarded breadcrumbs bug in @sentry/electron 7.14; pin to 7.13 and guard the main-process error handler.
 - Harden desktop OAuth callbacks, embedded portal token handoff, and webview navigation.
 - Fix Windows updater cache permission failures by checking update metadata without downloading and offering a manual download.
+- Build Windows ARM64 release payloads through NSIS packaging before signing so updater resources are present in the installed app.
 
-## 2.2.7
+## 2.2.10
 
 - Sign Windows ARM64 releases by compiling on ARM runners and signing/package-publishing on x64 runners.
+- Force the Windows NSIS app archive to use the BCJ 7z filter to avoid the upstream Electron Builder regression that skips executables during install.
 
 ## 2.2.6
 

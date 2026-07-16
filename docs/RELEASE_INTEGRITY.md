@@ -35,8 +35,15 @@ This means the release version and the source tag are locked together by the rel
 - Windows release builds use Azure Trusted Signing (Artifact Signing).
 - The workflow authenticates to Azure via OIDC federated identity (`azure/login@v2`) and provisions the Trusted Signing dlib plus a `metadata.json` pointing at the `DoneThat / Letss` certificate profile in West Europe.
 - `scripts/azure-sign-windows.js` signs the produced artifact with `signtool sign /dlib /dmdf` against `http://timestamp.acs.microsoft.com` and immediately verifies it with `signtool verify /pa /v`.
-- Windows arm64 native code is compiled on the `windows-11-arm` runner as an unpacked app. The unpacked app is then signed and packaged on a `windows-latest` x64 runner because Azure Trusted Signing currently ships an x64 dlib, not an ARM64-native dlib.
-- Windows arm64 installer and updater metadata are generated after the unpacked app has been signed, so published hashes describe the final signed artifacts.
+- Windows arm64 native code is compiled on the `windows-11-arm` runner through an unsigned NSIS build, which also prepares installer resources in `release/win-arm64-unpacked`. The unpacked app is then signed and packaged on a `windows-latest` x64 runner because Azure Trusted Signing currently ships an x64 dlib, not an ARM64-native dlib.
+- Windows arm64 release update metadata is generated after the unpacked app has been signed, so published hashes describe the final signed artifacts.
+
+#### Electron Builder NSIS archive filter
+
+- Windows NSIS release scripts set `ELECTRON_BUILDER_7Z_FILTER=BCJ`.
+- `electron-builder` 26.15.x can otherwise pack NSIS app payloads with 7-Zip branch filters that the install-time `Nsis7z` extractor cannot decode, causing installed apps to miss `DoneThat.exe` and native binaries. See upstream issue [electron-builder#9983](https://github.com/electron-userland/electron-builder/issues/9983).
+- Upstream fix [electron-builder#9988](https://github.com/electron-userland/electron-builder/pull/9988) has merged, but the fix was not yet published to the npm `electron-builder` package when this workaround was added.
+- Revisit the workaround once a published `electron-builder` release includes that fix. Do not remove `ELECTRON_BUILDER_7Z_FILTER=BCJ` until Windows NSIS installers are confirmed to avoid `BCJ2`/`ARM64` app-package filters.
 
 ### Linux
 

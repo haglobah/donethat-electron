@@ -41,7 +41,7 @@ No client secret is stored: the workflow authenticates via OIDC federated identi
 1. The workflow grants `id-token: write` and runs `azure/login@v2` on Windows runners with the OIDC token.
 2. A setup step downloads `nuget.exe`, installs the `Microsoft.ArtifactSigning.Client` NuGet package, locates the matching `Azure.CodeSigning.Dlib.dll` for the runner architecture, writes a `metadata.json` (Endpoint + account + profile), and adds `signtool.exe` from the Windows 10/11 SDK to `PATH`.
 3. For normal Windows builds, `electron-builder` invokes `scripts/azure-sign-windows.js` once per artifact via its `signtoolOptions.sign` callback.
-4. For Windows ARM64, the workflow first builds the native unpacked app on `windows-11-arm`, uploads `release/win-arm64-unpacked`, then downloads it on `windows-latest` for signing and packaging with `electron-builder --prepackaged`.
+4. For Windows ARM64, the workflow first runs an unsigned NSIS build on `windows-11-arm`, uploads `release/win-arm64-unpacked`, then downloads it on `windows-latest` for signing and packaging with `electron-builder --prepackaged`.
 5. The script runs `signtool sign /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib <dlib> /dmdf <metadata.json> <file>` and then `signtool verify /pa /v <file>`.
 6. The Trusted Signing dlib uses `DefaultAzureCredential`, which picks up the workload identity established by `azure/login@v2`.
 
@@ -58,10 +58,10 @@ Local Windows signing is skipped unless `SIGN_WINDOWS=true` is set. To exercise 
 
 Azure Trusted Signing has no ARM64-native dlib yet, and the x64 dlib + signtool combination fails on the `windows-11-arm` GitHub runner under emulation (`signtool` exit code 3). The workflow avoids that by splitting the Windows ARM64 release:
 
-1. `build_win_arm64_unpacked` runs on `windows-11-arm`, compiles the ARM64 app with `electron-builder --win dir --arm64`, and uploads `release/win-arm64-unpacked`.
+1. `build_win_arm64_unpacked` runs on `windows-11-arm`, compiles the ARM64 app with `electron-builder --win nsis --arm64 --publish never`, verifies `release/win-arm64-unpacked/resources/app-update.yml`, and uploads `release/win-arm64-unpacked`.
 2. `publish_win_arm64_signed` runs on `windows-latest`, downloads the unpacked app, signs its executables with the x64 Trusted Signing dlib, then runs `electron-builder --prepackaged release/win-arm64-unpacked --win nsis --arm64 --publish always`.
 
-This keeps ARM64 native modules built on ARM hardware while using the x64 signing toolchain. The installer and updater metadata are generated only after the unpacked app has been signed.
+This keeps ARM64 native modules built on ARM hardware while using the x64 signing toolchain. The first build produces the complete unpacked app resources without publishing; the final installer and release update metadata are generated only after the unpacked app has been signed.
 
 References:
 - [actions/partner-runner-images#156](https://github.com/actions/partner-runner-images/issues/156) — runner image / signtool issue.
